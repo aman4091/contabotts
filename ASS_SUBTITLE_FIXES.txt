@@ -1,0 +1,152 @@
+================================================================================
+ASS SUBTITLE BOX & TEXT ALIGNMENT FIXES
+Date: 2025-11-27
+================================================================================
+
+PROBLEM:
+--------
+1. Box aur text align nahi ho rahe the (text left mein ja raha tha)
+2. Box WHITE/LIGHT render ho raha tha instead of BLACK
+3. Multiple boxes render ho rahe the (3 boxes)
+
+ROOT CAUSES:
+------------
+1. Text mein position tag nahi tha (\an5\pos) - style alignment use ho raha tha
+2. Color format galat tha - \1c&H80000000 (ASS override tags mein alpha alag hota hai)
+3. BorderStyle=4 text ke sath apna box bhi draw karta hai
+
+================================================================================
+FIX #1: TEXT POSITIONING (video_generator.py line ~838-842)
+================================================================================
+
+BEFORE (WRONG):
+---------------
+text_event = f"Dialogue: 1,{start_time},{end_time},Default,,0,0,0,,{{\\bord0\\shad0\\3a&HFF&}}{text}"
+
+AFTER (CORRECT):
+----------------
+# Calculate text center position
+text_x = (x1 + x2) // 2  # Center of box horizontally
+text_y = (y1 + y2) // 2  # Center of box vertically
+text_event = f"Dialogue: 1,{start_time},{end_time},Default,,0,0,0,,{{\\an5\\pos({text_x},{text_y})\\bord0\\shad0\\3a&HFF&}}{text}"
+
+EXPLANATION:
+- \an5 = center anchor point (text centers at position)
+- \pos(x,y) = absolute position for text
+- Without these, text uses style's Alignment which doesn't match custom box position
+
+================================================================================
+FIX #2: COLOR FORMAT (video_generator.py line ~802-814)
+================================================================================
+
+BEFORE (WRONG):
+---------------
+back_color = style_params['back_color']  # &H80000000
+box_event = f"...\\1c{back_color}..."    # \1c&H80000000 - WRONG FORMAT!
+
+AFTER (CORRECT):
+----------------
+back_color = style_params['back_color']
+# ASS style format: &HAABBGGRR (alpha, blue, green, red)
+# Override tags use: \1c&HBBGGRR (color) + \1a&HAA (alpha separately)
+if back_color.startswith('&H') and len(back_color) >= 10:
+    alpha_hex = back_color[2:4]  # AA part
+    bgr_hex = back_color[4:]     # BBGGRR part
+    box_color = f"&H{bgr_hex}"   # \1c format
+    box_alpha = f"&H{alpha_hex}" # \1a format
+else:
+    box_color = "&H000000"  # Default black
+    box_alpha = "&H80"      # Default semi-transparent
+
+box_event = f"...\\1c{box_color}\\1a{box_alpha}..."  # \1c&H000000\1a&H80
+
+EXPLANATION:
+- ASS Styles use &HAABBGGRR format (8 hex digits with alpha)
+- Override tags (\1c, \2c, etc.) use &HBBGGRR format (6 hex digits, NO alpha)
+- Alpha is set separately with \1a, \2a, \3a, \4a tags
+- \1c&H80000000 was being misinterpreted, causing wrong color
+
+================================================================================
+FIX #3: BORDERSTYLE (video_generator.py line ~584)
+================================================================================
+
+BEFORE (WRONG):
+---------------
+ass_style = 'Style: Default,Arial,48,&H00FFFFFF,&H00FFFFFF,&H80000000,&H80000000,-1,0,0,0,100,100,0,0,4,0,0,5,40,40,40,1'
+                                                                                                              ^
+                                                                                                        BorderStyle=4
+
+AFTER (CORRECT):
+----------------
+ass_style = 'Style: Default,Arial,48,&H00FFFFFF,&H00FFFFFF,&H80000000,&H80000000,-1,0,0,0,100,100,0,0,1,0,0,5,40,40,40,1'
+                                                                                                              ^
+                                                                                                        BorderStyle=1
+
+EXPLANATION:
+- BorderStyle=1: Outline + shadow only (no background box)
+- BorderStyle=3: Opaque box (built-in, no custom drawing needed)
+- BorderStyle=4: Opaque box defined by drawing commands
+
+Since we draw CUSTOM box separately, text style should NOT have its own box.
+BorderStyle=4 was drawing EXTRA box around text, causing 3 boxes to appear.
+
+================================================================================
+COMPLETE CORRECT CODE SNIPPET (_create_ass_from_srt function):
+================================================================================
+
+# Get background color from style (convert ASS color format)
+back_color = style_params['back_color']
+# ASS style format: &HAABBGGRR (alpha, blue, green, red in hex)
+# Override tags use: \1c&HBBGGRR (color) + \1a&HAA (alpha separately)
+if back_color.startswith('&H') and len(back_color) >= 10:
+    alpha_hex = back_color[2:4]  # AA part
+    bgr_hex = back_color[4:]     # BBGGRR part
+    box_color = f"&H{bgr_hex}"   # \1c format
+    box_alpha = f"&H{alpha_hex}" # \1a format
+else:
+    box_color = "&H000000"  # Default black
+    box_alpha = "&H80"      # Default semi-transparent
+
+# Event 1: Draw background box (Layer 0)
+box_event = f"Dialogue: 0,{start_time},{end_time},Default,,0,0,0,,{{\\p1\\an7\\pos(0,0)\\1c{box_color}\\1a{box_alpha}\\3a&HFF&\\bord0\\shad0}}{drawing_cmd}"
+ass_events.append(box_event)
+
+# Event 2: Draw text on top (Layer 1)
+text_x = (x1 + x2) // 2  # Center of box horizontally
+text_y = (y1 + y2) // 2  # Center of box vertically
+text_event = f"Dialogue: 1,{start_time},{end_time},Default,,0,0,0,,{{\\an5\\pos({text_x},{text_y})\\bord0\\shad0\\3a&HFF&}}{text}"
+ass_events.append(text_event)
+
+================================================================================
+ASS OVERRIDE TAGS REFERENCE:
+================================================================================
+
+POSITIONING:
+- \an1-9  : Alignment/anchor (1=bottom-left, 5=center, 7=top-left, etc.)
+- \pos(x,y) : Absolute position
+
+COLORS (format: &HBBGGRR - Blue, Green, Red):
+- \1c&HBBGGRR : Primary (fill) color
+- \2c&HBBGGRR : Secondary color
+- \3c&HBBGGRR : Border/outline color
+- \4c&HBBGGRR : Shadow color
+
+ALPHA (format: &HXX - 00=opaque, FF=transparent):
+- \1a&HXX : Primary alpha
+- \2a&HXX : Secondary alpha
+- \3a&HXX : Border alpha
+- \4a&HXX : Shadow alpha
+
+DRAWING:
+- \p1 : Enable drawing mode
+- \p0 : Disable drawing mode
+- \bord0 : No border
+- \shad0 : No shadow
+
+ALIGNMENT VALUES (\an):
+  7 8 9    (top)
+  4 5 6    (middle)
+  1 2 3    (bottom)
+  L C R
+
+================================================================================

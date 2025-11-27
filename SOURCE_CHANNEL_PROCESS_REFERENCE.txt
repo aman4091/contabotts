@@ -1,0 +1,1728 @@
+================================================================================
+SOURCE CHANNEL PROCESS PAGE - COMPLETE REFERENCE
+================================================================================
+
+Tech Stack: Next.js 14 (App Router), React, TypeScript, Tailwind CSS, shadcn/ui
+This page fetches YouTube videos, gets transcripts, processes with AI, and adds to audio queue.
+
+================================================================================
+PART 1: MAIN PAGE COMPONENT (app/(dashboard)/source-channels/process/page.tsx)
+================================================================================
+
+'use client'
+
+import { useEffect, useState, useCallback } from 'react'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { toast } from 'sonner'
+import { Layers, Loader2, RefreshCw, Youtube, FileText, Save, Download, Copy, Sparkles, SkipForward, Plus, ExternalLink } from 'lucide-react'
+import { createClient } from '@/lib/supabase/client'
+
+const TARGET_CHANNELS = ['BI', 'AFG', 'JIMMY', 'GYH', 'ANU', 'JM']
+
+function generateUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0
+    const v = c === 'x' ? r : (r & 0x3 | 0x8)
+    return v.toString(16)
+  })
+}
+
+interface SourceChannel {
+  channel_code: string
+  channel_name: string
+  youtube_channel_id?: string | null
+  youtube_channel_url?: string | null
+  min_duration_seconds?: number
+  max_duration_seconds?: number
+  max_videos?: number
+  is_active: boolean
+}
+
+interface YouTubeVideo {
+  id: string
+  title: string
+  duration: string
+  durationSeconds: number
+  viewCount: number
+  publishedAt: string
+  thumbnail: string
+}
+
+interface TranscriptItem {
+  index: number
+  videoId: string
+  title: string
+  transcript: string
+  charCount: number
+  skipped?: boolean
+}
+
+export default function SourceChannelProcessPage() {
+  const [channels, setChannels] = useState<SourceChannel[]>([])
+  const [selectedChannelCode, setSelectedChannelCode] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [videos, setVideos] = useState<YouTubeVideo[]>([])
+  const [fetchingVideos, setFetchingVideos] = useState(false)
+  const [maxResults, setMaxResults] = useState(1000)
+  const [transcripts, setTranscripts] = useState<TranscriptItem[]>([])
+  const [fetchingTranscripts, setFetchingTranscripts] = useState(false)
+  const [transcriptProgress, setTranscriptProgress] = useState({ current: 0, total: 0 })
+  const [selectedTranscriptIndex, setSelectedTranscriptIndex] = useState<number | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  // New state for processing
+  const [targetChannel, setTargetChannel] = useState('')
+  const [channelPrompt, setChannelPrompt] = useState('')
+  const [processing, setProcessing] = useState(false)
+  const [processedScript, setProcessedScript] = useState('')
+  const [addingToQueue, setAddingToQueue] = useState(false)
+  const [skipping, setSkipping] = useState(false)
+  const [loadingTranscripts, setLoadingTranscripts] = useState(false)
+
+  const fetchChannels = useCallback(async () => {
+    setLoading(true)
+    try {
+      const response = await fetch('/api/source-channels')
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to fetch channels')
+      const activeChannels = (data.channels || []).filter((c: SourceChannel) => c.is_active)
+      setChannels(activeChannels)
+    } catch (error) {
+      console.error('Error fetching channels:', error)
+      toast.error('Failed to load channels')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  const fetchPrompt = useCallback(async () => {
+    try {
+      const response = await fetch('/api/settings')
+      const data = await response.json()
+      if (data.settings?.prompts?.youtube) setChannelPrompt(data.settings.prompts.youtube)
+    } catch (error) {
+      console.error('Error fetching prompt:', error)
+    }
+  }, [])
+
+  const loadExistingTranscripts = useCallback(async (channelCode: string) => {
+    setLoadingTranscripts(true)
+    try {
+      const response = await fetch('/api/transcripts/list?channelCode=' + encodeURIComponent(channelCode))
+      const data = await response.json()
+      console.log('Load transcripts response:', data)
+      if (data.transcripts && data.transcripts.length > 0) {
+        setTranscripts(data.transcripts)
+        toast.success('Loaded ' + data.transcripts.length + ' saved transcripts')
+      } else {
+        toast.info('No saved transcripts found for ' + channelCode)
+      }
+    } catch (error) {
+      console.error('Error loading transcripts:', error)
+      toast.error('Failed to load transcripts')
+    } finally {
+      setLoadingTranscripts(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchChannels()
+    fetchPrompt()
+  }, [fetchChannels, fetchPrompt])
+
+  useEffect(() => {
+    if (selectedChannelCode) {
+      setTranscripts([])
+      setSelectedTranscriptIndex(null)
+      setProcessedScript('')
+      loadExistingTranscripts(selectedChannelCode)
+    }
+  }, [selectedChannelCode, loadExistingTranscripts])
+
+  const selectedChannel = channels.find(c => c.channel_code === selectedChannelCode)
+  const selectedTranscript = transcripts.find(t => t.index === selectedTranscriptIndex)
+
+  const fetchVideos = async () => {
+    if (!selectedChannel?.youtube_channel_url) {
+      toast.error('No YouTube channel URL configured')
+      return
+    }
+    setFetchingVideos(true)
+    setVideos([])
+    setTranscripts([])
+    setSelectedTranscriptIndex(null)
+    setProcessedScript('')
+    try {
+      const response = await fetch('/api/youtube/channel-videos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          channelUrl: selectedChannel.youtube_channel_url,
+          maxResults,
+          minDuration: selectedChannel.min_duration_seconds || 600,
+          maxDuration: selectedChannel.max_duration_seconds || 3600,
+        })
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to fetch videos')
+      setVideos(data.videos || [])
+      toast.success('Found ' + (data.videos?.length || 0) + ' videos')
+    } catch (error) {
+      console.error('Error fetching videos:', error)
+      toast.error(error instanceof Error ? error.message : 'Failed to fetch videos')
+    } finally {
+      setFetchingVideos(false)
+    }
+  }
+
+  const fetchTranscripts = async () => {
+    if (videos.length === 0) {
+      toast.error('No videos to fetch transcripts for')
+      return
+    }
+    setFetchingTranscripts(true)
+    setTranscriptProgress({ current: 0, total: videos.length })
+    setTranscripts([])
+    setSelectedTranscriptIndex(null)
+    const newTranscripts: TranscriptItem[] = []
+    try {
+      for (let i = 0; i < videos.length; i++) {
+        const video = videos[i]
+        setTranscriptProgress({ current: i + 1, total: videos.length })
+        try {
+          const response = await fetch('/api/youtube/transcript', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ videoUrl: 'https://youtube.com/watch?v=' + video.id })
+          })
+          const data = await response.json()
+          const transcript = data.transcript || ''
+          newTranscripts.push({ index: i + 1, videoId: video.id, title: video.title, transcript, charCount: transcript.length })
+          setTranscripts([...newTranscripts])
+          await new Promise(resolve => setTimeout(resolve, 50))
+        } catch {
+          newTranscripts.push({ index: i + 1, videoId: video.id, title: video.title, transcript: '[Error fetching transcript]', charCount: 0 })
+          setTranscripts([...newTranscripts])
+        }
+      }
+      toast.success('Fetched ' + newTranscripts.length + ' transcripts')
+    } finally {
+      setFetchingTranscripts(false)
+    }
+  }
+
+  const saveTranscripts = async () => {
+    if (transcripts.length === 0) {
+      toast.error('No transcripts to save')
+      return
+    }
+    setSaving(true)
+    try {
+      const response = await fetch('/api/transcripts/save-batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          channelCode: selectedChannelCode,
+          transcripts: transcripts.filter(t => !t.skipped).map(t => ({ index: t.index, videoId: t.videoId, title: t.title, transcript: t.transcript }))
+        })
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to save transcripts')
+      toast.success('Saved ' + transcripts.filter(t => !t.skipped).length + ' transcripts to ' + (data.folder || 'file server'))
+    } catch (error) {
+      console.error('Error saving transcripts:', error)
+      toast.error(error instanceof Error ? error.message : 'Failed to save transcripts')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // Copy prompt + transcript (no separator, just concatenated)
+  const copyPromptAndTranscript = async () => {
+    if (!selectedTranscript) {
+      toast.error('Select a transcript first')
+      return
+    }
+    const textToCopy = channelPrompt + selectedTranscript.transcript
+    try {
+      await navigator.clipboard.writeText(textToCopy)
+      toast.success('Prompt + Transcript copied!')
+    } catch {
+      const textarea = document.createElement('textarea')
+      textarea.value = textToCopy
+      document.body.appendChild(textarea)
+      textarea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textarea)
+      toast.success('Prompt + Transcript copied!')
+    }
+  }
+
+  // Process with AI (Gemini/DeepSeek via chunks)
+  const processWithAI = async () => {
+    if (!selectedTranscript) {
+      toast.error('Select a transcript first')
+      return
+    }
+    setProcessing(true)
+    try {
+      const response = await fetch('/api/ai/process', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transcript: selectedTranscript.transcript,
+          aiProvider: 'gemini',
+          geminiModel: 'gemini-2.5-flash'
+        })
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'AI processing failed')
+      setProcessedScript(data.processedScript || '')
+      toast.success('Script processed! ' + (data.processedLength?.toLocaleString() || 0) + ' characters')
+    } catch (error) {
+      console.error('Error processing:', error)
+      toast.error(error instanceof Error ? error.message : 'AI processing failed')
+    } finally {
+      setProcessing(false)
+    }
+  }
+
+  // Skip transcript - move to skip folder
+  const skipTranscript = async () => {
+    if (!selectedTranscript || !selectedChannelCode) {
+      toast.error('Select a transcript first')
+      return
+    }
+    setSkipping(true)
+    try {
+      const response = await fetch('/api/transcripts/skip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          channelCode: selectedChannelCode,
+          index: selectedTranscript.index,
+          videoId: selectedTranscript.videoId,
+          title: selectedTranscript.title,
+          transcript: selectedTranscript.transcript
+        })
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to skip')
+
+      // Mark as skipped locally
+      setTranscripts(prev => prev.map(t =>
+        t.index === selectedTranscript.index ? { ...t, skipped: true } : t
+      ))
+
+      // Move to next transcript
+      const currentIdx = transcripts.findIndex(t => t.index === selectedTranscript.index)
+      const nextTranscript = transcripts.find((t, i) => i > currentIdx && !t.skipped)
+      if (nextTranscript) setSelectedTranscriptIndex(nextTranscript.index)
+      else setSelectedTranscriptIndex(null)
+
+      setProcessedScript('')
+      toast.success('Transcript skipped and saved to skip folder')
+    } catch (error) {
+      console.error('Error skipping:', error)
+      toast.error(error instanceof Error ? error.message : 'Failed to skip')
+    } finally {
+      setSkipping(false)
+    }
+  }
+
+  // Add to audio queue (same as single video page)
+  const addToQueue = async () => {
+    if (!processedScript.trim()) {
+      toast.error('No processed script to add')
+      return
+    }
+    if (!targetChannel) {
+      toast.error('Please select target channel')
+      return
+    }
+    setAddingToQueue(true)
+    try {
+      // Call organize API to get video number and folder structure
+      const organizeResponse = await fetch('/api/gdrive/organize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          channelCode: targetChannel,
+          transcript: selectedTranscript?.transcript || '',
+          processedScript
+        })
+      })
+      const organizeData = await organizeResponse.json()
+      if (!organizeResponse.ok) throw new Error(organizeData.error || 'Failed to organize')
+
+      const { videoNumber, date: tomorrowDate, audioCounter } = organizeData
+      const supabase = createClient()
+      const jobId = generateUUID()
+      const currentCounter = audioCounter || 1
+
+      const { error } = await supabase
+        .from('audio_jobs')
+        // @ts-ignore - audio_jobs table
+        .insert({
+          job_id: jobId,
+          script_text: processedScript.trim(),
+          chat_id: 'web_dashboard',
+          channel_code: targetChannel,
+          video_number: videoNumber,
+          date: tomorrowDate,
+          audio_counter: currentCounter,
+          channel_shortform: targetChannel,
+          status: 'pending',
+          priority: 1,
+          retry_count: 0,
+        } as Record<string, unknown>)
+
+      if (error) throw error
+
+      toast.success('Job created! ' + targetChannel + ' Video ' + videoNumber + ' for ' + tomorrowDate + ' | Counter: #' + currentCounter)
+
+      // Move to next transcript
+      if (selectedTranscript) {
+        const currentIdx = transcripts.findIndex(t => t.index === selectedTranscript.index)
+        const nextTranscript = transcripts.find((t, i) => i > currentIdx && !t.skipped)
+        if (nextTranscript) setSelectedTranscriptIndex(nextTranscript.index)
+        else setSelectedTranscriptIndex(null)
+      }
+      setProcessedScript('')
+
+    } catch (error) {
+      console.error('Error creating job:', error)
+      toast.error(error instanceof Error ? error.message : 'Failed to create job')
+    } finally {
+      setAddingToQueue(false)
+    }
+  }
+
+  const formatDuration = (seconds: number) => {
+    const hrs = Math.floor(seconds / 3600)
+    const mins = Math.floor((seconds % 3600) / 60)
+    const secs = seconds % 60
+    if (hrs > 0) return hrs + ':' + mins.toString().padStart(2, '0') + ':' + secs.toString().padStart(2, '0')
+    return mins + ':' + secs.toString().padStart(2, '0')
+  }
+
+  const scriptCharCount = processedScript.length
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-white flex items-center gap-2">
+            <Layers className="h-8 w-8 text-purple-500" />
+            Process Source Channel
+          </h1>
+          <p className="text-slate-400 mt-1">Fetch videos and transcripts from YouTube channels</p>
+        </div>
+        <Button variant="outline" onClick={() => { fetchChannels(); fetchPrompt(); }} className="border-slate-600 text-slate-300 hover:bg-slate-700">
+          <RefreshCw className="mr-2 h-4 w-4" />
+          Refresh
+        </Button>
+      </div>
+
+      <Card className="bg-slate-800/50 border-slate-700">
+        <CardHeader>
+          <CardTitle className="text-white">Select Source Channel</CardTitle>
+          <CardDescription className="text-slate-400">Choose a channel and fetch videos from YouTube</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-4 gap-4">
+            <div className="space-y-2">
+              <Label className="text-slate-200">Source Channel</Label>
+              <Select value={selectedChannelCode} onValueChange={setSelectedChannelCode}>
+                <SelectTrigger className="bg-slate-700/50 border-slate-600 text-white">
+                  <SelectValue placeholder="Select a channel" />
+                </SelectTrigger>
+                <SelectContent className="bg-slate-800 border-slate-700">
+                  {channels.map((channel) => (
+                    <SelectItem key={channel.channel_code} value={channel.channel_code} className="text-slate-200 focus:bg-slate-700">
+                      {channel.channel_code} - {channel.channel_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-slate-200">Target Channel</Label>
+              <Select value={targetChannel} onValueChange={setTargetChannel}>
+                <SelectTrigger className="bg-slate-700/50 border-slate-600 text-white">
+                  <SelectValue placeholder="Select target" />
+                </SelectTrigger>
+                <SelectContent className="bg-slate-800 border-slate-700">
+                  {TARGET_CHANNELS.map((ch) => (
+                    <SelectItem key={ch} value={ch} className="text-slate-200 focus:bg-slate-700">{ch}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-slate-200">Max Videos</Label>
+              <Input type="number" value={maxResults} onChange={(e) => setMaxResults(parseInt(e.target.value) || 100)} min={10} max={1000} className="bg-slate-700/50 border-slate-600 text-white" />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-slate-200">Duration Filter</Label>
+              <div className="text-sm text-slate-400 pt-2">
+                {selectedChannel ? formatDuration(selectedChannel.min_duration_seconds || 600) + ' - ' + formatDuration(selectedChannel.max_duration_seconds || 3600) : 'Select a channel'}
+              </div>
+            </div>
+          </div>
+
+          {selectedChannel?.youtube_channel_url && (
+            <p className="text-slate-500 text-xs font-mono truncate">{selectedChannel.youtube_channel_url}</p>
+          )}
+
+          <div className="flex gap-3">
+            <Button onClick={() => loadExistingTranscripts(selectedChannelCode)} disabled={loadingTranscripts || !selectedChannelCode} className="bg-slate-600 hover:bg-slate-700">
+              {loadingTranscripts ? (<><Loader2 className="mr-2 h-4 w-4 animate-spin" />Loading...</>) : (<><FileText className="mr-2 h-4 w-4" />Load Saved</>)}
+            </Button>
+            <Button onClick={fetchVideos} disabled={fetchingVideos || !selectedChannelCode} className="flex-1 bg-red-600 hover:bg-red-700">
+              {fetchingVideos ? (<><Loader2 className="mr-2 h-4 w-4 animate-spin" />Fetching Videos...</>) : (<><Youtube className="mr-2 h-4 w-4" />Fetch {maxResults} Videos</>)}
+            </Button>
+            <Button onClick={fetchTranscripts} disabled={fetchingTranscripts || videos.length === 0} className="flex-1 bg-blue-600 hover:bg-blue-700">
+              {fetchingTranscripts ? (<><Loader2 className="mr-2 h-4 w-4 animate-spin" />{transcriptProgress.current}/{transcriptProgress.total}</>) : (<><Download className="mr-2 h-4 w-4" />Fetch Transcripts (20/sec)</>)}
+            </Button>
+            <Button onClick={saveTranscripts} disabled={saving || transcripts.length === 0} className="flex-1 bg-green-600 hover:bg-green-700">
+              {saving ? (<><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving...</>) : (<><Save className="mr-2 h-4 w-4" />Save Transcripts</>)}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {(videos.length > 0 || transcripts.length > 0) && (
+        <div className="flex items-center gap-4 text-sm">
+          <Badge variant="outline" className="border-red-500/30 text-red-400">{videos.length} Videos</Badge>
+          <Badge variant="outline" className="border-blue-500/30 text-blue-400">{transcripts.length} Transcripts</Badge>
+          <Badge variant="outline" className="border-green-500/30 text-green-400">{transcripts.reduce((sum, t) => sum + t.charCount, 0).toLocaleString()} Total Chars</Badge>
+        </div>
+      )}
+
+      {transcripts.length > 0 && (
+        <div className="grid grid-cols-3 gap-4">
+          <Card className="col-span-1 bg-slate-800/50 border-slate-700 flex flex-col">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-white text-lg">Transcripts</CardTitle>
+              <CardDescription className="text-slate-400">Click to view content</CardDescription>
+            </CardHeader>
+            <CardContent className="flex-1 p-0">
+              <ScrollArea className="h-[400px]">
+                <div className="p-4 space-y-1">
+                  {transcripts.map((item) => (
+                    <div key={item.index} onClick={() => setSelectedTranscriptIndex(item.index)} className={'flex items-center justify-between p-2 rounded cursor-pointer transition-colors ' + (selectedTranscriptIndex === item.index ? 'bg-blue-600/30 border border-blue-500/50' : 'hover:bg-slate-700/50')}>
+                      <div className="flex items-center gap-2">
+                        <span className="text-slate-400 font-mono text-sm w-8">{item.index}</span>
+                        <FileText className={'h-4 w-4 ' + (item.charCount > 0 ? 'text-green-400' : 'text-red-400')} />
+                      </div>
+                      <span className={'text-xs font-mono ' + (item.charCount > 0 ? 'text-slate-400' : 'text-red-400')}>{item.charCount > 0 ? item.charCount.toLocaleString() : 'Error'}</span>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+            </CardContent>
+          </Card>
+
+          <Card className="col-span-2 bg-slate-800/50 border-slate-700 flex flex-col">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-white text-lg">
+                {selectedTranscript ? (<span className="flex items-center gap-2"><Badge className="bg-blue-600">{selectedTranscript.index}</Badge><span className="truncate">{selectedTranscript.title}</span></span>) : 'Select a transcript'}
+              </CardTitle>
+              {selectedTranscript && (<CardDescription className="text-slate-400">Video ID: {selectedTranscript.videoId} | {selectedTranscript.charCount.toLocaleString()} characters</CardDescription>)}
+            </CardHeader>
+            <CardContent className="flex-1 p-0">
+              <ScrollArea className="h-[350px]">
+                <div className="p-4">
+                  {selectedTranscript ? (<pre className="text-slate-300 text-sm whitespace-pre-wrap font-mono leading-relaxed">{selectedTranscript.transcript}</pre>) : (<div className="flex items-center justify-center h-full text-slate-500">Select a transcript from the list</div>)}
+                </div>
+              </ScrollArea>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {selectedTranscript && (
+        <Card className="bg-slate-800/50 border-slate-700">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-white text-lg">Actions</CardTitle>
+            <CardDescription className="text-slate-400">Process selected transcript (#{selectedTranscript.index})</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex gap-3">
+              <Button onClick={copyPromptAndTranscript} className="flex-1 bg-purple-600 hover:bg-purple-700">
+                <Copy className="mr-2 h-4 w-4" />
+                Copy Prompt + Transcript
+              </Button>
+              <Button onClick={processWithAI} disabled={processing} className="flex-1 bg-orange-600 hover:bg-orange-700">
+                {processing ? (<><Loader2 className="mr-2 h-4 w-4 animate-spin" />Processing...</>) : (<><Sparkles className="mr-2 h-4 w-4" />AI Process</>)}
+              </Button>
+              <Button onClick={skipTranscript} disabled={skipping || !targetChannel} variant="outline" className="flex-1 border-yellow-600 text-yellow-400 hover:bg-yellow-600/20">
+                {skipping ? (<><Loader2 className="mr-2 h-4 w-4 animate-spin" />Skipping...</>) : (<><SkipForward className="mr-2 h-4 w-4" />Skip</>)}
+              </Button>
+              <Button onClick={() => window.open('https://gemini.google.com', '_blank')} variant="outline" className="border-blue-600 text-blue-400 hover:bg-blue-600/20">
+                <ExternalLink className="mr-2 h-4 w-4" />
+                Gemini
+              </Button>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-slate-200">Processed Script</Label>
+                <span className="text-xs text-slate-400">{scriptCharCount.toLocaleString()} characters</span>
+              </div>
+              <Textarea
+                value={processedScript}
+                onChange={(e) => setProcessedScript(e.target.value)}
+                placeholder="Paste or AI-generated script will appear here..."
+                className="bg-slate-700/50 border-slate-600 text-white min-h-[200px] font-mono text-sm"
+              />
+            </div>
+
+            <Button onClick={addToQueue} disabled={addingToQueue || !processedScript || !targetChannel} className="w-full bg-green-600 hover:bg-green-700">
+              {addingToQueue ? (<><Loader2 className="mr-2 h-4 w-4 animate-spin" />Adding to Queue...</>) : (<><Plus className="mr-2 h-4 w-4" />Add to Audio Queue ({targetChannel || 'Select Target'})</>)}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      <Card className="bg-blue-900/20 border-blue-700/30">
+        <CardContent className="py-4">
+          <p className="text-blue-300 text-sm"><strong>Workflow:</strong> (1) Select source channel and fetch videos, (2) Fetch transcripts at 20/sec, (3) Select target channel (BI/AFG/GYH), (4) For each transcript: Copy or AI Process, then Add to Audio Queue. Use Skip to move unwanted transcripts.</p>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+
+================================================================================
+PART 2: SOURCE CHANNELS API (app/api/source-channels/route.ts)
+================================================================================
+
+import { NextResponse } from 'next/server'
+import {
+  getSourceChannels,
+  addSourceChannel,
+  updateSourceChannel,
+  deleteSourceChannel,
+  toggleSourceChannel
+} from '@/lib/file-server'
+
+// GET - List all channels
+export async function GET() {
+  try {
+    const channels = await getSourceChannels()
+    return NextResponse.json({ channels })
+  } catch (error) {
+    console.error('Error fetching channels:', error)
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Failed to fetch channels' },
+      { status: 500 }
+    )
+  }
+}
+
+// POST - Add new channel
+export async function POST(request: Request) {
+  try {
+    const body = await request.json()
+    const channel = await addSourceChannel(body)
+    return NextResponse.json({ channel })
+  } catch (error) {
+    console.error('Error adding channel:', error)
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Failed to add channel' },
+      { status: 500 }
+    )
+  }
+}
+
+// PUT - Update channel
+export async function PUT(request: Request) {
+  try {
+    const body = await request.json()
+    const { channel_code, toggle, ...updates } = body
+
+    if (!channel_code) {
+      return NextResponse.json({ error: 'channel_code required' }, { status: 400 })
+    }
+
+    // If just toggling active status
+    if (toggle) {
+      const result = await toggleSourceChannel(channel_code)
+      return NextResponse.json(result)
+    }
+
+    // Full update
+    const channel = await updateSourceChannel(channel_code, { channel_code, ...updates })
+    return NextResponse.json({ channel })
+  } catch (error) {
+    console.error('Error updating channel:', error)
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Failed to update channel' },
+      { status: 500 }
+    )
+  }
+}
+
+// DELETE - Delete channel
+export async function DELETE(request: Request) {
+  try {
+    const { searchParams } = new URL(request.url)
+    const channelCode = searchParams.get('channel_code')
+
+    if (!channelCode) {
+      return NextResponse.json({ error: 'channel_code required' }, { status: 400 })
+    }
+
+    const result = await deleteSourceChannel(channelCode)
+    return NextResponse.json(result)
+  } catch (error) {
+    console.error('Error deleting channel:', error)
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Failed to delete channel' },
+      { status: 500 }
+    )
+  }
+}
+
+
+================================================================================
+PART 3: YOUTUBE CHANNEL VIDEOS API (app/api/youtube/channel-videos/route.ts)
+================================================================================
+
+import { NextRequest, NextResponse } from 'next/server'
+import * as fileServer from '@/lib/file-server'
+
+function extractChannelId(url: string): { channelId?: string; handle?: string } {
+  const handleMatch = url.match(/@([a-zA-Z0-9_-]+)/)
+  if (handleMatch) return { handle: handleMatch[1] }
+  const channelIdMatch = url.match(/channel\/(UC[a-zA-Z0-9_-]+)/)
+  if (channelIdMatch) return { channelId: channelIdMatch[1] }
+  return {}
+}
+
+function parseDuration(duration: string): number {
+  const match = duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/)
+  if (!match) return 0
+  return parseInt(match[1] || '0') * 3600 + parseInt(match[2] || '0') * 60 + parseInt(match[3] || '0')
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json()
+    const { channelUrl, maxResults = 100, minDuration = 600, maxDuration = 3600 } = body
+
+    if (!channelUrl) return NextResponse.json({ error: 'channelUrl is required' }, { status: 400 })
+
+    // Get YouTube API key from file server
+    let apiKey: string
+    try {
+      const keyData = await fileServer.getRawApiKey('youtube')
+      apiKey = keyData.key
+    } catch {
+      return NextResponse.json({ error: 'No active YouTube API key found' }, { status: 400 })
+    }
+
+    const { channelId, handle } = extractChannelId(channelUrl)
+    let resolvedChannelId = channelId
+
+    if (!resolvedChannelId && handle) {
+      const searchResponse = await fetch(
+        `https://www.googleapis.com/youtube/v3/search?part=snippet&type=channel&q=${handle}&key=${apiKey}`
+      )
+      if (!searchResponse.ok) return NextResponse.json({ error: 'Failed to resolve channel handle' }, { status: 400 })
+      const searchData = await searchResponse.json()
+      if (searchData.items?.length) resolvedChannelId = searchData.items[0].snippet.channelId
+    }
+
+    if (!resolvedChannelId) return NextResponse.json({ error: 'Could not resolve channel ID from URL' }, { status: 400 })
+
+    const allVideos: Array<{ id: string; title: string; duration: string; durationSeconds: number; viewCount: number; publishedAt: string; thumbnail: string }> = []
+    let nextPageToken = ''
+    let pagesProcessed = 0
+    const maxPages = Math.ceil(maxResults / 50) + 2
+
+    while (pagesProcessed < maxPages) {
+      const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&channelId=${resolvedChannelId}&type=video&order=viewCount&maxResults=50${nextPageToken ? `&pageToken=${nextPageToken}` : ''}&key=${apiKey}`
+      const searchResponse = await fetch(searchUrl)
+      if (!searchResponse.ok) break
+
+      const searchData = await searchResponse.json()
+      const videoIds = searchData.items?.map((item: { id: { videoId: string } }) => item.id.videoId).filter(Boolean) || []
+      if (!videoIds.length) break
+
+      const detailsResponse = await fetch(
+        `https://www.googleapis.com/youtube/v3/videos?part=contentDetails,statistics,snippet&id=${videoIds.join(',')}&key=${apiKey}`
+      )
+      if (!detailsResponse.ok) break
+
+      const detailsData = await detailsResponse.json()
+
+      for (const video of detailsData.items || []) {
+        const durationSeconds = parseDuration(video.contentDetails?.duration || '')
+        if (durationSeconds >= minDuration && durationSeconds <= maxDuration) {
+          allVideos.push({
+            id: video.id,
+            title: video.snippet?.title || 'Untitled',
+            duration: video.contentDetails?.duration || '',
+            durationSeconds,
+            viewCount: parseInt(video.statistics?.viewCount || '0'),
+            publishedAt: video.snippet?.publishedAt || '',
+            thumbnail: video.snippet?.thumbnails?.medium?.url || video.snippet?.thumbnails?.default?.url || ''
+          })
+        }
+      }
+
+      nextPageToken = searchData.nextPageToken
+      if (!nextPageToken || allVideos.length >= maxResults) break
+      pagesProcessed++
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+
+    const sortedVideos = allVideos.sort((a, b) => b.viewCount - a.viewCount).slice(0, maxResults)
+
+    return NextResponse.json({ success: true, channelId: resolvedChannelId, videos: sortedVideos, totalFound: allVideos.length })
+  } catch (error) {
+    return NextResponse.json({ error: String(error) }, { status: 500 })
+  }
+}
+
+
+================================================================================
+PART 4: YOUTUBE TRANSCRIPT API (app/api/youtube/transcript/route.ts)
+================================================================================
+
+import { NextRequest, NextResponse } from 'next/server'
+import * as fileServer from '@/lib/file-server'
+
+async function getYouTubeTranscript(videoUrl: string, apiKey: string): Promise<{ transcript: string | null; keyExhausted: boolean }> {
+  try {
+    const params = new URLSearchParams({ url: videoUrl, text: 'true', mode: 'auto' })
+    const response = await fetch(`https://api.supadata.ai/v1/transcript?${params.toString()}`, {
+      method: 'GET',
+      headers: { 'x-api-key': apiKey, 'Accept': 'application/json' }
+    })
+
+    if (response.status === 401) return { transcript: null, keyExhausted: false }
+    if (response.status === 429) return { transcript: null, keyExhausted: true }
+
+    if (response.status === 202) {
+      const data = await response.json()
+      const jobId = data.jobId || data.job_id
+      if (!jobId) return { transcript: null, keyExhausted: false }
+
+      for (let i = 0; i < 60; i++) {
+        await new Promise(resolve => setTimeout(resolve, 5000))
+        const pollResponse = await fetch(`https://api.supadata.ai/v1/transcript/${jobId}`, {
+          headers: { 'x-api-key': apiKey, 'Accept': 'application/json' }
+        })
+        if (pollResponse.status === 429) return { transcript: null, keyExhausted: true }
+        if (pollResponse.ok) {
+          const result = await pollResponse.json()
+          if (result.status === 'completed') {
+            const transcript = extractTranscript(result)
+            if (transcript) return { transcript, keyExhausted: false }
+          } else if (result.status === 'failed') return { transcript: null, keyExhausted: false }
+        }
+      }
+      return { transcript: null, keyExhausted: false }
+    }
+
+    if (!response.ok) return { transcript: null, keyExhausted: false }
+
+    const data = await response.json()
+    const transcript = extractTranscript(data)
+    return { transcript, keyExhausted: false }
+  } catch { return { transcript: null, keyExhausted: false } }
+}
+
+function extractTranscript(data: Record<string, unknown>): string | null {
+  let text = (data.content as string) || (data.text as string) || (data.transcript as string) || ''
+  if (!text && data.data) {
+    if (typeof data.data === 'string') text = data.data
+    else if (typeof data.data === 'object' && data.data !== null) {
+      const d = data.data as Record<string, unknown>
+      text = (d.content as string) || (d.text as string) || ''
+    }
+  }
+  return text?.trim() || null
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json()
+    const { videoUrl } = body
+    if (!videoUrl) return NextResponse.json({ error: 'videoUrl is required' }, { status: 400 })
+
+    let supadataKey: string | null = null
+    try {
+      const keyData = await fileServer.getRawApiKey('supadata')
+      supadataKey = keyData.key
+    } catch {
+      return NextResponse.json({ error: 'No active Supadata API key found' }, { status: 400 })
+    }
+
+    const { transcript, keyExhausted } = await getYouTubeTranscript(videoUrl, supadataKey)
+    if (keyExhausted) return NextResponse.json({ error: 'Supadata API key exhausted' }, { status: 429 })
+    if (!transcript) return NextResponse.json({ error: 'Failed to fetch transcript' }, { status: 400 })
+
+    return NextResponse.json({ success: true, transcript, length: transcript.length })
+  } catch (error) {
+    return NextResponse.json({ error: String(error) }, { status: 500 })
+  }
+}
+
+
+================================================================================
+PART 5: TRANSCRIPTS LIST API (app/api/transcripts/list/route.ts)
+================================================================================
+
+import { NextRequest, NextResponse } from 'next/server'
+
+const FILE_SERVER_URL = process.env.FILE_SERVER_URL || 'http://localhost:8000'
+const FILE_SERVER_API_KEY = process.env.FILE_SERVER_API_KEY || 'f5-local-test-key-2024'
+
+export async function GET(request: NextRequest) {
+  try {
+    const channelCode = request.nextUrl.searchParams.get('channelCode')
+
+    if (!channelCode) {
+      return NextResponse.json({ error: 'channelCode required' }, { status: 400 })
+    }
+
+    const folderPath = 'transcripts/' + channelCode
+
+    // List files in the folder
+    const listResponse = await fetch(FILE_SERVER_URL + '/api/files/list?path=' + encodeURIComponent(folderPath), {
+      headers: { 'X-API-Key': FILE_SERVER_API_KEY }
+    })
+
+    if (!listResponse.ok) {
+      // Folder doesn't exist or empty
+      return NextResponse.json({ transcripts: [] })
+    }
+
+    const files = await listResponse.json()
+
+    // Filter for .txt files and sort by number
+    const txtFiles = files.filter((f: { name: string; is_dir: boolean }) =>
+      !f.is_dir && f.name.endsWith('.txt')
+    ).sort((a: { name: string }, b: { name: string }) => {
+      const numA = parseInt(a.name.replace('.txt', ''))
+      const numB = parseInt(b.name.replace('.txt', ''))
+      return numA - numB
+    })
+
+    // Read each transcript file
+    const transcripts = []
+    for (const file of txtFiles) {
+      try {
+        const readResponse = await fetch(FILE_SERVER_URL + '/api/files/read?path=' + encodeURIComponent(folderPath + '/' + file.name), {
+          headers: { 'X-API-Key': FILE_SERVER_API_KEY }
+        })
+
+        if (readResponse.ok) {
+          const { content } = await readResponse.json()
+
+          // Parse content (format: Title: ...\nVideo ID: ...\n\n<transcript>)
+          const lines = content.split('\n')
+          let title = ''
+          let videoId = ''
+          let transcript = ''
+
+          for (let i = 0; i < lines.length; i++) {
+            if (lines[i].startsWith('Title: ')) {
+              title = lines[i].substring(7)
+            } else if (lines[i].startsWith('Video ID: ')) {
+              videoId = lines[i].substring(10)
+            } else if (i > 1) {
+              transcript += (transcript ? '\n' : '') + lines[i]
+            }
+          }
+
+          const index = parseInt(file.name.replace('.txt', ''))
+          transcripts.push({
+            index,
+            videoId,
+            title,
+            transcript: transcript.trim(),
+            charCount: transcript.trim().length
+          })
+        }
+      } catch {
+        // Skip files that can't be read
+      }
+    }
+
+    return NextResponse.json({ transcripts })
+  } catch (error) {
+    console.error('Error listing transcripts:', error)
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Failed to list transcripts' },
+      { status: 500 }
+    )
+  }
+}
+
+
+================================================================================
+PART 6: TRANSCRIPTS SAVE BATCH API (app/api/transcripts/save-batch/route.ts)
+================================================================================
+
+import { NextResponse } from 'next/server'
+
+const FILE_SERVER_URL = process.env.FILE_SERVER_URL || 'http://localhost:8000'
+const FILE_SERVER_API_KEY = process.env.FILE_SERVER_API_KEY || 'f5-local-test-key-2024'
+
+interface TranscriptData {
+  index: number
+  videoId: string
+  title: string
+  transcript: string
+}
+
+export async function POST(request: Request) {
+  try {
+    const body = await request.json()
+    const { channelCode, transcripts } = body as { channelCode: string; transcripts: TranscriptData[] }
+
+    if (!channelCode) {
+      return NextResponse.json({ error: 'channelCode required' }, { status: 400 })
+    }
+
+    if (!transcripts || transcripts.length === 0) {
+      return NextResponse.json({ error: 'No transcripts to save' }, { status: 400 })
+    }
+
+
+    const folderPath = 'transcripts/' + channelCode
+
+    await fetch(FILE_SERVER_URL + '/api/files/mkdir?path=' + encodeURIComponent(folderPath), {
+      method: 'POST',
+      headers: { 'X-API-Key': FILE_SERVER_API_KEY }
+    })
+
+    const results = []
+    for (const t of transcripts) {
+      const filePath = folderPath + '/' + t.index + '.txt'
+      const nl = String.fromCharCode(10)
+      const content = 'Title: ' + t.title + nl + 'Video ID: ' + t.videoId + nl + nl + t.transcript
+
+      const response = await fetch(FILE_SERVER_URL + '/api/files/write', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': FILE_SERVER_API_KEY
+        },
+        body: JSON.stringify({ path: filePath, content, create_dirs: true })
+      })
+
+      results.push({ index: t.index, success: response.ok })
+    }
+
+    const successCount = results.filter(r => r.success).length
+
+    return NextResponse.json({
+      success: true,
+      folder: folderPath,
+      saved: successCount,
+      total: transcripts.length
+    })
+  } catch (error) {
+    console.error('Error saving transcripts:', error)
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Failed to save transcripts' },
+      { status: 500 }
+    )
+  }
+}
+
+
+================================================================================
+PART 7: TRANSCRIPTS SKIP API (app/api/transcripts/skip/route.ts)
+================================================================================
+
+import { NextResponse } from 'next/server'
+
+const FILE_SERVER_URL = process.env.FILE_SERVER_URL || 'http://localhost:8000'
+const FILE_SERVER_API_KEY = process.env.FILE_SERVER_API_KEY || 'f5-local-test-key-2024'
+
+export async function POST(request: Request) {
+  try {
+    const body = await request.json()
+    const { channelCode, index, videoId, title, transcript } = body
+
+    if (!channelCode || !index) {
+      return NextResponse.json({ error: 'channelCode and index required' }, { status: 400 })
+    }
+
+    const folderPath = 'skip/' + channelCode
+    const filePath = folderPath + '/' + index + '.txt'
+    const nl = String.fromCharCode(10)
+    const content = 'Title: ' + title + nl + 'Video ID: ' + videoId + nl + nl + transcript
+
+    // Create skip folder
+    await fetch(FILE_SERVER_URL + '/api/files/mkdir?path=' + encodeURIComponent(folderPath), {
+      method: 'POST',
+      headers: { 'X-API-Key': FILE_SERVER_API_KEY }
+    })
+
+    // Write transcript to skip folder
+    const response = await fetch(FILE_SERVER_URL + '/api/files/write', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': FILE_SERVER_API_KEY
+      },
+      body: JSON.stringify({ path: filePath, content, create_dirs: true })
+    })
+
+    if (!response.ok) {
+      throw new Error('Failed to write skip file')
+    }
+
+    return NextResponse.json({
+      success: true,
+      path: filePath
+    })
+  } catch (error) {
+    console.error('Error skipping transcript:', error)
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Failed to skip transcript' },
+      { status: 500 }
+    )
+  }
+}
+
+
+================================================================================
+PART 8: AI PROCESS API (app/api/ai/process/route.ts)
+================================================================================
+
+import { NextRequest, NextResponse } from 'next/server'
+import * as fileServer from '@/lib/file-server'
+
+const GEMINI_MODELS: Record<string, string> = {
+  'gemini': 'gemini-2.5-flash',
+  'gemini-2.5-flash': 'gemini-2.5-flash',
+  'gemini-2.5-pro': 'gemini-2.5-pro-preview-06-05',
+}
+
+async function processWithDeepSeek(text: string, apiKey: string, prompt: string): Promise<string | null> {
+  try {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+        'HTTP-Referer': 'https://f5-dashboard.vercel.app',
+        'X-Title': 'F5-TTS Dashboard'
+      },
+      body: JSON.stringify({
+        model: 'deepseek/deepseek-chat',
+        messages: [
+          { role: 'system', content: prompt || 'You are a helpful assistant that rewrites text for text-to-speech.' },
+          { role: 'user', content: text }
+        ],
+        max_tokens: 8000,
+        temperature: 0.7
+      })
+    })
+    if (!response.ok) return null
+    const data = await response.json()
+    return data.choices?.[0]?.message?.content || null
+  } catch { return null }
+}
+
+async function processWithGemini(text: string, apiKey: string, prompt: string, modelKey: string = 'gemini'): Promise<string | null> {
+  try {
+    const model = GEMINI_MODELS[modelKey] || GEMINI_MODELS['gemini']
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: `${prompt || 'Rewrite for TTS:'}\n\n${text}` }] }],
+        generationConfig: { maxOutputTokens: 8000, temperature: 0.7 }
+      })
+    })
+    if (!response.ok) return null
+    const data = await response.json()
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || null
+  } catch { return null }
+}
+
+function chunkText(text: string, maxChars: number = 7000): string[] {
+  const chunks: string[] = []
+  let remaining = text
+  while (remaining.length > 0) {
+    if (remaining.length <= maxChars) { chunks.push(remaining); break }
+    let splitIndex = maxChars
+    const searchArea = remaining.substring(0, maxChars)
+    const lastPeriod = Math.max(searchArea.lastIndexOf('. '), searchArea.lastIndexOf('! '), searchArea.lastIndexOf('? '))
+    if (lastPeriod > maxChars * 0.5) splitIndex = lastPeriod + 1
+    chunks.push(remaining.substring(0, splitIndex).trim())
+    remaining = remaining.substring(splitIndex).trim()
+  }
+  return chunks
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json()
+    const { transcript, aiProvider = 'deepseek', geminiModel = 'gemini-2.5-flash' } = body
+    if (!transcript?.trim()) return NextResponse.json({ error: 'Transcript is required' }, { status: 400 })
+
+    let aiKey: string | null = null
+    let prompt = ''
+    try {
+      if (aiProvider === 'deepseek') {
+        const keyData = await fileServer.getRawApiKey('deepseek')
+        aiKey = keyData.key
+        try { prompt = (await fileServer.getPrompt('youtube')).prompt_text || '' } catch {}
+      } else {
+        const keyData = await fileServer.getRawApiKey('gemini')
+        aiKey = keyData.key
+        try { prompt = (await fileServer.getPrompt('channel')).prompt_text || '' } catch {}
+      }
+    } catch {}
+
+    if (!aiKey) return NextResponse.json({ error: `No active ${aiProvider} API key found.` }, { status: 400 })
+
+    const chunks = chunkText(transcript)
+    const processedChunks: string[] = []
+    for (let i = 0; i < chunks.length; i++) {
+      const processed = aiProvider === 'deepseek'
+        ? await processWithDeepSeek(chunks[i], aiKey, prompt)
+        : await processWithGemini(chunks[i], aiKey, prompt, geminiModel)
+      if (processed) processedChunks.push(processed)
+      else return NextResponse.json({ error: `AI failed on chunk ${i + 1}` }, { status: 500 })
+    }
+
+    return NextResponse.json({
+      success: true,
+      processedScript: processedChunks.join('\n\n'),
+      originalLength: transcript.length,
+      processedLength: processedChunks.join('').length,
+      chunksProcessed: chunks.length,
+      aiProvider
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'AI processing failed' }, { status: 500 })
+  }
+}
+
+
+================================================================================
+PART 9: GDRIVE ORGANIZE API (app/api/gdrive/organize/route.ts)
+================================================================================
+
+import { NextRequest, NextResponse } from 'next/server'
+import * as fileServer from '@/lib/file-server'
+
+// Helper functions
+function getTomorrowDate(): string {
+  const tomorrow = new Date()
+  tomorrow.setDate(tomorrow.getDate() + 1)
+  return tomorrow.toISOString().split('T')[0]
+}
+
+function addDays(dateStr: string, days: number): string {
+  const date = new Date(dateStr)
+  date.setDate(date.getDate() + days)
+  return date.toISOString().split('T')[0]
+}
+
+// POST: Create folder structure and save files locally
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json()
+    const {
+      channelCode,
+      videoId,
+      title,
+      transcript,
+      processedScript,
+    } = body
+
+    if (!channelCode) {
+      return NextResponse.json({ error: 'Channel code is required' }, { status: 400 })
+    }
+
+    const tomorrow = getTomorrowDate()
+
+    // Find next available slot - check each date until we find one with < 4 videos
+    let targetDate = tomorrow
+    let nextVideoNumber = 1
+    let daysChecked = 0
+    const maxDaysAhead = 30
+
+    while (daysChecked < maxDaysAhead) {
+      try {
+        const result = await fileServer.getNextVideoNumber(targetDate, channelCode)
+        nextVideoNumber = result.next_video_number
+
+        if (nextVideoNumber <= 4) {
+          // Found available slot
+          break
+        }
+
+        // This date is full, try next date
+        daysChecked++
+        targetDate = addDays(tomorrow, daysChecked)
+        nextVideoNumber = 1 // Reset for new date
+      } catch {
+        // If error (folder doesn't exist), this means slot is available
+        nextVideoNumber = 1
+        break
+      }
+    }
+
+    if (daysChecked >= maxDaysAhead) {
+      return NextResponse.json(
+        { error: `No available slots found for ${channelCode} in next ${maxDaysAhead} days` },
+        { status: 400 }
+      )
+    }
+
+    // Create organized folder locally
+    const folderInfo = await fileServer.createOrganizedFolder({
+      date: targetDate,
+      channel_code: channelCode,
+      video_number: nextVideoNumber,
+      video_id: videoId || `vid_${Date.now()}`,
+      title: title || 'Untitled',
+      transcript: transcript || '',
+      script: processedScript || '',
+    })
+
+    // Return info for audio job creation
+    return NextResponse.json({
+      success: true,
+      videoNumber: nextVideoNumber,
+      date: targetDate,
+      channelCode,
+      audioCounter: folderInfo.audio_counter,
+      folderPath: folderInfo.path,
+      folderStructure: {
+        dateFolderName: targetDate,
+        channelFolderName: channelCode,
+        videoFolderName: `Video ${nextVideoNumber}`,
+        fullPath: folderInfo.path
+      },
+      files: {
+        transcript: {
+          name: 'transcript.txt',
+          contentLength: transcript?.length || 0
+        },
+        script: {
+          name: 'script.txt',
+          contentLength: processedScript?.length || 0
+        }
+      },
+      message: 'Folder structure created locally. Files saved.'
+    })
+
+  } catch (error) {
+    console.error('[Organize] Error:', error)
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Failed to organize' },
+      { status: 500 }
+    )
+  }
+}
+
+// GET: Get organized folder settings/status
+export async function GET() {
+  try {
+    // Get counters and check file server health
+    const [counters, health] = await Promise.all([
+      fileServer.getCounters().catch(() => ({ audio_counter: 0, video_counter: 0 })),
+      fileServer.checkFileServerHealth().catch(() => ({ status: 'offline' }))
+    ])
+
+    return NextResponse.json({
+      configured: health.status === 'healthy',
+      audioCounter: counters.audio_counter,
+      videoCounter: counters.video_counter,
+      fileServerStatus: health.status
+    })
+
+  } catch {
+    return NextResponse.json({
+      configured: false,
+      error: 'File server not available'
+    })
+  }
+}
+
+
+================================================================================
+PART 10: FILE SERVER CLIENT (lib/file-server.ts)
+================================================================================
+
+/**
+ * File Server Client
+ * Connects to the FastAPI file server running on Contabo/local
+ */
+
+const FILE_SERVER_URL = process.env.FILE_SERVER_URL || 'http://localhost:8000'
+const FILE_SERVER_API_KEY = process.env.FILE_SERVER_API_KEY || 'f5-local-test-key-2024'
+
+interface FetchOptions {
+  method?: string
+  body?: unknown
+  headers?: Record<string, string>
+}
+
+async function fileServerFetch<T>(endpoint: string, options: FetchOptions = {}): Promise<T> {
+  const { method = 'GET', body, headers = {} } = options
+
+  const response = await fetch(`${FILE_SERVER_URL}${endpoint}`, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-API-Key': FILE_SERVER_API_KEY,
+      ...headers,
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
+    throw new Error(error.detail || `File server error: ${response.status}`)
+  }
+
+  return response.json()
+}
+
+// ============ API Keys ============
+
+export interface ApiKey {
+  id: string
+  key_type: string
+  api_key: string
+  is_active: boolean
+  usage_count: number
+  created_at: string
+}
+
+export async function getApiKeys(keyType?: string): Promise<ApiKey[]> {
+  const params = keyType ? `?key_type=${keyType}` : ''
+  return fileServerFetch<ApiKey[]>(`/api/keys${params}`)
+}
+
+export async function getRawApiKey(keyType: string): Promise<{ key: string; id: string }> {
+  return fileServerFetch(`/api/keys/raw?key_type=${keyType}`)
+}
+
+export async function addApiKey(keyType: string, apiKey: string): Promise<ApiKey> {
+  return fileServerFetch<ApiKey>('/api/keys', {
+    method: 'POST',
+    body: { key_type: keyType, api_key: apiKey, is_active: true },
+  })
+}
+
+export async function toggleApiKey(keyType: string, keyId: string): Promise<{ success: boolean; is_active: boolean }> {
+  return fileServerFetch(`/api/keys/${keyType}/${keyId}/toggle`, { method: 'PUT' })
+}
+
+export async function deleteApiKey(keyType: string, keyId: string): Promise<{ success: boolean }> {
+  return fileServerFetch(`/api/keys/${keyType}/${keyId}`, { method: 'DELETE' })
+}
+
+// ============ Settings ============
+
+export interface Settings {
+  ai?: {
+    provider?: string
+    model?: string
+    max_tokens?: number
+  }
+  audio?: {
+    model?: string
+    speed?: number
+    format?: string
+    sample_rate?: number
+    remove_silence?: boolean
+  }
+  youtube?: {
+    chunk_size?: number
+  }
+}
+
+export async function getSettings(): Promise<Settings> {
+  return fileServerFetch('/api/settings')
+}
+
+export async function getSettingsCategory(category: string): Promise<Record<string, unknown>> {
+  return fileServerFetch(`/api/settings/${category}`)
+}
+
+export async function updateSettings(settings: Partial<Settings>): Promise<{ success: boolean }> {
+  return fileServerFetch('/api/settings', { method: 'PUT', body: settings })
+}
+
+export async function updateSettingsCategory(category: string, settings: Record<string, unknown>): Promise<{ success: boolean }> {
+  return fileServerFetch(`/api/settings/${category}`, { method: 'PUT', body: settings })
+}
+
+// ============ Prompts ============
+
+export async function getPrompts(): Promise<Record<string, string>> {
+  return fileServerFetch('/api/settings/prompts/all')
+}
+
+export async function getPrompt(promptType: string): Promise<{ prompt_type: string; prompt_text: string }> {
+  return fileServerFetch(`/api/settings/prompts/${promptType}`)
+}
+
+export async function updatePrompt(promptType: string, promptText: string): Promise<{ success: boolean }> {
+  return fileServerFetch(`/api/settings/prompts/${promptType}`, {
+    method: 'PUT',
+    body: { prompt_text: promptText },
+  })
+}
+
+// ============ Organized Folders ============
+
+export interface OrganizedFolderCreate {
+  date: string
+  channel_code: string
+  video_number: number
+  video_id: string
+  title: string
+  transcript?: string
+  script?: string
+}
+
+export interface OrganizedFolderInfo {
+  date: string
+  channel_code: string
+  video_number: number
+  video_id: string
+  title: string
+  status: string
+  audio_counter?: number
+  created_at: string
+  path: string
+}
+
+export async function createOrganizedFolder(data: OrganizedFolderCreate): Promise<OrganizedFolderInfo> {
+  return fileServerFetch('/api/organized/create', { method: 'POST', body: data })
+}
+
+export async function listOrganizedDates(): Promise<{ date: string; video_count: number }[]> {
+  return fileServerFetch('/api/organized/list')
+}
+
+export async function getOrganizedDate(date: string): Promise<{ date: string; channels: Record<string, unknown[]> }> {
+  return fileServerFetch(`/api/organized/date/${date}`)
+}
+
+export async function getOrganizedFolder(date: string, channelCode: string, videoNumber: number): Promise<{
+  metadata: Record<string, unknown>
+  transcript: string | null
+  script: string | null
+  files: { name: string; size: number; modified: string }[]
+  path: string
+}> {
+  return fileServerFetch(`/api/organized/folder/${date}/${channelCode}/${videoNumber}`)
+}
+
+export async function updateFolderStatus(date: string, channelCode: string, videoNumber: number, status: string): Promise<{ success: boolean }> {
+  return fileServerFetch(`/api/organized/folder/${date}/${channelCode}/${videoNumber}/status?status=${status}`, { method: 'PUT' })
+}
+
+export async function updateFolderScript(date: string, channelCode: string, videoNumber: number, script: string): Promise<{ success: boolean }> {
+  return fileServerFetch(`/api/organized/folder/${date}/${channelCode}/${videoNumber}/script`, {
+    method: 'PUT',
+    body: { script },
+  })
+}
+
+export async function deleteOrganizedFolder(date: string, channelCode: string, videoNumber: number): Promise<{ success: boolean }> {
+  return fileServerFetch(`/api/organized/folder/${date}/${channelCode}/${videoNumber}`, { method: 'DELETE' })
+}
+
+export async function getNextVideoNumber(date: string, channelCode: string): Promise<{ next_video_number: number }> {
+  return fileServerFetch(`/api/organized/next-video-number/${date}/${channelCode}`)
+}
+
+export async function getCounters(): Promise<{ audio_counter: number; video_counter: number }> {
+  return fileServerFetch('/api/organized/counters')
+}
+
+// ============ Source Channels ============
+
+export interface SourceChannel {
+  id?: string
+  channel_code: string
+  channel_name: string
+  youtube_channel_id?: string | null
+  youtube_channel_url?: string | null
+  min_duration_seconds?: number
+  max_duration_seconds?: number
+  max_videos?: number
+  image_folder_id?: string | null
+  reference_audio_path?: string | null
+  reference_audio_gdrive_id?: string | null
+  custom_prompt?: string | null
+  is_active: boolean
+  created_at?: string
+  updated_at?: string
+}
+
+export async function getSourceChannels(): Promise<SourceChannel[]> {
+  return fileServerFetch('/api/channels')
+}
+
+export async function getSourceChannel(channelCode: string): Promise<SourceChannel> {
+  return fileServerFetch(`/api/channels/${channelCode}`)
+}
+
+export async function addSourceChannel(channel: SourceChannel): Promise<SourceChannel> {
+  return fileServerFetch('/api/channels', { method: 'POST', body: channel })
+}
+
+export async function updateSourceChannel(channelCode: string, channel: SourceChannel): Promise<SourceChannel> {
+  return fileServerFetch(`/api/channels/${channelCode}`, { method: 'PUT', body: channel })
+}
+
+export async function deleteSourceChannel(channelCode: string): Promise<{ success: boolean }> {
+  return fileServerFetch(`/api/channels/${channelCode}`, { method: 'DELETE' })
+}
+
+export async function toggleSourceChannel(channelCode: string): Promise<{ success: boolean; is_active: boolean }> {
+  return fileServerFetch(`/api/channels/${channelCode}/toggle`, { method: 'PUT' })
+}
+
+// ============ Files ============
+
+export interface FileInfo {
+  name: string
+  path: string
+  size: number
+  is_dir: boolean
+  modified: string
+}
+
+export async function listFiles(path: string = ''): Promise<FileInfo[]> {
+  return fileServerFetch(`/api/files/list?path=${encodeURIComponent(path)}`)
+}
+
+export async function readFile(path: string): Promise<{ content: string; path: string }> {
+  return fileServerFetch(`/api/files/read?path=${encodeURIComponent(path)}`)
+}
+
+export async function writeFile(path: string, content: string): Promise<{ success: boolean }> {
+  return fileServerFetch('/api/files/write', { method: 'POST', body: { path, content, create_dirs: true } })
+}
+
+export async function deleteFile(path: string): Promise<{ success: boolean }> {
+  return fileServerFetch(`/api/files/delete?path=${encodeURIComponent(path)}`, { method: 'DELETE' })
+}
+
+export async function createDirectory(path: string): Promise<{ success: boolean }> {
+  return fileServerFetch(`/api/files/mkdir?path=${encodeURIComponent(path)}`, { method: 'POST' })
+}
+
+// ============ Audio Files ============
+
+export interface AudioFile {
+  name: string
+  path: string
+  size: number
+  modified: string
+}
+
+export async function listAudioFiles(path?: string): Promise<AudioFile[]> {
+  const params = path ? `?path=${encodeURIComponent(path)}` : ''
+  return fileServerFetch(`/api/audio/list${params}`)
+}
+
+export async function listReferenceAudio(): Promise<AudioFile[]> {
+  return fileServerFetch('/api/audio/reference')
+}
+
+export async function deleteAudioFile(filename: string): Promise<{ success: boolean }> {
+  return fileServerFetch(`/api/audio/${encodeURIComponent(filename)}`, { method: 'DELETE' })
+}
+
+// ============ Health Check ============
+
+export async function checkFileServerHealth(): Promise<{ status: string }> {
+  return fileServerFetch('/health')
+}
+
+
+================================================================================
+SUMMARY - KEY FEATURES
+================================================================================
+
+1. SOURCE CHANNEL SELECTION
+   - Loads active channels from file server
+   - Shows channel code, name, YouTube URL
+   - Duration filters (min/max seconds)
+
+2. VIDEO FETCHING
+   - Uses YouTube Data API v3
+   - Fetches videos sorted by view count
+   - Filters by duration range
+   - Pagination support (up to 1000 videos)
+
+3. TRANSCRIPT FETCHING
+   - Uses Supadata.ai API for transcripts
+   - Supports async job polling for long videos
+   - Rate limited to ~20/sec
+   - Shows progress indicator
+
+4. TRANSCRIPT MANAGEMENT
+   - Save transcripts to file server
+   - Load saved transcripts
+   - Skip unwanted transcripts (moves to skip folder)
+
+5. AI PROCESSING
+   - DeepSeek via OpenRouter
+   - Gemini (2.5-flash, 2.5-pro)
+   - Chunks long text at sentence boundaries
+   - Uses custom prompts from settings
+
+6. AUDIO QUEUE
+   - Creates organized folder structure
+   - Auto-assigns video number (max 4 per day per channel)
+   - Inserts job to Supabase audio_jobs table
+   - Auto-advances to next transcript
+
+7. UI COMPONENTS (shadcn/ui)
+   - Card, Button, Input, Label, Textarea
+   - Select, SelectContent, SelectItem
+   - ScrollArea, Badge
+   - Toast notifications (sonner)
+   - Lucide icons
+
+8. EXTERNAL SERVICES
+   - YouTube Data API (video list + details)
+   - Supadata.ai (transcripts)
+   - Gemini API (AI processing)
+   - OpenRouter/DeepSeek (AI processing)
+   - FastAPI File Server (storage)
+   - Supabase (audio job queue)
+
+================================================================================

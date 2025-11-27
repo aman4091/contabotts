@@ -1,0 +1,47 @@
+# Environment variables (SECRETS)
+.env
+.env.local
+.env.production
+.env*.local
+
+# Private files
+p.py
+credentials.json
+
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.pyo
+
+# Next.js
+.next/
+out/
+
+# Build
+dist/
+build/
+
+# Data folders (runtime data, not source code)
+data/
+
+# Logs
+*.log
+npm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+.claude/
+
+# Reference images
+aivi/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+output/
