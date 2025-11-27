@@ -14,7 +14,8 @@ import {
   X,
   Subtitles,
   LogOut,
-  User
+  User,
+  Calendar
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -43,10 +44,16 @@ const navItems = [
     description: "Process transcripts"
   },
   {
-    title: "Audio Files",
+    title: "Calendar",
+    href: "/calendar",
+    icon: Calendar,
+    description: "Download by date"
+  },
+  {
+    title: "Queue Manager",
     href: "/audio-files",
     icon: FileAudio,
-    description: "View audio jobs"
+    description: "View jobs"
   },
   {
     title: "Subtitles",

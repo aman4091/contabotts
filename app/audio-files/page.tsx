@@ -144,7 +144,22 @@ export default function AudioFilesPage() {
 
   function formatDate(dateStr: string) {
     const date = new Date(dateStr)
-    return date.toLocaleString()
+    // Convert to Indian Standard Time (IST = UTC+5:30)
+    return date.toLocaleString("en-IN", {
+      timeZone: "Asia/Kolkata",
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true
+    })
+  }
+
+  function getDownloadUrl(job: Job, type: "audio" | "video") {
+    // Download from Contabo via calendar API
+    const fileType = type === "audio" ? "audio" : "video"
+    return `/api/calendar/download?date=${job.date}&channel=${job.channel_code}&slot=${job.video_number}&file=${fileType}`
   }
 
   return (
@@ -304,11 +319,9 @@ export default function AudioFilesPage() {
                               <div className="flex flex-row sm:flex-col items-center sm:items-end gap-2 self-end sm:self-auto">
                                 {getStatusBadge(job.status)}
                                 <div className="flex gap-2">
-                                  {job.gofile_link && (
+                                  {job.status === "completed" && (
                                     <a
-                                      href={job.gofile_link}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
+                                      href={getDownloadUrl(job, queueType as "audio" | "video")}
                                       className="flex items-center gap-1 text-xs sm:text-sm px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 transition-colors"
                                     >
                                       <Download className="w-3 h-3 sm:w-4 sm:h-4" />

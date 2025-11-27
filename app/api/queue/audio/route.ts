@@ -100,27 +100,39 @@ export async function POST(request: NextRequest) {
       targetChannel,
       sourceChannel,
       transcriptIndex,
-      date: customDate
+      date: customDate,
+      slot: customSlot,
+      priority: customPriority
     } = body
 
     if (!script || !targetChannel) {
       return NextResponse.json({ error: "Script and target channel required" }, { status: 400 })
     }
 
-    // Find next available slot (max 4 videos per day per channel)
-    let date = customDate || getTomorrowDate()
-    let videoNumber = getNextVideoNumber(date, targetChannel)
-    let daysChecked = 0
-    const maxDaysAhead = 30
+    // Priority mode: use exact date and slot (for replacing deleted slots)
+    let date: string
+    let videoNumber: number
 
-    while (videoNumber > MAX_VIDEOS_PER_DAY && daysChecked < maxDaysAhead) {
-      daysChecked++
-      date = addDays(getTomorrowDate(), daysChecked)
+    if (customDate && customSlot) {
+      // Use exact date and slot specified (priority replacement)
+      date = customDate
+      videoNumber = parseInt(customSlot)
+    } else {
+      // Find next available slot (max 4 videos per day per channel)
+      date = customDate || getTomorrowDate()
       videoNumber = getNextVideoNumber(date, targetChannel)
-    }
+      let daysChecked = 0
+      const maxDaysAhead = 30
 
-    if (videoNumber > MAX_VIDEOS_PER_DAY) {
-      return NextResponse.json({ error: `No available slots for ${targetChannel} in next ${maxDaysAhead} days` }, { status: 400 })
+      while (videoNumber > MAX_VIDEOS_PER_DAY && daysChecked < maxDaysAhead) {
+        daysChecked++
+        date = addDays(getTomorrowDate(), daysChecked)
+        videoNumber = getNextVideoNumber(date, targetChannel)
+      }
+
+      if (videoNumber > MAX_VIDEOS_PER_DAY) {
+        return NextResponse.json({ error: `No available slots for ${targetChannel} in next ${maxDaysAhead} days` }, { status: 400 })
+      }
     }
 
     // Get audio counter from file server
@@ -138,6 +150,9 @@ export async function POST(request: NextRequest) {
     // Save to organized folder
     saveToOrganized(date, targetChannel, videoNumber, fullTranscript, script)
 
+    // Priority: 10 for replacement jobs, 1 for normal jobs
+    const jobPriority = customPriority ? parseInt(customPriority) : (customSlot ? 10 : 1)
+
     // Create job via File Server (not Supabase!)
     const jobId = randomUUID()
     const result = await createAudioJob({
@@ -148,7 +163,7 @@ export async function POST(request: NextRequest) {
       date: date,
       audio_counter: audioCounter,
       organized_path: organizedPath,
-      priority: 1,
+      priority: jobPriority,
       username: username
     })
 

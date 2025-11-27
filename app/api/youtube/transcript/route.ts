@@ -1,8 +1,15 @@
 import { NextRequest, NextResponse } from "next/server"
+import { cookies } from "next/headers"
 import { saveTranscript, getSourceChannels } from "@/lib/file-storage"
+
+async function getUser() {
+  const cookieStore = await cookies()
+  return cookieStore.get("user")?.value
+}
 
 export async function POST(request: NextRequest) {
   try {
+    const username = await getUser()
     const body = await request.json()
     const { channelCode, videos, maxVideos = 1000 } = body
 
@@ -18,8 +25,8 @@ export async function POST(request: NextRequest) {
     // If videos provided, use them; otherwise fetch from YouTube first
     let videoList = videos
     if (!videoList || videoList.length === 0) {
-      // Get channel config
-      const channels = getSourceChannels()
+      // Get channel config (user-specific)
+      const channels = getSourceChannels(username)
       const channel = channels.find(c => c.channel_code === channelCode)
       if (!channel) {
         return NextResponse.json({ error: "Channel not found" }, { status: 404 })
@@ -60,7 +67,7 @@ export async function POST(request: NextRequest) {
           const transcript = await fetchTranscript(video.videoId, SUPADATA_API_KEY)
 
           if (transcript) {
-            saveTranscript(channelCode, index, video.title, video.videoId, transcript)
+            saveTranscript(channelCode, index, video.title, video.videoId, transcript, username)
             return { success: true, index }
           } else {
             return { success: false, index, videoId: video.videoId }

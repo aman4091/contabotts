@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, Suspense } from "react"
+import { useSearchParams, useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -21,7 +22,8 @@ import {
   Plus,
   Loader2,
   Mic,
-  Play
+  Play,
+  AlertTriangle
 } from "lucide-react"
 
 interface SourceChannel {
@@ -49,12 +51,23 @@ interface TranscriptItem {
   filename: string
 }
 
-export default function HomePage() {
+function HomeContent() {
+  const searchParams = useSearchParams()
+  const router = useRouter()
+
+  // Priority mode from URL (when redirected from calendar after deleting slot)
+  const priorityMode = {
+    enabled: searchParams.get("priority") === "true",
+    channel: searchParams.get("channel") || "",
+    date: searchParams.get("date") || "",
+    slot: searchParams.get("slot") || ""
+  }
+
   // State
   const [sourceChannels, setSourceChannels] = useState<SourceChannel[]>([])
   const [targetChannels, setTargetChannels] = useState<TargetChannel[]>([])
   const [selectedSource, setSelectedSource] = useState<string>("")
-  const [selectedTarget, setSelectedTarget] = useState<string>("")
+  const [selectedTarget, setSelectedTarget] = useState<string>(priorityMode.channel)
   const [transcripts, setTranscripts] = useState<TranscriptItem[]>([])
   const [selectedTranscript, setSelectedTranscript] = useState<TranscriptItem | null>(null)
   const [transcriptContent, setTranscriptContent] = useState<string>("")
@@ -89,6 +102,13 @@ export default function HomePage() {
     loadTargetChannels()
     loadSettings()
   }, [])
+
+  // Set target channel from URL if in priority mode
+  useEffect(() => {
+    if (priorityMode.enabled && priorityMode.channel && targetChannels.length > 0) {
+      setSelectedTarget(priorityMode.channel)
+    }
+  }, [priorityMode.enabled, priorityMode.channel, targetChannels])
 
   // Load transcripts when source channel changes
   useEffect(() => {
@@ -346,26 +366,42 @@ export default function HomePage() {
 
     setAddingToQueue(true)
     try {
+      // Build request body - include priority mode params if enabled
+      const requestBody: any = {
+        script: processedScript,
+        transcript: transcriptContent,
+        targetChannel: selectedTarget,
+        sourceChannel: selectedSource || "YT_URL",
+        transcriptIndex: selectedTranscript?.index || 0
+      }
+
+      // If in priority mode, add date, slot and priority
+      if (priorityMode.enabled && priorityMode.date && priorityMode.slot) {
+        requestBody.date = priorityMode.date
+        requestBody.slot = priorityMode.slot
+        requestBody.priority = "10"  // High priority
+      }
+
       const res = await fetch("/api/queue/audio", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          script: processedScript,
-          transcript: transcriptContent,
-          targetChannel: selectedTarget,
-          sourceChannel: selectedSource || "YT_URL",
-          transcriptIndex: selectedTranscript?.index || 0
-        })
+        body: JSON.stringify(requestBody)
       })
       const data = await res.json()
 
       if (data.error) {
         toast.error(data.error)
       } else {
-        toast.success(`Added to queue! ${data.channelCode} Video ${data.videoNumber} | Counter #${data.audioCounter}`)
+        const priorityLabel = priorityMode.enabled ? " (PRIORITY)" : ""
+        toast.success(`Added to queue${priorityLabel}! ${data.channelCode} Video ${data.videoNumber} | Date: ${data.date}`)
         setProcessedScript("")
         setTranscriptContent("")
         setYoutubeUrl("")
+
+        // Clear priority mode from URL
+        if (priorityMode.enabled) {
+          router.replace("/")
+        }
 
         // If from transcript list, reload and select next
         if (selectedTranscript && selectedSource) {
@@ -439,6 +475,27 @@ export default function HomePage() {
 
   return (
     <div className="space-y-6">
+      {/* Priority Mode Banner */}
+      {priorityMode.enabled && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4 flex items-center gap-3">
+          <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0" />
+          <div className="flex-1">
+            <p className="font-semibold text-amber-400">Priority Replacement Mode</p>
+            <p className="text-sm text-muted-foreground">
+              Replacing <span className="text-white font-medium">{priorityMode.channel}</span> Slot {priorityMode.slot} on {priorityMode.date}
+            </p>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => router.replace("/")}
+            className="text-amber-400 hover:text-amber-300"
+          >
+            Cancel
+          </Button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
@@ -748,5 +805,14 @@ export default function HomePage() {
         </Card>
       </div>
     </div>
+  )
+}
+
+// Wrapper with Suspense for useSearchParams
+export default function HomePage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center py-20"><Loader2 className="w-8 h-8 animate-spin" /></div>}>
+      <HomeContent />
+    </Suspense>
   )
 }
