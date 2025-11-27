@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { cookies } from "next/headers"
 import { randomUUID } from "crypto"
 import {
   saveToOrganized,
@@ -11,6 +12,11 @@ import { getTomorrowDate, addDays } from "@/lib/utils"
 // Required: Set FILE_SERVER_URL and FILE_SERVER_API_KEY in environment
 const FILE_SERVER_URL = process.env.FILE_SERVER_URL || ""
 const FILE_SERVER_API_KEY = process.env.FILE_SERVER_API_KEY || ""
+
+async function getUser() {
+  const cookieStore = await cookies()
+  return cookieStore.get("user")?.value
+}
 
 const MAX_VIDEOS_PER_DAY = 4
 
@@ -43,6 +49,7 @@ async function createAudioJob(job: {
   audio_counter: number
   organized_path: string
   priority: number
+  username?: string
 }): Promise<{ success: boolean; job_id?: string; error?: string }> {
   try {
     const response = await fetch(`${FILE_SERVER_URL}/queue/audio/jobs`, {
@@ -85,6 +92,7 @@ async function getQueueStats(): Promise<{ pending: number; processing: number; c
 
 export async function POST(request: NextRequest) {
   try {
+    const username = await getUser()
     const body = await request.json()
     const {
       script,
@@ -124,7 +132,7 @@ export async function POST(request: NextRequest) {
     // Get full transcript content if not provided
     let fullTranscript = transcript
     if (!fullTranscript && sourceChannel && transcriptIndex) {
-      fullTranscript = getTranscript(sourceChannel, transcriptIndex) || ""
+      fullTranscript = getTranscript(sourceChannel, transcriptIndex, username) || ""
     }
 
     // Save to organized folder
@@ -140,7 +148,8 @@ export async function POST(request: NextRequest) {
       date: date,
       audio_counter: audioCounter,
       organized_path: organizedPath,
-      priority: 1
+      priority: 1,
+      username: username
     })
 
     if (!result.success) {
@@ -150,7 +159,7 @@ export async function POST(request: NextRequest) {
 
     // Move transcript to completed folder
     if (sourceChannel && transcriptIndex) {
-      completeTranscript(sourceChannel, transcriptIndex)
+      completeTranscript(sourceChannel, transcriptIndex, username)
     }
 
     return NextResponse.json({

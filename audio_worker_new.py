@@ -47,9 +47,24 @@ FILE_SERVER_API_KEY = os.getenv("FILE_SERVER_API_KEY")
 if not FILE_SERVER_URL or not FILE_SERVER_API_KEY:
     raise ValueError("FILE_SERVER_URL and FILE_SERVER_API_KEY must be set in environment")
 
-# Telegram notifications (optional)
-TELEGRAM_BOT_TOKEN = os.getenv("BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("CHAT_ID")
+# Telegram notifications - User specific (from environment variables)
+# Format: {USERNAME}_BOT_TOKEN and {USERNAME}_CHAT_ID
+def get_user_telegram_config(username: str) -> tuple:
+    """Get Telegram bot token and chat ID for a specific user"""
+    if not username:
+        # Fallback to default
+        return os.getenv("BOT_TOKEN"), os.getenv("CHAT_ID")
+
+    # Try user-specific env vars (e.g., AMAN_BOT_TOKEN, AMAN_CHAT_ID)
+    user_upper = username.upper()
+    bot_token = os.getenv(f"{user_upper}_BOT_TOKEN")
+    chat_id = os.getenv(f"{user_upper}_CHAT_ID")
+
+    if bot_token and chat_id:
+        return bot_token, chat_id
+
+    # Fallback to default
+    return os.getenv("BOT_TOKEN"), os.getenv("CHAT_ID")
 
 # Worker config
 WORKER_ID = os.getenv("WORKER_ID", f"vastai_{socket.gethostname()}_{uuid.uuid4().hex[:8]}")
@@ -150,7 +165,8 @@ class FileServerQueue:
                 "date": audio_job["date"],
                 "organized_path": audio_job["organized_path"],
                 "image_folder": "nature",
-                "priority": 1
+                "priority": 1,
+                "username": audio_job.get("username")  # Pass username from audio job
             }
 
             response = requests.post(
@@ -328,18 +344,22 @@ def upload_to_gofile(file_path: str) -> Optional[str]:
 # TELEGRAM NOTIFICATIONS
 # ============================================================================
 
-def send_telegram(message: str):
-    """Send Telegram notification"""
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+def send_telegram(message: str, username: str = None):
+    """Send Telegram notification to specific user"""
+    bot_token, chat_id = get_user_telegram_config(username)
+
+    if not bot_token or not chat_id:
+        print(f"⚠️ No Telegram config for user: {username}")
         return
 
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
         requests.post(url, json={
-            "chat_id": TELEGRAM_CHAT_ID,
+            "chat_id": chat_id,
             "text": message,
             "parse_mode": "HTML"
         }, timeout=10)
+        print(f"📱 Telegram sent to: {username or 'default'}")
     except Exception as e:
         print(f"Telegram error: {e}")
 
@@ -547,13 +567,16 @@ def process_job(job: Dict) -> bool:
         # 7. Create video job via File Server
         queue.create_video_job(job)
 
-        # 8. Send notification
+        # 8. Send notification to user
+        job_username = job.get("username")
         send_telegram(
             f"🎵 <b>Audio Complete</b>\n"
             f"Channel: {channel_code}\n"
             f"Video: {video_number}\n"
+            f"Date: {job['date']}\n"
             f"Counter: #{job.get('audio_counter', 'N/A')}\n"
-            f"Gofile: {gofile_link or 'N/A'}"
+            f"Gofile: {gofile_link or 'N/A'}",
+            username=job_username
         )
 
         # Cleanup
@@ -574,7 +597,14 @@ def process_job(job: Dict) -> bool:
         queue.fail_audio_job(job_id, WORKER_ID, error_msg)
         queue.increment_worker_stat(WORKER_ID, "jobs_failed")
 
-        send_telegram(f"❌ <b>Audio Failed</b>\n{channel_code} v{video_number}\n{error_msg}")
+        job_username = job.get("username")
+        send_telegram(
+            f"❌ <b>Audio Failed</b>\n"
+            f"Channel: {channel_code}\n"
+            f"Video: {video_number}\n"
+            f"Error: {error_msg}",
+            username=job_username
+        )
 
         return False
 

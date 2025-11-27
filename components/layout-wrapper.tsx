@@ -1,8 +1,8 @@
 "use client"
 
-import { useState, createContext, useContext, ReactNode } from "react"
+import { useState, useEffect, createContext, useContext, ReactNode } from "react"
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import {
   LayoutDashboard,
   FileAudio,
@@ -12,7 +12,9 @@ import {
   ChevronRight,
   Menu,
   X,
-  Subtitles
+  Subtitles,
+  LogOut,
+  User
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -22,11 +24,15 @@ const SidebarContext = createContext<{
   setCollapsed: (value: boolean) => void
   mobileOpen: boolean
   setMobileOpen: (value: boolean) => void
+  user: { username: string; name: string } | null
+  logout: () => void
 }>({
   collapsed: false,
   setCollapsed: () => {},
   mobileOpen: false,
-  setMobileOpen: () => {}
+  setMobileOpen: () => {},
+  user: null,
+  logout: () => {}
 })
 
 const navItems = [
@@ -58,7 +64,7 @@ const navItems = [
 
 function Sidebar() {
   const pathname = usePathname()
-  const { collapsed, setCollapsed, mobileOpen, setMobileOpen } = useContext(SidebarContext)
+  const { collapsed, setCollapsed, mobileOpen, setMobileOpen, user, logout } = useContext(SidebarContext)
 
   return (
     <>
@@ -200,25 +206,45 @@ function Sidebar() {
           )}
         </button>
 
-        {/* Status section at bottom */}
+        {/* User section at bottom */}
         <div className="absolute bottom-0 left-0 right-0 p-3 border-t border-white/10">
           {!collapsed ? (
-            <div className="flex items-center gap-3 px-3 py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
-              <div className="relative">
-                <div className="w-3 h-3 rounded-full bg-emerald-500" />
-                <div className="absolute inset-0 w-3 h-3 rounded-full bg-emerald-500 animate-ping opacity-50" />
-              </div>
-              <div className="flex flex-col">
-                <span className="text-sm font-medium text-emerald-400">System Online</span>
-                <span className="text-xs text-muted-foreground">All services running</span>
-              </div>
+            <div className="space-y-2">
+              {user && (
+                <div className="flex items-center gap-3 px-3 py-2 rounded-xl bg-violet-500/10 border border-violet-500/20">
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-violet-500 to-cyan-500 flex items-center justify-center">
+                    <User className="w-4 h-4 text-white" />
+                  </div>
+                  <div className="flex-1">
+                    <span className="text-sm font-medium text-foreground">{user.name}</span>
+                    <p className="text-xs text-muted-foreground">@{user.username}</p>
+                  </div>
+                  <button
+                    onClick={logout}
+                    className="p-2 rounded-lg hover:bg-red-500/20 text-muted-foreground hover:text-red-400 transition-colors"
+                    title="Logout"
+                  >
+                    <LogOut className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
-            <div className="flex justify-center py-2">
-              <div className="relative">
-                <div className="w-3 h-3 rounded-full bg-emerald-500" />
-                <div className="absolute inset-0 w-3 h-3 rounded-full bg-emerald-500 animate-ping opacity-50" />
-              </div>
+            <div className="flex flex-col items-center gap-2 py-2">
+              {user && (
+                <>
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-violet-500 to-cyan-500 flex items-center justify-center">
+                    <User className="w-4 h-4 text-white" />
+                  </div>
+                  <button
+                    onClick={logout}
+                    className="p-2 rounded-lg hover:bg-red-500/20 text-muted-foreground hover:text-red-400 transition-colors"
+                    title="Logout"
+                  >
+                    <LogOut className="w-4 h-4" />
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -230,9 +256,33 @@ function Sidebar() {
 export function LayoutWrapper({ children }: { children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [user, setUser] = useState<{ username: string; name: string } | null>(null)
+  const router = useRouter()
+
+  useEffect(() => {
+    // Fetch current user
+    fetch("/api/auth/me")
+      .then(res => res.json())
+      .then(data => {
+        if (data.user) {
+          setUser(data.user)
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  async function logout() {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" })
+      router.push("/login")
+      router.refresh()
+    } catch (error) {
+      console.error("Logout error:", error)
+    }
+  }
 
   return (
-    <SidebarContext.Provider value={{ collapsed, setCollapsed, mobileOpen, setMobileOpen }}>
+    <SidebarContext.Provider value={{ collapsed, setCollapsed, mobileOpen, setMobileOpen, user, logout }}>
       <div className="min-h-screen flex">
         {/* Sidebar */}
         <Sidebar />

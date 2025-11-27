@@ -1,10 +1,18 @@
 import { NextRequest, NextResponse } from "next/server"
+import { cookies } from "next/headers"
 
 const FILE_SERVER_URL = process.env.FILE_SERVER_URL || ""
 const FILE_SERVER_API_KEY = process.env.FILE_SERVER_API_KEY || ""
 
+async function getUser() {
+  const cookieStore = await cookies()
+  return cookieStore.get("user")?.value
+}
+
 export async function GET(request: NextRequest) {
   try {
+    const username = await getUser()
+
     // Fetch all statuses in parallel
     const statuses = ["pending", "processing", "completed", "failed"]
     const responses = await Promise.all(
@@ -28,12 +36,17 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // Filter by username - only show jobs belonging to current user
+    const userJobs = username
+      ? allJobs.filter(job => job.username === username)
+      : allJobs
+
     // Sort by created_at desc
-    allJobs.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    userJobs.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
 
     return NextResponse.json({
       success: true,
-      jobs: allJobs
+      jobs: userJobs
     })
   } catch (error) {
     console.error("Error fetching video files:", error)

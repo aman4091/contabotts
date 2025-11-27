@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from "next/server"
+import { cookies } from "next/headers"
 import { getSourceChannels, saveSourceChannels, SourceChannel } from "@/lib/file-storage"
+
+async function getUser() {
+  const cookieStore = await cookies()
+  return cookieStore.get("user")?.value
+}
 
 export async function GET() {
   try {
-    const channels = getSourceChannels()
+    const username = await getUser()
+    const channels = getSourceChannels(username)
     return NextResponse.json({ channels })
   } catch (error) {
     console.error("Error getting source channels:", error)
@@ -13,8 +20,9 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
+    const username = await getUser()
     const body = await request.json()
-    const channels = getSourceChannels()
+    const channels = getSourceChannels(username)
 
     // Check if channel code already exists
     const existing = channels.find(c => c.channel_code === body.channel_code)
@@ -33,7 +41,7 @@ export async function POST(request: NextRequest) {
     }
 
     channels.push(newChannel)
-    saveSourceChannels(channels)
+    saveSourceChannels(channels, username)
 
     return NextResponse.json({ success: true, channel: newChannel })
   } catch (error) {
@@ -44,8 +52,9 @@ export async function POST(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
+    const username = await getUser()
     const body = await request.json()
-    const channels = getSourceChannels()
+    const channels = getSourceChannels(username)
 
     const index = channels.findIndex(c => c.channel_code === body.channel_code)
     if (index === -1) {
@@ -53,7 +62,7 @@ export async function PUT(request: NextRequest) {
     }
 
     channels[index] = { ...channels[index], ...body }
-    saveSourceChannels(channels)
+    saveSourceChannels(channels, username)
 
     return NextResponse.json({ success: true, channel: channels[index] })
   } catch (error) {
@@ -64,6 +73,7 @@ export async function PUT(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
+    const username = await getUser()
     const { searchParams } = new URL(request.url)
     const code = searchParams.get("code")
 
@@ -71,14 +81,14 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: "Channel code required" }, { status: 400 })
     }
 
-    const channels = getSourceChannels()
+    const channels = getSourceChannels(username)
     const filtered = channels.filter(c => c.channel_code !== code)
 
     if (filtered.length === channels.length) {
       return NextResponse.json({ error: "Channel not found" }, { status: 404 })
     }
 
-    saveSourceChannels(filtered)
+    saveSourceChannels(filtered, username)
     return NextResponse.json({ success: true })
   } catch (error) {
     console.error("Error deleting source channel:", error)

@@ -1,8 +1,15 @@
 import { NextRequest, NextResponse } from "next/server"
+import { cookies } from "next/headers"
 import { saveTranscript } from "@/lib/file-storage"
+
+async function getUser() {
+  const cookieStore = await cookies()
+  return cookieStore.get("user")?.value
+}
 
 export async function POST(request: NextRequest) {
   try {
+    const username = await getUser()
     const body = await request.json()
     const { channelCode, transcripts } = body
 
@@ -18,7 +25,8 @@ export async function POST(request: NextRequest) {
           item.index,
           item.title || "",
           item.videoId || "",
-          item.transcript || ""
+          item.transcript || "",
+          username
         )
         saved++
       } catch (err) {

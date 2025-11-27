@@ -39,7 +39,48 @@ if os.path.exists(env_path):
 # Force CPU encoder on Contabo (no GPU)
 os.environ["FORCE_CPU_ENCODER"] = "true"
 
+import requests
 from video_generator import VideoGenerator
+
+
+# ============================================================================
+# TELEGRAM NOTIFICATIONS - User specific
+# ============================================================================
+
+def get_user_telegram_config(username: str) -> tuple:
+    """Get Telegram bot token and chat ID for a specific user"""
+    if not username:
+        return os.getenv("BOT_TOKEN"), os.getenv("CHAT_ID")
+
+    # Try user-specific env vars (e.g., AMAN_BOT_TOKEN, AMAN_CHAT_ID)
+    user_upper = username.upper()
+    bot_token = os.getenv(f"{user_upper}_BOT_TOKEN")
+    chat_id = os.getenv(f"{user_upper}_CHAT_ID")
+
+    if bot_token and chat_id:
+        return bot_token, chat_id
+
+    return os.getenv("BOT_TOKEN"), os.getenv("CHAT_ID")
+
+
+def send_telegram(message: str, username: str = None):
+    """Send Telegram notification to specific user"""
+    bot_token, chat_id = get_user_telegram_config(username)
+
+    if not bot_token or not chat_id:
+        print(f"⚠️ No Telegram config for user: {username}")
+        return
+
+    try:
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        requests.post(url, json={
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "HTML"
+        }, timeout=10)
+        print(f"📱 Telegram sent to: {username or 'default'}")
+    except Exception as e:
+        print(f"Telegram error: {e}")
 
 
 # ============================================================================
@@ -453,7 +494,19 @@ class LocalVideoWorker:
             self.queue.complete_job(job_id, self.worker_id, gofile_link)
             self.queue.increment_worker_stat(self.worker_id, "jobs_completed")
 
-            # 6. Delete used image
+            # 6. Send notification to user
+            job_username = job.get("username")
+            send_telegram(
+                f"🎬 <b>Video Complete</b>\n"
+                f"Channel: {channel_code}\n"
+                f"Video: {video_number}\n"
+                f"Date: {date}\n"
+                f"Size: {video_size_mb:.1f} MB\n"
+                f"Gofile: {gofile_link or 'N/A'}",
+                username=job_username
+            )
+
+            # 7. Delete used image
             try:
                 if image_path and os.path.exists(image_path):
                     os.remove(image_path)
@@ -473,6 +526,16 @@ class LocalVideoWorker:
             # Mark job as failed
             self.queue.fail_job(job_id, self.worker_id, error_msg)
             self.queue.increment_worker_stat(self.worker_id, "jobs_failed")
+
+            # Send failure notification to user
+            job_username = job.get("username")
+            send_telegram(
+                f"❌ <b>Video Failed</b>\n"
+                f"Channel: {channel_code}\n"
+                f"Video: {video_number}\n"
+                f"Error: {error_msg}",
+                username=job_username
+            )
 
         finally:
             # Update worker status

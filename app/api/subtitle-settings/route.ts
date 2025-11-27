@@ -1,10 +1,23 @@
 import { NextRequest, NextResponse } from "next/server"
+import { cookies } from "next/headers"
 import fs from "fs"
 import path from "path"
 
-const SETTINGS_FILE = path.join(process.cwd(), "data", "subtitle-settings.json")
+const DATA_DIR = process.env.DATA_DIR || "/root/tts/data"
 
-// Default subtitle settings - charWidth 0.6 for better text fitting
+async function getUser() {
+  const cookieStore = await cookies()
+  return cookieStore.get("user")?.value
+}
+
+function getSettingsPath(username?: string): string {
+  if (username) {
+    return path.join(DATA_DIR, "users", username, "subtitle-settings.json")
+  }
+  return path.join(DATA_DIR, "subtitle-settings.json")
+}
+
+// Default subtitle settings
 const defaultSettings = {
   font: {
     family: "Arial",
@@ -13,42 +26,40 @@ const defaultSettings = {
   },
   background: {
     color: "#000000",
-    opacity: 80,  // 0-100 percentage
+    opacity: 80,
     cornerRadius: 20
   },
   box: {
     hPadding: 25,
     vPadding: 15,
-    charWidth: 0.6  // character width multiplier (higher = wider box)
+    charWidth: 0.6
   },
   position: {
-    alignment: 5,  // 1-9 numpad style (5 = center)
+    alignment: 5,
     marginV: 40,
     marginL: 40,
     marginR: 40
   }
 }
 
-// Ensure data directory exists
-function ensureDataDir() {
-  const dataDir = path.dirname(SETTINGS_FILE)
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true })
+function ensureDir(filePath: string) {
+  const dir = path.dirname(filePath)
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true })
   }
 }
 
-// GET - Load settings
 export async function GET() {
   try {
-    ensureDataDir()
+    const username = await getUser()
+    const settingsPath = getSettingsPath(username)
 
-    if (fs.existsSync(SETTINGS_FILE)) {
-      const data = fs.readFileSync(SETTINGS_FILE, "utf-8")
+    if (fs.existsSync(settingsPath)) {
+      const data = fs.readFileSync(settingsPath, "utf-8")
       const settings = JSON.parse(data)
       return NextResponse.json({ success: true, settings })
     }
 
-    // Return defaults if no file exists
     return NextResponse.json({ success: true, settings: defaultSettings })
   } catch (error) {
     console.error("Error loading subtitle settings:", error)
@@ -56,14 +67,14 @@ export async function GET() {
   }
 }
 
-// POST - Save settings
 export async function POST(request: NextRequest) {
   try {
-    ensureDataDir()
+    const username = await getUser()
+    const settingsPath = getSettingsPath(username)
+    ensureDir(settingsPath)
 
     const settings = await request.json()
 
-    // Validate settings structure
     const validatedSettings = {
       font: {
         family: settings.font?.family || defaultSettings.font.family,
@@ -88,7 +99,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(validatedSettings, null, 2))
+    fs.writeFileSync(settingsPath, JSON.stringify(validatedSettings, null, 2))
 
     return NextResponse.json({ success: true, settings: validatedSettings })
   } catch (error) {

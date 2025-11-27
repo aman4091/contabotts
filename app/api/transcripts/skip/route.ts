@@ -1,8 +1,15 @@
 import { NextRequest, NextResponse } from "next/server"
+import { cookies } from "next/headers"
 import { skipTranscript } from "@/lib/file-storage"
+
+async function getUser() {
+  const cookieStore = await cookies()
+  return cookieStore.get("user")?.value
+}
 
 export async function POST(request: NextRequest) {
   try {
+    const username = await getUser()
     const body = await request.json()
     const { channelCode, index } = body
 
@@ -10,7 +17,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Channel code and index required" }, { status: 400 })
     }
 
-    const success = skipTranscript(channelCode, index)
+    const success = skipTranscript(channelCode, index, username)
 
     if (!success) {
       return NextResponse.json({ error: "Transcript not found" }, { status: 404 })
