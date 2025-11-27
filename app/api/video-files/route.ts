@@ -9,7 +9,7 @@ export async function GET(request: NextRequest) {
     const statuses = ["pending", "processing", "completed", "failed"]
     const responses = await Promise.all(
       statuses.map(status =>
-        fetch(`${FILE_SERVER_URL}/queue/audio/jobs?status=${status}`, {
+        fetch(`${FILE_SERVER_URL}/queue/video/jobs?status=${status}`, {
           headers: { "x-api-key": FILE_SERVER_API_KEY },
           cache: "no-store"
         })
@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
       jobs: allJobs
     })
   } catch (error) {
-    console.error("Error fetching audio files:", error)
-    return NextResponse.json({ error: "Failed to fetch audio files" }, { status: 500 })
+    console.error("Error fetching video files:", error)
+    return NextResponse.json({ error: "Failed to fetch video files" }, { status: 500 })
   }
 }

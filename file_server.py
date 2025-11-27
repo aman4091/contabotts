@@ -669,6 +669,88 @@ async def fail_job(
     }
 
 
+@app.post("/queue/{queue_type}/jobs/{job_id}/status")
+async def update_job_status(
+    queue_type: str,
+    job_id: str,
+    new_status: str = Body(..., embed=True),
+    x_api_key: Optional[str] = Header(None)
+):
+    """
+    Update job status - move job between folders
+
+    Args:
+        queue_type: 'audio' or 'video'
+        job_id: Job ID
+        new_status: Target status (pending, completed, failed)
+
+    Returns:
+        Success status
+    """
+    verify_api_key(x_api_key)
+    paths = get_queue_paths(queue_type)
+
+    if new_status not in ["pending", "completed", "failed"]:
+        raise HTTPException(status_code=400, detail="Invalid status. Must be: pending, completed, failed")
+
+    # Find the job in any folder
+    job_data = None
+    source_file = None
+    current_status = None
+
+    for status, folder in paths.items():
+        # Check direct match
+        job_file = folder / f"{job_id}.json"
+        if job_file.exists():
+            source_file = job_file
+            current_status = status
+            break
+        # Check processing folder with worker prefix
+        if status == "processing":
+            for f in folder.glob(f"*_{job_id}.json"):
+                source_file = f
+                current_status = status
+                break
+
+    if not source_file:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    # Read job data
+    with open(source_file) as f:
+        job_data = json.load(f)
+
+    # Update status
+    job_data["status"] = new_status
+    job_data["status_updated_at"] = datetime.now().isoformat()
+
+    # Reset retry count and error when moving to pending
+    if new_status == "pending":
+        job_data["retry_count"] = 0
+        if "error_message" in job_data:
+            del job_data["error_message"]
+        if "worker_id" in job_data:
+            del job_data["worker_id"]
+        if "processing_started_at" in job_data:
+            del job_data["processing_started_at"]
+
+    # Save to new folder
+    dest_file = paths[new_status] / f"{job_id}.json"
+    paths[new_status].mkdir(parents=True, exist_ok=True)
+
+    with open(dest_file, "w") as f:
+        json.dump(job_data, f, indent=2)
+
+    # Delete from old location
+    source_file.unlink()
+
+    return {
+        "success": True,
+        "job_id": job_id,
+        "old_status": current_status,
+        "new_status": new_status
+    }
+
+
 @app.get("/queue/{queue_type}/jobs")
 async def list_jobs(
     queue_type: str,

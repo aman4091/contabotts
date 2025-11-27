@@ -453,6 +453,14 @@ class LocalVideoWorker:
             self.queue.complete_job(job_id, self.worker_id, gofile_link)
             self.queue.increment_worker_stat(self.worker_id, "jobs_completed")
 
+            # 6. Delete used image
+            try:
+                if image_path and os.path.exists(image_path):
+                    os.remove(image_path)
+                    print(f"🗑️ Deleted image: {os.path.basename(image_path)}", flush=True)
+            except Exception as del_err:
+                print(f"⚠️ Could not delete image: {del_err}", flush=True)
+
             print(f"\n✅ Job {job_id[:8]} completed successfully!")
             print(f"{'='*60}\n", flush=True)
 
