@@ -9,7 +9,65 @@ import subprocess
 import whisper
 import re
 import asyncio
+import json
 from pathlib import Path
+
+
+def hex_to_ass_color(hex_color, opacity=100):
+    """Convert hex color (#RRGGBB) to ASS color format (&HAABBGGRR)
+
+    Args:
+        hex_color: Hex color string like "#FFFFFF" or "#000000"
+        opacity: 0-100 percentage (100 = fully opaque)
+
+    Returns:
+        ASS color string like "&H00FFFFFF" or "&H80000000"
+    """
+    # Remove # if present
+    hex_color = hex_color.lstrip('#')
+
+    # Parse RGB
+    r = int(hex_color[0:2], 16)
+    g = int(hex_color[2:4], 16)
+    b = int(hex_color[4:6], 16)
+
+    # Convert opacity (0-100) to alpha (FF-00)
+    # ASS alpha: 00 = fully visible, FF = fully transparent
+    alpha = int((100 - opacity) * 255 / 100)
+
+    # ASS format: &HAABBGGRR (alpha, blue, green, red)
+    return f"&H{alpha:02X}{b:02X}{g:02X}{r:02X}"
+
+
+def load_subtitle_settings():
+    """Load subtitle settings from JSON file"""
+    settings_file = os.path.join(os.path.dirname(__file__), "data", "subtitle-settings.json")
+
+    # Default settings - charWidth 0.6 for better text fitting
+    defaults = {
+        "font": {"family": "Arial", "size": 48, "color": "#FFFFFF"},
+        "background": {"color": "#000000", "opacity": 80, "cornerRadius": 20},
+        "box": {"hPadding": 25, "vPadding": 15, "charWidth": 0.6},
+        "position": {"alignment": 5, "marginV": 40, "marginL": 40, "marginR": 40}
+    }
+
+    try:
+        if os.path.exists(settings_file):
+            with open(settings_file, 'r') as f:
+                settings = json.load(f)
+                # Merge with defaults to ensure all keys exist
+                for key in defaults:
+                    if key not in settings:
+                        settings[key] = defaults[key]
+                    else:
+                        for subkey in defaults[key]:
+                            if subkey not in settings[key]:
+                                settings[key][subkey] = defaults[key][subkey]
+                return settings
+    except Exception as e:
+        print(f"⚠️ Error loading subtitle settings: {e}, using defaults")
+
+    return defaults
 
 
 class VideoGenerator:
@@ -582,10 +640,26 @@ class VideoGenerator:
             if not output_ass_path:
                 output_ass_path = srt_path.replace('.srt', '.ass')
 
-            # Default ASS style (if not provided)
+            # Load settings from JSON file
+            sub_settings = load_subtitle_settings()
+
+            # Build ASS style from settings if not provided
             # BorderStyle=1 (outline only, no built-in box) because we draw custom box separately
             if not ass_style:
-                ass_style = 'Style: Default,Arial,48,&H00FFFFFF,&H00FFFFFF,&H80000000,&H80000000,-1,0,0,0,100,100,0,0,1,0,0,5,40,40,40,1'
+                font_family = sub_settings["font"]["family"]
+                font_size = sub_settings["font"]["size"]
+                font_color = hex_to_ass_color(sub_settings["font"]["color"], 100)
+                back_color = hex_to_ass_color(sub_settings["background"]["color"], sub_settings["background"]["opacity"])
+                alignment = sub_settings["position"]["alignment"]
+                margin_l = sub_settings["position"]["marginL"]
+                margin_r = sub_settings["position"]["marginR"]
+                margin_v = sub_settings["position"]["marginV"]
+
+                # ASS Style format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,
+                #                   Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,
+                #                   BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
+                ass_style = f'Style: Default,{font_family},{font_size},{font_color},{font_color},{back_color},{back_color},-1,0,0,0,100,100,0,0,1,0,0,{alignment},{margin_l},{margin_r},{margin_v},1'
+                print(f"📝 Using subtitle settings: Font={font_family}, Size={font_size}, Opacity={sub_settings['background']['opacity']}%")
 
             # Parse SRT file
             with open(srt_path, 'r', encoding='utf-8') as f:
@@ -615,14 +689,17 @@ class VideoGenerator:
         Returns:
             dict: Parsed style parameters
         """
-        # Default values
+        # Load settings from JSON file for defaults
+        sub_settings = load_subtitle_settings()
+
+        # Default values from settings
         params = {
-            'fontsize': 48,
-            'alignment': 5,  # Middle-center
-            'marginv': 40,
-            'marginl': 40,
-            'marginr': 40,
-            'back_color': '&H80000000'  # Semi-transparent black
+            'fontsize': sub_settings["font"]["size"],
+            'alignment': sub_settings["position"]["alignment"],
+            'marginv': sub_settings["position"]["marginV"],
+            'marginl': sub_settings["position"]["marginL"],
+            'marginr': sub_settings["position"]["marginR"],
+            'back_color': hex_to_ass_color(sub_settings["background"]["color"], sub_settings["background"]["opacity"])
         }
 
         try:
@@ -652,6 +729,9 @@ class VideoGenerator:
         Returns:
             dict: Box dimensions and position
         """
+        # Load settings from JSON file
+        sub_settings = load_subtitle_settings()
+
         # Parse text into lines
         lines = text.split('\\N')
         line_count = len(lines)
@@ -660,16 +740,16 @@ class VideoGenerator:
         fontsize = style_params['fontsize']
         line_height = int(fontsize * 1.2)  # Typical line height is 120% of font size
 
-        # Calculate text dimensions
-        # Estimate average character width as 52% of font size (reduced from 60% for tighter fit)
-        char_width = fontsize * 0.52
+        # Calculate text dimensions using settings
+        char_width_multiplier = sub_settings["box"]["charWidth"]
+        char_width = fontsize * char_width_multiplier
         max_line_length = max(len(line) for line in lines)
         text_width = int(max_line_length * char_width)
         text_height = int(line_count * line_height)
 
-        # Add padding (15px horizontal, 18px vertical - reduced for narrower box)
-        padding_h = 15
-        padding_v = 18
+        # Add padding from settings
+        padding_h = sub_settings["box"]["hPadding"]
+        padding_v = sub_settings["box"]["vPadding"]
         box_width = text_width + (2 * padding_h)
         box_height = text_height + (2 * padding_v)
 
@@ -711,7 +791,7 @@ class VideoGenerator:
             'y2': y2,
             'width': box_width,
             'height': box_height,
-            'corner_radius': 25  # Medium rounded corners
+            'corner_radius': sub_settings["background"]["cornerRadius"]
         }
 
     def _srt_time_to_ass(self, srt_time):

@@ -11,7 +11,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Menu,
-  X
+  X,
+  Subtitles
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -40,6 +41,12 @@ const navItems = [
     href: "/audio-files",
     icon: FileAudio,
     description: "View audio jobs"
+  },
+  {
+    title: "Subtitles",
+    href: "/subtitle-settings",
+    icon: Subtitles,
+    description: "Customize subtitles"
   },
   {
     title: "Settings",
