@@ -138,7 +138,14 @@ class FileServerQueue:
         except: return None
 
     def get_reference_audio(self, channel_code: str, local_path: str) -> bool:
-        return self.download_file(f"reference-audio/{channel_code}.wav", local_path)
+        """Try wav first, then mp3"""
+        # Try wav first
+        if self.download_file(f"reference-audio/{channel_code}.wav", local_path):
+            return True
+        # Try mp3
+        if self.download_file(f"reference-audio/{channel_code}.mp3", local_path):
+            return True
+        return False
 
     def get_random_image(self, image_folder: str = "nature") -> Optional[str]:
         try:
