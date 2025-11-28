@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Local Video Worker - NO SUPABASE VERSION
-Runs on Contabo - Uses local file queue and VideoGenerator with Whisper
+Local Video Worker - VAST.AI GPU VERSION
+Runs on Vast.ai - Uses local file queue and GPU-accelerated VideoGenerator with Whisper
 
 Flow:
 1. Watch /data/video-queue/pending/ for jobs
@@ -36,12 +36,23 @@ if os.path.exists(env_path):
     load_dotenv(env_path)
     print(f"✅ Loaded environment from: {env_path}")
 
-# Force CPU encoder on Contabo (no GPU)
-os.environ["FORCE_CPU_ENCODER"] = "true"
+# GPU Mode enabled for Vast.ai
+# Note: FORCE_CPU_ENCODER removed - using GPU acceleration
 
 import requests
 from video_generator import VideoGenerator
 
+# ============================================================================
+# CONFIGURATION - File Server Connection
+# ============================================================================
+
+FILE_SERVER_URL = os.getenv("FILE_SERVER_URL")
+FILE_SERVER_API_KEY = os.getenv("FILE_SERVER_API_KEY")
+
+if not FILE_SERVER_URL or not FILE_SERVER_API_KEY:
+    raise ValueError("FILE_SERVER_URL and FILE_SERVER_API_KEY must be set in environment")
+
+print(f"✅ File Server: {FILE_SERVER_URL}")
 
 # ============================================================================
 # TELEGRAM NOTIFICATIONS - User specific
@@ -84,220 +95,158 @@ def send_telegram(message: str, username: str = None):
 
 
 # ============================================================================
-# LOCAL VIDEO QUEUE
+# FILE SERVER QUEUE CLIENT (HTTP API)
 # ============================================================================
 
-class LocalVideoQueue:
-    """Local file-based video job queue"""
+class FileServerQueue:
+    """Client for Contabo file server video queue operations via HTTP API"""
 
-    def __init__(self, base_path: str = None):
-        data_dir = os.getenv("DATA_DIR", "/root/tts/data")
-        self.base_path = Path(base_path or os.path.join(data_dir, "video-queue"))
-        self.pending = self.base_path / "pending"
-        self.processing = self.base_path / "processing"
-        self.completed = self.base_path / "completed"
-        self.failed = self.base_path / "failed"
-
-        # Workers status folder
-        self.workers_dir = Path(data_dir) / "workers" / "video"
-
-        # Create folders if not exist
-        for folder in [self.pending, self.processing, self.completed, self.failed, self.workers_dir]:
-            folder.mkdir(parents=True, exist_ok=True)
+    def __init__(self, base_url: str, api_key: str):
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.headers = {"x-api-key": api_key, "Content-Type": "application/json"}
+        self.file_headers = {"x-api-key": api_key}
 
     def claim_job(self, worker_id: str) -> Optional[Dict]:
-        """
-        Claim next pending job (atomic via file move)
+        """Claim next pending video job via HTTP API"""
+        try:
+            response = requests.post(
+                f"{self.base_url}/queue/video/claim",
+                json={"worker_id": worker_id},
+                headers=self.headers,
+                timeout=30
+            )
 
-        Returns job data or None if no jobs available
-        """
-        # Get pending jobs
-        pending_files = list(self.pending.glob("*.json"))
-
-        if not pending_files:
+            if response.status_code == 200:
+                data = response.json()
+                job = data.get("job")
+                if job:
+                    print(f"✅ Claimed job: {job.get('job_id', 'unknown')[:8]}")
+                return job
+            else:
+                return None
+        except Exception as e:
+            print(f"❌ Claim job error: {e}")
             return None
-
-        # Read all jobs to sort by priority
-        jobs_with_files = []
-        for job_file in pending_files:
-            try:
-                with open(job_file) as f:
-                    job_data = json.load(f)
-                    jobs_with_files.append((job_file, job_data))
-            except Exception as e:
-                print(f"Error reading job file {job_file}: {e}")
-                continue
-
-        if not jobs_with_files:
-            return None
-
-        # Sort by priority (desc) then created_at (asc)
-        jobs_with_files.sort(key=lambda x: (-x[1].get("priority", 0), x[1].get("created_at", "")))
-
-        # Try to claim each job atomically
-        for job_file, job_data in jobs_with_files:
-            try:
-                # Atomic move: pending -> processing
-                new_name = f"{worker_id}_{job_file.name}"
-                new_path = self.processing / new_name
-
-                # os.rename is atomic on Linux (same filesystem)
-                os.rename(str(job_file), str(new_path))
-
-                # Update job with worker info
-                job_data["worker_id"] = worker_id
-                job_data["processing_started_at"] = datetime.now().isoformat()
-
-                with open(new_path, "w") as f:
-                    json.dump(job_data, f, indent=2)
-
-                print(f"✅ Claimed job: {job_data.get('job_id', 'unknown')[:8]}")
-                return job_data
-
-            except FileNotFoundError:
-                # Another worker claimed it, try next
-                continue
-            except Exception as e:
-                print(f"Error claiming job: {e}")
-                continue
-
-        return None
 
     def complete_job(self, job_id: str, worker_id: str, gofile_link: str = None) -> bool:
-        """Move job to completed folder"""
+        """Mark video job as completed via HTTP API"""
         try:
-            job_file = self.processing / f"{worker_id}_{job_id}.json"
-
-            if not job_file.exists():
-                print(f"Job file not found: {job_file}")
-                return False
-
-            with open(job_file) as f:
-                job_data = json.load(f)
-
-            job_data["completed_at"] = datetime.now().isoformat()
-            job_data["status"] = "completed"
-            if gofile_link:
-                job_data["gofile_link"] = gofile_link
-
-            completed_file = self.completed / f"{job_id}.json"
-            with open(completed_file, "w") as f:
-                json.dump(job_data, f, indent=2)
-
-            job_file.unlink()  # Delete processing file
-            print(f"✅ Job completed: {job_id[:8]}")
-            return True
-
+            response = requests.post(
+                f"{self.base_url}/queue/video/jobs/{job_id}/complete",
+                json={"worker_id": worker_id, "gofile_link": gofile_link},
+                headers=self.headers,
+                timeout=30
+            )
+            success = response.status_code == 200
+            if success:
+                print(f"✅ Job completed: {job_id[:8]}")
+            return success
         except Exception as e:
-            print(f"Error completing job: {e}")
+            print(f"❌ Complete job error: {e}")
             return False
 
     def fail_job(self, job_id: str, worker_id: str, error_message: str) -> bool:
-        """Move job to failed or back to pending for retry"""
+        """Mark video job as failed via HTTP API"""
         try:
-            job_file = self.processing / f"{worker_id}_{job_id}.json"
-
-            if not job_file.exists():
-                print(f"Job file not found: {job_file}")
-                return False
-
-            with open(job_file) as f:
-                job_data = json.load(f)
-
-            job_data["retry_count"] = job_data.get("retry_count", 0) + 1
-            job_data["error_message"] = error_message
-            job_data["last_failed_at"] = datetime.now().isoformat()
-
-            max_retries = 3
-
-            if job_data["retry_count"] >= max_retries:
-                # Move to failed
-                job_data["status"] = "failed"
-                dest_file = self.failed / f"{job_id}.json"
-                print(f"❌ Job permanently failed after {max_retries} retries")
-            else:
-                # Back to pending for retry
-                job_data["status"] = "pending"
-                if "worker_id" in job_data:
-                    del job_data["worker_id"]
-                if "processing_started_at" in job_data:
-                    del job_data["processing_started_at"]
-                dest_file = self.pending / f"{job_id}.json"
-                print(f"🔄 Job queued for retry ({job_data['retry_count']}/{max_retries})")
-
-            with open(dest_file, "w") as f:
-                json.dump(job_data, f, indent=2)
-
-            job_file.unlink()
-            return True
-
+            response = requests.post(
+                f"{self.base_url}/queue/video/jobs/{job_id}/fail",
+                json={"worker_id": worker_id, "error_message": error_message},
+                headers=self.headers,
+                timeout=30
+            )
+            return response.status_code == 200
         except Exception as e:
-            print(f"Error failing job: {e}")
+            print(f"❌ Fail job error: {e}")
             return False
 
     def get_stats(self) -> Dict:
-        """Get queue statistics"""
-        stats = {
-            "pending": len(list(self.pending.glob("*.json"))),
-            "processing": len(list(self.processing.glob("*.json"))),
-            "completed": len(list(self.completed.glob("*.json"))),
-            "failed": len(list(self.failed.glob("*.json")))
-        }
-        stats["total"] = sum(stats.values())
-        return stats
-
-    def update_worker_status(self, worker_id: str, status: str = "online",
-                             current_job: str = None, gpu_model: str = None) -> bool:
-        """Update worker status file"""
+        """Get video queue statistics via HTTP API"""
         try:
-            worker_file = self.workers_dir / f"{worker_id}.json"
+            response = requests.get(
+                f"{self.base_url}/queue/video/stats",
+                headers=self.file_headers,
+                timeout=30
+            )
+            if response.status_code == 200:
+                return response.json()
+            return {}
+        except:
+            return {}
 
-            if worker_file.exists():
-                with open(worker_file) as f:
-                    worker_data = json.load(f)
-            else:
-                worker_data = {
+    def send_heartbeat(self, worker_id: str, status: str = "online",
+                       hostname: str = None, gpu_model: str = None,
+                       current_job: str = None) -> bool:
+        """Send worker heartbeat via HTTP API"""
+        try:
+            response = requests.post(
+                f"{self.base_url}/workers/video/heartbeat",
+                json={
                     "worker_id": worker_id,
-                    "jobs_completed": 0,
-                    "jobs_failed": 0,
-                    "created_at": datetime.now().isoformat()
-                }
-
-            worker_data["status"] = status
-            worker_data["hostname"] = platform.node()
-            worker_data["last_heartbeat"] = datetime.now().isoformat()
-            if current_job is not None:
-                worker_data["current_job"] = current_job
-            if gpu_model:
-                worker_data["gpu_model"] = gpu_model
-
-            with open(worker_file, "w") as f:
-                json.dump(worker_data, f, indent=2)
-
-            return True
+                    "status": status,
+                    "hostname": hostname,
+                    "gpu_model": gpu_model,
+                    "current_job": current_job
+                },
+                headers=self.headers,
+                timeout=30
+            )
+            return response.status_code == 200
         except Exception as e:
-            print(f"Error updating worker status: {e}")
+            print(f"❌ Heartbeat error: {e}")
             return False
 
     def increment_worker_stat(self, worker_id: str, stat: str) -> bool:
-        """Increment worker stat (jobs_completed or jobs_failed)"""
+        """Increment worker stat via HTTP API"""
         try:
-            worker_file = self.workers_dir / f"{worker_id}.json"
-
-            if not worker_file.exists():
-                return False
-
-            with open(worker_file) as f:
-                worker_data = json.load(f)
-
-            worker_data[stat] = worker_data.get(stat, 0) + 1
-
-            with open(worker_file, "w") as f:
-                json.dump(worker_data, f, indent=2)
-
-            return True
+            response = requests.post(
+                f"{self.base_url}/workers/video/{worker_id}/increment",
+                params={"stat": stat},
+                headers=self.file_headers,
+                timeout=30
+            )
+            return response.status_code == 200
         except:
             return False
+
+    def download_file(self, remote_path: str, local_path: str) -> bool:
+        """Download file from Contabo file server"""
+        try:
+            url = f"{self.base_url}/files/{remote_path}"
+            response = requests.get(url, headers=self.file_headers, stream=True, timeout=300)
+
+            if response.status_code == 200:
+                os.makedirs(os.path.dirname(local_path), exist_ok=True)
+                with open(local_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                return True
+            return False
+        except Exception as e:
+            print(f"❌ Download error: {e}")
+            return False
+
+    def upload_file(self, local_path: str, remote_path: str) -> bool:
+        """Upload file to Contabo file server"""
+        try:
+            url = f"{self.base_url}/files/{remote_path}"
+            with open(local_path, 'rb') as f:
+                response = requests.post(
+                    url,
+                    files={'file': f},
+                    headers=self.file_headers,
+                    timeout=600
+                )
+            return response.status_code == 200
+        except Exception as e:
+            print(f"❌ Upload error: {e}")
+            return False
+
+    # Compatibility methods for existing code
+    def update_worker_status(self, worker_id: str, status: str = "online",
+                             current_job: str = None, gpu_model: str = None) -> bool:
+        """Alias for send_heartbeat (compatibility)"""
+        return self.send_heartbeat(worker_id, status, platform.node(), gpu_model, current_job)
 
 
 # ============================================================================
@@ -310,21 +259,21 @@ class LocalVideoWorker:
     def __init__(self):
         """Initialize worker"""
         # Worker identification
-        default_worker_id = f"contabo_{platform.node()}"
+        default_worker_id = f"vastai_{platform.node()}"
         self.worker_id = os.getenv("WORKER_ID", default_worker_id)
         self.hostname = platform.node()
 
-        # GPU/CPU mode
-        self.force_cpu = os.getenv("FORCE_CPU_ENCODER", "true").lower() in ("true", "1", "yes")
-        self.gpu_model = "CPU Mode" if self.force_cpu else "GPU"
+        # GPU Mode enabled for Vast.ai
+        self.force_cpu = False
+        self.gpu_model = "NVIDIA GPU (NVENC)"
 
         # Initialize components
         print("🔄 Initializing worker components...", flush=True)
-        self.queue = LocalVideoQueue()
-        self.video_gen = VideoGenerator()
+        self.queue = FileServerQueue(FILE_SERVER_URL, FILE_SERVER_API_KEY)
+        self.video_gen = VideoGenerator()  # Now uses GPU-optimized encoding
 
-        # Data directory
-        self.data_dir = os.getenv("DATA_DIR", "/root/tts/data")
+        # Data directory (Vast.ai temp storage)
+        self.data_dir = os.getenv("DATA_DIR", "/tmp/video_data")
 
         # Working directory for temp files
         self.work_dir = os.getenv("WORK_DIR", "/tmp/video_worker")
@@ -339,24 +288,41 @@ class LocalVideoWorker:
         print(f"✅ CPU Mode: {self.force_cpu}", flush=True)
 
     def get_random_image(self, image_folder: str = "nature") -> Optional[str]:
-        """Get random image from images folder"""
-        images_dir = os.path.join(self.data_dir, "images", image_folder)
+        """Get random image from file server"""
+        try:
+            # Get list of images from file server
+            response = requests.get(
+                f"{FILE_SERVER_URL}/images/{image_folder}",
+                headers={"x-api-key": FILE_SERVER_API_KEY},
+                timeout=30
+            )
 
-        if not os.path.exists(images_dir):
-            print(f"❌ Images folder not found: {images_dir}")
+            if response.status_code != 200:
+                print(f"❌ Failed to get image list: {response.status_code}")
+                return None
+
+            images = response.json().get("images", [])
+            if not images:
+                print(f"❌ No images in folder: {image_folder}")
+                return None
+
+            # Pick random image
+            selected = random.choice(images)
+            print(f"📷 Selected image: {selected}")
+
+            # Download image to temp folder
+            local_image = os.path.join(self.work_dir, "temp_image.jpg")
+            remote_path = f"images/{image_folder}/{selected}"
+
+            if self.queue.download_file(remote_path, local_image):
+                return local_image
+            else:
+                print(f"❌ Failed to download image: {selected}")
+                return None
+
+        except Exception as e:
+            print(f"❌ Get random image error: {e}")
             return None
-
-        images = [
-            f for f in os.listdir(images_dir)
-            if f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))
-        ]
-
-        if not images:
-            print(f"❌ No images in folder: {images_dir}")
-            return None
-
-        selected = random.choice(images)
-        return os.path.join(images_dir, selected)
 
     async def upload_to_gofile(self, file_path: str) -> Optional[str]:
         """Upload file to Gofile"""
@@ -425,39 +391,29 @@ class LocalVideoWorker:
             # Update worker status
             self.queue.update_worker_status(self.worker_id, status="busy", current_job=job_id)
 
-            # Build local paths
-            # organized_path is like "/organized/2025-11-28/BI/video_1"
-            local_organized = os.path.join(self.data_dir, organized_path.lstrip('/'))
+            # 1. Download audio from Contabo file server
+            # organized_path is like "organized/2025-11-28/BI/video_1"
+            remote_audio = f"{organized_path.lstrip('/')}/audio.wav"
+            local_audio = os.path.join(self.work_dir, "audio.wav")
 
-            if not os.path.exists(local_organized):
-                raise Exception(f"Organized folder not found: {local_organized}")
+            print(f"📥 Downloading audio from: {remote_audio}", flush=True)
+            if not self.queue.download_file(remote_audio, local_audio):
+                raise Exception(f"Failed to download audio from: {remote_audio}")
 
-            # 1. Get audio path
-            audio_path = os.path.join(local_organized, "audio.wav")
-            if not os.path.exists(audio_path):
-                # Try other formats
-                for ext in [".mp3", ".m4a", ".flac"]:
-                    alt_path = os.path.join(local_organized, f"audio{ext}")
-                    if os.path.exists(alt_path):
-                        audio_path = alt_path
-                        break
-                else:
-                    raise Exception(f"Audio not found in: {local_organized}")
+            print(f"✅ Audio downloaded: {local_audio}", flush=True)
 
-            print(f"📥 Audio: {audio_path}", flush=True)
-
-            # 2. Get random image
+            # 2. Get random image from file server
             image_path = self.get_random_image(image_folder)
             if not image_path:
                 raise Exception(f"No images in {image_folder} folder")
 
-            print(f"🖼️ Image: {image_path}", flush=True)
+            print(f"✅ Image: {image_path}", flush=True)
 
-            # 3. Generate video with VideoGenerator (Whisper subtitles)
-            print(f"\n🎬 Generating video with Whisper subtitles...", flush=True)
-            print(f"⏰ This may take a while (CPU mode)...", flush=True)
+            # 3. Generate video with VideoGenerator (Whisper subtitles + GPU)
+            print(f"\n🎬 Generating video with Whisper subtitles (GPU NVENC)...", flush=True)
+            print(f"⏰ Using GPU acceleration...", flush=True)
 
-            video_output = os.path.join(local_organized, "video.mp4")
+            video_output = os.path.join(self.work_dir, "video.mp4")
 
             # Get subtitle style from job or use default
             subtitle_style = job.get('subtitle_style')
@@ -473,7 +429,7 @@ class LocalVideoWorker:
             final_video = await asyncio.to_thread(
                 self.video_gen.create_video_with_subtitles,
                 image_path,
-                audio_path,
+                local_audio,
                 video_output,
                 subtitle_style,
                 video_progress,
@@ -486,15 +442,21 @@ class LocalVideoWorker:
             video_size_mb = os.path.getsize(final_video) / (1024 * 1024)
             print(f"✅ Video generated: {final_video} ({video_size_mb:.1f} MB)", flush=True)
 
-            # 4. Upload to Gofile
+            # 4. Upload video back to Contabo file server
+            print(f"\n📤 Uploading video to Contabo...", flush=True)
+            remote_video = f"{organized_path.lstrip('/')}/video.mp4"
+            if not self.queue.upload_file(final_video, remote_video):
+                print(f"⚠️ Failed to upload video to Contabo: {remote_video}")
+
+            # 5. Upload to Gofile for backup
             print(f"\n📤 Uploading to Gofile...", flush=True)
             gofile_link = await self.upload_to_gofile(final_video)
 
-            # 5. Mark job complete
+            # 6. Mark job complete
             self.queue.complete_job(job_id, self.worker_id, gofile_link)
             self.queue.increment_worker_stat(self.worker_id, "jobs_completed")
 
-            # 6. Send notification to user
+            # 7. Send notification to user
             job_username = job.get("username")
             send_telegram(
                 f"🎬 <b>Video Complete</b>\n"
@@ -506,13 +468,14 @@ class LocalVideoWorker:
                 username=job_username
             )
 
-            # 7. Delete used image
+            # 8. Cleanup temp files
             try:
-                if image_path and os.path.exists(image_path):
-                    os.remove(image_path)
-                    print(f"🗑️ Deleted image: {os.path.basename(image_path)}", flush=True)
+                for temp_file in [image_path, local_audio, final_video]:
+                    if temp_file and os.path.exists(temp_file):
+                        os.remove(temp_file)
+                        print(f"🗑️ Deleted temp file: {os.path.basename(temp_file)}", flush=True)
             except Exception as del_err:
-                print(f"⚠️ Could not delete image: {del_err}", flush=True)
+                print(f"⚠️ Could not delete temp files: {del_err}", flush=True)
 
             print(f"\n✅ Job {job_id[:8]} completed successfully!")
             print(f"{'='*60}\n", flush=True)
@@ -544,11 +507,12 @@ class LocalVideoWorker:
     async def run(self):
         """Main worker loop"""
         print(f"\n{'='*60}", flush=True)
-        print(f"🚀 Video Worker Starting (NO SUPABASE)", flush=True)
+        print(f"🚀 Video Worker Starting (VAST.AI GPU)", flush=True)
         print(f"{'='*60}", flush=True)
         print(f"   Worker ID: {self.worker_id}", flush=True)
         print(f"   Hostname: {self.hostname}", flush=True)
         print(f"   Mode: {self.gpu_model}", flush=True)
+        print(f"   File Server: {FILE_SERVER_URL}", flush=True)
         print(f"   Poll interval: {self.poll_interval}s", flush=True)
         print(f"{'='*60}\n", flush=True)
 

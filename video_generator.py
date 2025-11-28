@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Video Generator Module
-Creates videos from image + audio with burned-in ASS subtitles
+Video Generator Module - ULTRA SAFE GPU MODE + ORIGINAL STYLING
+Creates videos from image + audio with burned-in ASS subtitles (Dynamic Box Style)
 """
 
 import os
@@ -10,689 +10,252 @@ import whisper
 import re
 import asyncio
 import json
+import shutil
 from pathlib import Path
 
+# ============================================================================
+# HELPER FUNCTIONS (ORIGINAL)
+# ============================================================================
 
 def hex_to_ass_color(hex_color, opacity=100):
-    """Convert hex color (#RRGGBB) to ASS color format (&HAABBGGRR)
-
-    Args:
-        hex_color: Hex color string like "#FFFFFF" or "#000000"
-        opacity: 0-100 percentage (100 = fully opaque)
-
-    Returns:
-        ASS color string like "&H00FFFFFF" or "&H80000000"
-    """
-    # Remove # if present
     hex_color = hex_color.lstrip('#')
-
-    # Parse RGB
     r = int(hex_color[0:2], 16)
     g = int(hex_color[2:4], 16)
     b = int(hex_color[4:6], 16)
-
-    # Convert opacity (0-100) to alpha (FF-00)
-    # ASS alpha: 00 = fully visible, FF = fully transparent
     alpha = int((100 - opacity) * 255 / 100)
-
-    # ASS format: &HAABBGGRR (alpha, blue, green, red)
     return f"&H{alpha:02X}{b:02X}{g:02X}{r:02X}"
 
-
 def load_subtitle_settings():
-    """Load subtitle settings from JSON file"""
     settings_file = os.path.join(os.path.dirname(__file__), "data", "subtitle-settings.json")
-
-    # Default settings - charWidth 0.6 for better text fitting
     defaults = {
         "font": {"family": "Arial", "size": 48, "color": "#FFFFFF"},
         "background": {"color": "#000000", "opacity": 80, "cornerRadius": 20},
         "box": {"hPadding": 25, "vPadding": 15, "charWidth": 0.6},
         "position": {"alignment": 5, "marginV": 40, "marginL": 40, "marginR": 40}
     }
-
     try:
         if os.path.exists(settings_file):
             with open(settings_file, 'r') as f:
                 settings = json.load(f)
-                # Merge with defaults to ensure all keys exist
                 for key in defaults:
-                    if key not in settings:
-                        settings[key] = defaults[key]
+                    if key not in settings: settings[key] = defaults[key]
                     else:
                         for subkey in defaults[key]:
-                            if subkey not in settings[key]:
-                                settings[key][subkey] = defaults[key][subkey]
+                            if subkey not in settings[key]: settings[key][subkey] = defaults[key][subkey]
                 return settings
-    except Exception as e:
-        print(f"⚠️ Error loading subtitle settings: {e}, using defaults")
-
+    except: pass
     return defaults
 
 
+# ============================================================================
+# VIDEO GENERATOR CLASS
+# ============================================================================
+
 class VideoGenerator:
     def __init__(self):
-        """Initialize video generator with Whisper model and GPU detection"""
         self.whisper_model = None
         self.gpu_encoder = self._detect_gpu_encoder()
-        print("✅ VideoGenerator initialized")
+        print(f"✅ VideoGenerator initialized (Default Encoder: {self.gpu_encoder})")
 
     def _detect_gpu_encoder(self):
-        """Detect available NVIDIA hardware encoder for FFmpeg"""
-        # Check if CPU encoding is forced via environment variable
-        force_cpu = os.getenv('FORCE_CPU_ENCODER', 'false').lower() in ('true', '1', 'yes')
-
-        if force_cpu:
-            print("🔧 FORCE_CPU_ENCODER enabled - Using CPU encoder (libx264)")
-            print("   This is slower but more stable for cloud environments")
+        if os.getenv('FORCE_CPU_ENCODER', 'false').lower() == 'true':
             return 'libx264'
-
         try:
-            result = subprocess.run(
-                ['ffmpeg', '-hide_banner', '-encoders'],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-
-            # Check for NVENC encoders
+            result = subprocess.run(['ffmpeg', '-hide_banner', '-encoders'], capture_output=True, text=True, timeout=5)
             if 'h264_nvenc' in result.stdout:
-                print("🚀 GPU Encoder: NVIDIA h264_nvenc detected")
+                print("🚀 NVENC GPU Encoder detected")
                 return 'h264_nvenc'
-            else:
-                print("⚠️  GPU Encoder: Not found, using CPU (libx264)")
-                return 'libx264'
-        except Exception as e:
-            print(f"⚠️  GPU Encoder detection failed: {e}, using CPU (libx264)")
-            return 'libx264'
-
+        except:
+            pass
+        return 'libx264'
 
     def load_whisper_model(self, model_size="base"):
-        """Load Whisper model for subtitle generation with GPU support"""
         if not self.whisper_model:
-            # Auto-detect GPU availability for Whisper
             try:
                 import torch
                 device = "cuda" if torch.cuda.is_available() else "cpu"
-                print(f"🔄 Loading Whisper model ({model_size}) on {device.upper()}...")
+                print(f"🔄 Loading Whisper ({model_size}) on {device.upper()}...")
                 self.whisper_model = whisper.load_model(model_size, device=device)
-                print(f"✅ Whisper model loaded on {device.upper()}")
             except Exception as e:
-                # Fallback to CPU if GPU fails
-                print(f"⚠️  GPU loading failed, using CPU: {e}")
+                print(f"⚠️ Whisper GPU failed, using CPU: {e}")
                 self.whisper_model = whisper.load_model(model_size)
-                print("✅ Whisper model loaded on CPU")
         return self.whisper_model
 
-    def _get_audio_duration(self, audio_path):
-        """Get audio duration in seconds using FFprobe"""
+    def _get_duration(self, path):
         try:
-            cmd = [
-                'ffprobe',
-                '-v', 'error',
-                '-show_entries', 'format=duration',
-                '-of', 'default=noprint_wrappers=1:nokey=1',
-                audio_path
-            ]
+            cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', path]
             result = subprocess.run(cmd, capture_output=True, text=True)
             return float(result.stdout.strip())
-        except:
-            return 0
+        except: return 0
 
-    def _get_video_duration(self, video_path):
-        """Get video duration in seconds using FFprobe"""
-        try:
-            cmd = [
-                'ffprobe',
-                '-v', 'error',
-                '-show_entries', 'format=duration',
-                '-of', 'default=noprint_wrappers=1:nokey=1',
-                video_path
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            return float(result.stdout.strip())
-        except:
-            return 0
-
+    # ============================================================================
+    # 1. CREATE VIDEO FROM IMAGE + AUDIO (NEW GPU LOGIC)
+    # ============================================================================
+    
     def create_video_from_image_audio(self, image_path, audio_path, output_path, progress_callback=None):
-        """
-        Create MP4 video from static image + audio with real-time progress
+        success = self._run_ffmpeg_create(image_path, audio_path, output_path, self.gpu_encoder, progress_callback)
+        if not success and self.gpu_encoder == 'h264_nvenc':
+            print("\n⚠️ GPU Encoding failed. Switching to CPU fallback...")
+            self.gpu_encoder = 'libx264' 
+            return self._run_ffmpeg_create(image_path, audio_path, output_path, 'libx264', progress_callback)
+        return success
 
-        Args:
-            image_path: Path to image file
-            audio_path: Path to audio file (WAV/MP3)
-            output_path: Output video path (MP4)
-            progress_callback: Optional function(percentage, message) for progress updates
-
-        Returns:
-            bool: True if successful
-        """
+    def _run_ffmpeg_create(self, image_path, audio_path, output_path, encoder, progress_callback):
         try:
-            print(f"🎬 Creating video: {output_path}")
-            print(f"   Image: {image_path}")
-            print(f"   Audio: {audio_path}")
+            print(f"🎬 Creating video using {encoder}...")
+            duration = self._get_duration(audio_path)
 
-            # Ensure paths exist
-            if not os.path.exists(image_path):
-                print(f"❌ Image not found: {image_path}")
-                return False
+            cmd = ['ffmpeg', '-y', '-loop', '1', '-i', image_path, '-i', audio_path]
 
-            if not os.path.exists(audio_path):
-                print(f"❌ Audio not found: {audio_path}")
-                return False
-
-            # Get audio duration for progress calculation
-            duration = self._get_audio_duration(audio_path)
-
-            print(f"ℹ️  Video duration: {duration/60:.1f} minutes")
-            print(f"ℹ️  Using {self.gpu_encoder} encoder")
-
-            # FFmpeg command: Loop image for duration of audio with GPU encoding
-            cmd = [
-                'ffmpeg',
-                '-loop', '1',                     # Loop image
-                '-i', image_path,                 # Input image
-                '-i', audio_path,                 # Input audio
-                '-c:v', self.gpu_encoder,         # Video codec (GPU if available)
-            ]
-
-            # Add GPU-specific flags for NVENC
-            if self.gpu_encoder == 'h264_nvenc':
+            if encoder == 'h264_nvenc':
                 cmd.extend([
-                    '-preset', 'slow',            # NVENC preset (fast/medium/slow)
-                    '-profile:v', 'main',         # H.264 profile
-                    '-rc', 'vbr',                 # Variable bitrate
-                    '-cq', '23',                  # Quality level (lower=better, 23=good)
-                    '-b:v', '5M',                 # Target bitrate
-                    '-maxrate', '5M',             # Max bitrate
-                    '-bufsize', '10M',            # Buffer size
-                    '-g', '250',                  # GOP size (keyframe interval)
-                ])
-            else:
-                # CPU encoding options (libx264)
-                cmd.extend([
-                    '-tune', 'stillimage',        # Optimize for still image
-                ])
-
-            # Common options
-            cmd.extend([
-                '-c:a', 'aac',                    # Audio codec
-                '-b:a', '192k',                   # Audio bitrate
-                '-pix_fmt', 'yuv420p',            # Pixel format (compatibility)
-                '-shortest',                      # Match shortest input (audio duration)
-                '-progress', 'pipe:1',            # Enable progress output
-                '-y',                             # Overwrite output
-                output_path
-            ])
-
-            # Run FFmpeg with real-time progress monitoring
-            import time
-
-            print(f"🔍 DEBUG: Starting FFmpeg process...", flush=True)
-            print(f"🔍 DEBUG: Encoder: {self.gpu_encoder}", flush=True)
-            print(f"🔍 DEBUG: Command: {' '.join(cmd[:10])}...", flush=True)
-
-            # Redirect both stdout and stderr to stdout for unified reading
-            process = subprocess.Popen(cmd,
-                                     stdout=subprocess.PIPE,
-                                     stderr=subprocess.STDOUT,
-                                     universal_newlines=True,
-                                     bufsize=1)
-            print(f"🔍 DEBUG: Process started, PID: {process.pid}", flush=True)
-            print(f"⏱️ Encoding started... Progress updates every 5-10 seconds", flush=True)
-
-            # Monitor progress with throttling to avoid spamming Telegram API
-            last_reported = 0  # Track last reported percentage
-            last_progress_time = time.time()
-            line_count = 0
-
-            try:
-                error_lines = []
-                for line in process.stdout:
-                    line_count += 1
-                    # Print first 50 lines to see FFmpeg errors
-                    if line_count <= 50:
-                        print(f"🔍 Line {line_count}: {line.strip()}", flush=True)
-                    # Capture error lines
-                    if 'error' in line.lower() or 'failed' in line.lower() or 'unsupported' in line.lower():
-                        error_lines.append(line.strip())
-                    if line.startswith('out_time_ms='):
-                        try:
-                            # Extract current time in microseconds
-                            time_str = line.split('=')[1].strip()
-                            if time_str == 'N/A':
-                                continue
-                            time_ms = int(time_str)
-                            current_time = time_ms / 1000000  # Convert to seconds
-                        except (ValueError, IndexError):
-                            continue
-
-                        if duration > 0:
-                            percentage = min(100, (current_time / duration) * 100)
-
-                            # Throttle: Only update every 5% to avoid API rate limits
-                            if percentage - last_reported >= 5.0 or percentage >= 99.9:
-                                print(f"\r📹 Video creation progress: {percentage:.1f}%", end='', flush=True)
-                                print(f" (time: {current_time:.1f}/{duration:.1f}s)", flush=True)
-
-                                if progress_callback:
-                                    progress_callback(percentage, f"Creating video: {percentage:.1f}%")
-
-                                last_reported = percentage
-                                last_progress_time = time.time()
-
-                    # Check for stalled progress (no update in 30 seconds)
-                    if last_progress_time > 0 and (time.time() - last_progress_time) > 30:
-                        print(f"\n⚠️ WARNING: No progress update for 30 seconds! Last: {last_reported:.1f}%")
-                        print(f"🔍 DEBUG: Checking if FFmpeg is still alive...")
-                        if process.poll() is not None:
-                            print(f"❌ FFmpeg process died! Return code: {process.returncode}")
-                            break
-                        last_progress_time = time.time()  # Reset timer
-
-            except Exception as e:
-                print(f"\n❌ Error during progress monitoring: {e}")
-                import traceback
-                traceback.print_exc()
-
-            process.wait()
-            print()  # New line after progress
-
-            if process.returncode == 0:
-                print(f"✅ Video created: {output_path}", flush=True)
-                return True
-            else:
-                print(f"❌ FFmpeg failed with return code: {process.returncode}", flush=True)
-                if error_lines:
-                    print(f"🔍 Error details:", flush=True)
-                    for err in error_lines:
-                        print(f"   {err}", flush=True)
-                return False
-
-        except Exception as e:
-            print(f"❌ Video creation error: {e}")
-            return False
-
-    def create_video_from_multiple_images_audio(self, image_paths, audio_path, output_path, transition_duration=1.0, progress_callback=None):
-        """
-        Create video from multiple images with fade transitions + audio
-
-        Args:
-            image_paths: List of image file paths
-            audio_path: Path to audio file
-            output_path: Path for output video
-            transition_duration: Duration of fade transition in seconds
-            progress_callback: Optional callback for progress updates
-
-        Returns:
-            bool: True if successful
-        """
-        try:
-            if not image_paths or len(image_paths) == 0:
-                print("❌ No images provided")
-                return False
-
-            print(f"🎬 Creating multi-image video: {output_path}")
-            print(f"   Images: {len(image_paths)} images")
-            print(f"   Audio: {audio_path}")
-            print(f"   Transition: {transition_duration}s fade")
-
-            # Get audio duration
-            duration = self._get_audio_duration(audio_path)
-            if duration <= 0:
-                print("❌ Invalid audio duration")
-                return False
-
-            print(f"ℹ️  Audio duration: {duration:.1f} seconds")
-
-            # Calculate duration per image
-            num_images = len(image_paths)
-            segment_duration = duration / num_images
-
-            print(f"ℹ️  Each image: {segment_duration:.1f} seconds")
-            print(f"ℹ️  Using {self.gpu_encoder} encoder")
-
-            # Build FFmpeg command with xfade transitions
-            cmd = ['ffmpeg']
-
-            # Add all images as inputs with their durations
-            for img_path in image_paths:
-                cmd.extend([
-                    '-loop', '1',
-                    '-t', str(segment_duration),
-                    '-i', img_path
-                ])
-
-            # Add audio input
-            cmd.extend(['-i', audio_path])
-
-            # Build xfade filter chain for smooth transitions
-            # Example for 3 images: [0:v][1:v]xfade=transition=fade:duration=1:offset=29[v0];[v0][2:v]xfade=transition=fade:duration=1:offset=59
-            filter_parts = []
-
-            for i in range(num_images - 1):
-                offset = (i + 1) * segment_duration - transition_duration
-
-                if i == 0:
-                    # First transition: [0:v][1:v]xfade=...
-                    filter_parts.append(f"[0:v][1:v]xfade=transition=fade:duration={transition_duration}:offset={offset}")
-                else:
-                    # Subsequent transitions: [v{i-1}][{i+1}:v]xfade=...
-                    filter_parts.append(f"[v{i-1}][{i+1}:v]xfade=transition=fade:duration={transition_duration}:offset={offset}")
-
-                # Add output label (except for last transition)
-                if i < num_images - 2:
-                    filter_parts.append(f"[v{i}];")
-                else:
-                    filter_parts.append(f"[v{i}]")
-
-            # Join filter chain
-            filter_complex = "".join(filter_parts)
-
-            # Add filter complex to command
-            cmd.extend(['-filter_complex', filter_complex])
-
-            # Add video codec
-            cmd.extend(['-c:v', self.gpu_encoder])
-
-            # Add GPU-specific flags for NVENC
-            if self.gpu_encoder == 'h264_nvenc':
-                cmd.extend([
-                    '-preset', 'slow',
-                    '-profile:v', 'main',
-                    '-rc', 'vbr',
-                    '-cq', '23',
+                    '-c:v', 'h264_nvenc',
+                    '-preset', 'fast',
                     '-b:v', '5M',
-                    '-maxrate', '5M',
-                    '-bufsize', '10M',
-                    '-g', '250',
+                    '-pix_fmt', 'yuv420p'
                 ])
             else:
-                # CPU encoding options (libx264)
                 cmd.extend([
+                    '-c:v', 'libx264',
                     '-tune', 'stillimage',
+                    '-pix_fmt', 'yuv420p'
                 ])
 
-            # Add audio and common options
-            # Map the final video output from filter and audio from last input
-            final_video_label = f"[v{num_images-2}]" if num_images > 1 else "[0:v]"
             cmd.extend([
-                '-map', final_video_label,       # Map final video from xfade filter
-                '-map', f'{num_images}:a',       # Map audio from last input
-                '-c:a', 'aac',
-                '-b:a', '192k',
-                '-pix_fmt', 'yuv420p',
+                '-vf', 'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,format=yuv420p',
+                '-c:a', 'aac', '-b:a', '192k',
                 '-shortest',
                 '-progress', 'pipe:1',
-                '-y',
                 output_path
             ])
 
-            print(f"🔍 DEBUG: Starting FFmpeg with {num_images} images...")
-            print(f"🔍 DEBUG: Encoder: {self.gpu_encoder}")
-
-            # Run FFmpeg
-            process = subprocess.Popen(cmd,
-                                     stdout=subprocess.PIPE,
-                                     stderr=subprocess.STDOUT,
-                                     universal_newlines=True,
-                                     bufsize=1)
-
-            print(f"🔍 DEBUG: Process started, PID: {process.pid}")
-            print(f"⏱️ Encoding started... (This may take 10-20 minutes for multi-image video)")
-
-            # Monitor progress
-            import time
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, bufsize=1)
             last_reported = 0
-            last_progress_time = time.time()
-            line_count = 0
-            error_lines = []
-
-            try:
-                for line in process.stdout:
-                    line_count += 1
-                    if line_count <= 50:
-                        print(f"🔍 Line {line_count}: {line.strip()}", flush=True)
-                    if 'error' in line.lower() or 'failed' in line.lower() or 'unsupported' in line.lower():
-                        error_lines.append(line.strip())
-
-                    if line.startswith('out_time_ms='):
-                        try:
-                            time_str = line.split('=')[1].strip()
-                            if time_str == 'N/A':
-                                continue
-                            time_ms = int(time_str)
-                            current_time = time_ms / 1000000
-                        except (ValueError, IndexError):
-                            continue
-
+            for line in process.stdout:
+                if 'out_time_ms=' in line:
+                    try:
+                        time_ms = int(line.split('=')[1])
+                        current = time_ms / 1000000
                         if duration > 0:
-                            percentage = min(100, (current_time / duration) * 100)
-                            if percentage - last_reported >= 5.0 or percentage >= 99.9:
-                                print(f"\r📹 Multi-image video progress: {percentage:.1f}%", end='', flush=True)
-                                print(f" (time: {current_time:.1f}/{duration:.1f}s)", flush=True)
-
-                                if progress_callback:
-                                    progress_callback(percentage, f"Creating multi-image video: {percentage:.1f}%")
-
-                                last_reported = percentage
-                                last_progress_time = time.time()
-
-                    # Check if process is still alive (every 60 seconds)
-                    if time.time() - last_progress_time > 60:
-                        if process.poll() is not None:
-                            print(f"❌ FFmpeg process died! Return code: {process.returncode}")
-                            break
-                        last_progress_time = time.time()
-
-            except Exception as e:
-                print(f"\n❌ Error during progress monitoring: {e}")
-                import traceback
-                traceback.print_exc()
-
+                            pct = min(100, (current/duration)*100)
+                            if pct - last_reported >= 10:
+                                print(f"   Enc: {pct:.0f}%", end='\r', flush=True)
+                                last_reported = pct
+                    except: pass
+            
             process.wait()
-            print()
-
             if process.returncode == 0:
-                print(f"✅ Multi-image video created: {output_path}", flush=True)
+                print(f"✅ Video created: {output_path}")
                 return True
             else:
-                print(f"❌ FFmpeg failed with return code: {process.returncode}", flush=True)
-                if error_lines:
-                    print(f"🔍 Error details:", flush=True)
-                    for err in error_lines:
-                        print(f"   {err}", flush=True)
+                print(f"❌ FFmpeg failed (Return Code: {process.returncode})")
                 return False
 
         except Exception as e:
-            print(f"❌ Multi-image video creation error: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"❌ Error: {e}")
             return False
 
+    # ============================================================================
+    # 2. SUBTITLE GENERATION (RESTORED ORIGINAL LOGIC)
+    # ============================================================================
+
     def generate_subtitles_whisper(self, audio_path, output_srt_path=None):
-        """
-        Generate SRT subtitles from audio using Whisper
-
-        Args:
-            audio_path: Path to audio file
-            output_srt_path: Optional output SRT path
-
-        Returns:
-            str: Path to generated SRT file
-        """
         try:
-            print(f"📝 Generating subtitles: {audio_path}")
-
-            # Load model if not loaded
-            if not self.whisper_model:
-                self.load_whisper_model()
-
-            # Transcribe audio with formatting options
+            print(f"📝 Transcribing audio...")
+            if not self.whisper_model: self.load_whisper_model()
+            
             result = self.whisper_model.transcribe(
-                audio_path,
-                task="transcribe",
-                language="en",
+                audio_path, 
+                language="en", 
                 verbose=False,
-                word_timestamps=False  # Don't split by words (prevents overlapping boxes)
+                word_timestamps=False
             )
-
-            # Default output path (use same directory as audio)
+            
             if not output_srt_path:
-                base_name = Path(audio_path).stem
-                audio_dir = os.path.dirname(audio_path)
-                output_srt_path = os.path.join(audio_dir, f"{base_name}.srt")
-
-            # Ensure output directory exists
-            output_dir = os.path.dirname(output_srt_path)
-            if output_dir:
-                os.makedirs(output_dir, exist_ok=True)
-
-            # Write SRT file
+                output_srt_path = os.path.splitext(audio_path)[0] + ".srt"
+                
             self._write_srt(result['segments'], output_srt_path)
-
-            print(f"✅ Subtitles generated: {output_srt_path}")
+            
             return output_srt_path
-
         except Exception as e:
-            print(f"❌ Subtitle generation error: {e}")
+            print(f"❌ Transcription error: {e}")
             return None
 
     def _write_srt(self, segments, output_path):
         """Write Whisper segments to SRT format with line wrapping"""
         with open(output_path, 'w', encoding='utf-8') as f:
             for i, segment in enumerate(segments, 1):
-                # Subtitle index
                 f.write(f"{i}\n")
-
-                # Timestamp
-                start = self._format_timestamp(segment['start'])
-                end = self._format_timestamp(segment['end'])
+                start = self._fmt_time(segment['start'])
+                end = self._fmt_time(segment['end'])
                 f.write(f"{start} --> {end}\n")
-
-                # Text with line wrapping (max 50 chars per line for 1920x1080)
                 text = segment['text'].strip()
                 wrapped_text = self._wrap_text(text, max_chars=50)
                 f.write(f"{wrapped_text}\n\n")
 
     def _wrap_text(self, text, max_chars=50):
-        """
-        Wrap text to multiple lines for better readability
-
-        Args:
-            text: Input text
-            max_chars: Maximum characters per line (default 50 for 1920x1080)
-
-        Returns:
-            str: Text with line breaks
-        """
         words = text.split()
         lines = []
         current_line = []
         current_length = 0
-
         for word in words:
             word_length = len(word)
-            # +1 for space
             if current_length + word_length + len(current_line) > max_chars:
                 if current_line:
                     lines.append(' '.join(current_line))
                     current_line = [word]
                     current_length = word_length
                 else:
-                    # Single word longer than max_chars - add it anyway
                     lines.append(word)
             else:
                 current_line.append(word)
                 current_length += word_length
-
-        # Add remaining words
-        if current_line:
-            lines.append(' '.join(current_line))
-
+        if current_line: lines.append(' '.join(current_line))
         return '\n'.join(lines)
 
-    def _format_timestamp(self, seconds):
-        """Format seconds to SRT timestamp (HH:MM:SS,mmm)"""
-        hours = int(seconds // 3600)
-        minutes = int((seconds % 3600) // 60)
-        secs = int(seconds % 60)
-        millis = int((seconds % 1) * 1000)
-        return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+    def _fmt_time(self, seconds):
+        h = int(seconds // 3600)
+        m = int((seconds % 3600) // 60)
+        s = int(seconds % 60)
+        ms = int((seconds % 1) * 1000)
+        return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+    def _srt_time_to_ass(self, srt_time):
+        time_part, ms_part = srt_time.split(',')
+        h, m, s = time_part.split(':')
+        h = int(h)
+        centiseconds = int(ms_part) // 10
+        return f"{h}:{m}:{s}.{centiseconds:02d}"
 
     def convert_srt_to_ass(self, srt_path, ass_style=None, output_ass_path=None):
-        """
-        Convert SRT to ASS format with custom styling
-        Creates complete ASS file manually (NOT using FFmpeg conversion)
-
-        Args:
-            srt_path: Path to SRT file
-            ass_style: Custom ASS style string (optional)
-            output_ass_path: Optional output ASS path
-
-        Returns:
-            str: Path to generated ASS file
-        """
+        """RESTORED: Original Complex ASS Conversion with Box Drawing"""
         try:
-            print(f"🎨 Converting SRT → ASS: {srt_path}")
-
-            # Default output path
-            if not output_ass_path:
-                output_ass_path = srt_path.replace('.srt', '.ass')
-
-            # Load settings from JSON file
+            print(f"🎨 Converting SRT to ASS (Original Style)...")
+            if not output_ass_path: output_ass_path = srt_path.replace('.srt', '.ass')
+            
             sub_settings = load_subtitle_settings()
-
-            # Build ASS style from settings if not provided
-            # BorderStyle=1 (outline only, no built-in box) because we draw custom box separately
+            
             if not ass_style:
-                font_family = sub_settings["font"]["family"]
-                font_size = sub_settings["font"]["size"]
-                font_color = hex_to_ass_color(sub_settings["font"]["color"], 100)
-                back_color = hex_to_ass_color(sub_settings["background"]["color"], sub_settings["background"]["opacity"])
-                alignment = sub_settings["position"]["alignment"]
-                margin_l = sub_settings["position"]["marginL"]
-                margin_r = sub_settings["position"]["marginR"]
-                margin_v = sub_settings["position"]["marginV"]
+                font = sub_settings["font"]
+                bg = sub_settings["background"]
+                pos = sub_settings["position"]
+                fc = hex_to_ass_color(font["color"], 100)
+                bc = hex_to_ass_color(bg["color"], bg["opacity"])
+                ass_style = f'Style: Default,{font["family"]},{font["size"]},{fc},{fc},{bc},{bc},-1,0,0,0,100,100,0,0,1,0,0,{pos["alignment"]},{pos["marginL"]},{pos["marginR"]},{pos["marginV"]},1'
 
-                # ASS Style format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,
-                #                   Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,
-                #                   BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
-                ass_style = f'Style: Default,{font_family},{font_size},{font_color},{font_color},{back_color},{back_color},-1,0,0,0,100,100,0,0,1,0,0,{alignment},{margin_l},{margin_r},{margin_v},1'
-                print(f"📝 Using subtitle settings: Font={font_family}, Size={font_size}, Opacity={sub_settings['background']['opacity']}%")
-
-            # Parse SRT file
-            with open(srt_path, 'r', encoding='utf-8') as f:
-                srt_content = f.read()
-
-            # Create ASS file manually with proper structure
+            with open(srt_path, 'r', encoding='utf-8') as f: srt_content = f.read()
             ass_content = self._create_ass_from_srt(srt_content, ass_style)
-
-            # Write ASS file
-            with open(output_ass_path, 'w', encoding='utf-8') as f:
-                f.write(ass_content)
-
-            print(f"✅ ASS file created: {output_ass_path}")
+            
+            with open(output_ass_path, 'w', encoding='utf-8') as f: f.write(ass_content)
             return output_ass_path
-
         except Exception as e:
-            print(f"❌ SRT→ASS conversion error: {e}")
+            print(f"❌ ASS Error: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def _parse_ass_style(self, ass_style):
-        """
-        Parse ASS style string to extract key parameters
-
-        Args:
-            ass_style: ASS style string (e.g., "Style: Default,Arial,48,...")
-
-        Returns:
-            dict: Parsed style parameters
-        """
-        # Load settings from JSON file for defaults
         sub_settings = load_subtitle_settings()
-
-        # Default values from settings
         params = {
             'fontsize': sub_settings["font"]["size"],
             'alignment': sub_settings["position"]["alignment"],
@@ -701,139 +264,54 @@ class VideoGenerator:
             'marginr': sub_settings["position"]["marginR"],
             'back_color': hex_to_ass_color(sub_settings["background"]["color"], sub_settings["background"]["opacity"])
         }
-
         try:
-            # Parse style string
-            # Format: Style: Name,Fontname,Fontsize,...,Alignment,MarginL,MarginR,MarginV,Encoding
             parts = ass_style.split(',')
             if len(parts) >= 22:
                 params['fontsize'] = int(parts[2])
-                params['back_color'] = parts[6]  # BackColour
+                params['back_color'] = parts[6]
                 params['alignment'] = int(parts[18])
                 params['marginl'] = int(parts[19])
                 params['marginr'] = int(parts[20])
                 params['marginv'] = int(parts[21])
-        except:
-            pass  # Use defaults if parsing fails
-
+        except: pass
         return params
 
     def _calculate_box_dimensions(self, text, style_params):
-        r"""
-        Calculate box dimensions and position for ASS drawing
-
-        Args:
-            text: Text content (with \N line breaks)
-            style_params: Parsed style parameters
-
-        Returns:
-            dict: Box dimensions and position
-        """
-        # Load settings from JSON file
         sub_settings = load_subtitle_settings()
-
-        # Parse text into lines
         lines = text.split('\\N')
         line_count = len(lines)
-
-        # Font metrics estimation
         fontsize = style_params['fontsize']
-        line_height = int(fontsize * 1.2)  # Typical line height is 120% of font size
-
-        # Calculate text dimensions using settings
-        char_width_multiplier = sub_settings["box"]["charWidth"]
-        char_width = fontsize * char_width_multiplier
+        line_height = int(fontsize * 1.2)
+        
+        char_width = fontsize * sub_settings["box"]["charWidth"]
         max_line_length = max(len(line) for line in lines)
         text_width = int(max_line_length * char_width)
         text_height = int(line_count * line_height)
-
-        # Add padding from settings
-        padding_h = sub_settings["box"]["hPadding"]
-        padding_v = sub_settings["box"]["vPadding"]
-        box_width = text_width + (2 * padding_h)
-        box_height = text_height + (2 * padding_v)
-
-        # Resolution (from ASS header)
-        res_x = 1920
-        res_y = 1080
-
-        # Calculate position based on alignment
+        
+        box_width = text_width + (2 * sub_settings["box"]["hPadding"])
+        box_height = text_height + (2 * sub_settings["box"]["vPadding"])
+        
+        res_x, res_y = 1920, 1080
         alignment = style_params['alignment']
-        marginl = style_params['marginl']
-        marginr = style_params['marginr']
-        marginv = style_params['marginv']
+        marginl, marginr, marginv = style_params['marginl'], style_params['marginr'], style_params['marginv']
 
-        # Horizontal position (1=left, 2=center, 3=right for alignment)
         h_align = ((alignment - 1) % 3) + 1
-        if h_align == 1:  # Left
-            x1 = marginl
-        elif h_align == 2:  # Center
-            x1 = (res_x - box_width) // 2
-        else:  # Right (3)
-            x1 = res_x - marginr - box_width
+        if h_align == 1: x1 = marginl
+        elif h_align == 2: x1 = (res_x - box_width) // 2
+        else: x1 = res_x - marginr - box_width
 
-        # Vertical position (1-3=bottom, 4-6=middle, 7-9=top)
         v_align = (alignment - 1) // 3
-        if v_align == 0:  # Bottom (1-3)
-            y1 = res_y - marginv - box_height
-        elif v_align == 1:  # Middle (4-6)
-            y1 = (res_y - box_height) // 2
-        else:  # Top (7-9)
-            y1 = marginv
-
-        x2 = x1 + box_width
-        y2 = y1 + box_height
+        if v_align == 0: y1 = res_y - marginv - box_height
+        elif v_align == 1: y1 = (res_y - box_height) // 2
+        else: y1 = marginv
 
         return {
-            'x1': x1,
-            'y1': y1,
-            'x2': x2,
-            'y2': y2,
-            'width': box_width,
-            'height': box_height,
+            'x1': x1, 'y1': y1, 'x2': x1 + box_width, 'y2': y1 + box_height,
             'corner_radius': sub_settings["background"]["cornerRadius"]
         }
 
-    def _srt_time_to_ass(self, srt_time):
-        """
-        Convert SRT time format to ASS time format
-
-        SRT:  00:00:01,500 (HH:MM:SS,mmm - milliseconds)
-        ASS:  0:00:01.50  (H:MM:SS.cc - centiseconds)
-
-        Args:
-            srt_time: SRT format time string (e.g., "00:00:01,500")
-
-        Returns:
-            str: ASS format time string (e.g., "0:00:01.50")
-        """
-        # Split by comma: "00:00:01,500" → ["00:00:01", "500"]
-        time_part, ms_part = srt_time.split(',')
-
-        # Parse HH:MM:SS
-        h, m, s = time_part.split(':')
-        h = int(h)  # Remove leading zeros (00 → 0)
-
-        # Convert milliseconds to centiseconds (1000ms → 100cs)
-        # 500ms → 50cs, 100ms → 10cs
-        centiseconds = int(ms_part) // 10
-
-        # Format: H:MM:SS.cc (centiseconds are 2 digits)
-        return f"{h}:{m}:{s}.{centiseconds:02d}"
-
     def _create_ass_from_srt(self, srt_content, ass_style):
-        """
-        Create complete ASS file from SRT content with custom style
-
-        Args:
-            srt_content: SRT file content as string
-            ass_style: Full ASS style string (e.g., "Style: Default,Arial,48,...")
-
-        Returns:
-            str: Complete ASS file content
-        """
-        # ASS file header (minimal, matches working banner.ass)
-        ass_header = """[Script Info]
+        header = """[Script Info]
 ScriptType: v4.00+
 PlayResX: 1920
 PlayResY: 1080
@@ -841,473 +319,121 @@ PlayResY: 1080
 [V4+ Styles]
 Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
 """
-
-        # Add custom style (replace "Banner" with "Default" if needed)
-        if 'Style: Banner,' in ass_style:
-            ass_style = ass_style.replace('Style: Banner,', 'Style: Default,')
-        elif not ass_style.startswith('Style:'):
-            ass_style = 'Style: Default,' + ass_style
-
-        ass_header += ass_style + '\n\n'
-
-        # Events section header
-        ass_header += """[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-"""
-
-        # Parse ASS style to get parameters
+        if 'Style: Banner,' in ass_style: ass_style = ass_style.replace('Style: Banner,', 'Style: Default,')
+        elif not ass_style.startswith('Style:'): ass_style = 'Style: Default,' + ass_style
+        
+        header += ass_style + '\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n'
+        
         style_params = self._parse_ass_style(ass_style)
-
-        # Parse SRT and convert to ASS events with single unified box
         ass_events = []
-        srt_blocks = srt_content.strip().split('\n\n')
-
-        for block in srt_blocks:
+        
+        for block in srt_content.strip().split('\n\n'):
             lines = block.strip().split('\n')
-            if len(lines) < 3:
-                continue
-
-            # Parse timing (line 2: 00:00:01,000 --> 00:00:05,000)
-            timing_line = lines[1]
-            if '-->' not in timing_line:
-                continue
-
-            start_time, end_time = timing_line.split('-->')
-            start_time = self._srt_time_to_ass(start_time.strip())
-            end_time = self._srt_time_to_ass(end_time.strip())
-
-            # Parse text (line 3+)
-            # Use \N (ASS line break) for multi-line text
+            if len(lines) < 3: continue
+            if '-->' not in lines[1]: continue
+            
+            start, end = lines[1].split('-->')
+            start = self._srt_time_to_ass(start.strip())
+            end = self._srt_time_to_ass(end.strip())
             text = '\\N'.join(lines[2:])
-
-            # Calculate box dimensions and position
+            
             box = self._calculate_box_dimensions(text, style_params)
-
-            # Get background color from style (convert ASS color format)
             back_color = style_params['back_color']
-            # ASS style format: &HAABBGGRR (alpha, blue, green, red in hex)
-            # Override tags use: \1c&HBBGGRR (color) + \1a&HAA (alpha separately)
+            
             if back_color.startswith('&H') and len(back_color) >= 10:
-                alpha_hex = back_color[2:4]  # AA part
-                bgr_hex = back_color[4:]     # BBGGRR part
-                box_color = f"&H{bgr_hex}"   # \1c format
-                box_alpha = f"&H{alpha_hex}" # \1a format
+                box_color = f"&H{back_color[4:]}"
+                box_alpha = f"&H{back_color[2:4]}"
             else:
-                box_color = "&H000000"  # Default black
-                box_alpha = "&H80"      # Default semi-transparent
+                box_color, box_alpha = "&H000000", "&H80"
 
-            # Event 1: Draw background box with rounded corners (Layer 0)
-            # ASS Drawing commands: m (move), l (line), b (bezier curve for rounded corners)
-            # Rounded rectangle using bezier curves at corners
-            r = box['corner_radius']
-            x1, y1, x2, y2 = box['x1'], box['y1'], box['x2'], box['y2']
-
-            # Draw rounded rectangle path (clockwise from top-left after corner)
-            # Format: m start_x start_y l ... b cx1 cy1 cx2 cy2 x y (bezier curve)
+            r, x1, y1, x2, y2 = box['corner_radius'], box['x1'], box['y1'], box['x2'], box['y2']
+            
             drawing_cmd = (
-                f"m {x1+r} {y1} "  # Start: top edge after left corner
-                f"l {x2-r} {y1} "  # Top edge to right corner
-                f"b {x2} {y1} {x2} {y1} {x2} {y1+r} "  # Top-right corner (bezier)
-                f"l {x2} {y2-r} "  # Right edge
-                f"b {x2} {y2} {x2} {y2} {x2-r} {y2} "  # Bottom-right corner
-                f"l {x1+r} {y2} "  # Bottom edge
-                f"b {x1} {y2} {x1} {y2} {x1} {y2-r} "  # Bottom-left corner
-                f"l {x1} {y1+r} "  # Left edge
-                f"b {x1} {y1} {x1} {y1} {x1+r} {y1}"   # Top-left corner (close)
+                f"m {x1+r} {y1} l {x2-r} {y1} b {x2} {y1} {x2} {y1} {x2} {y1+r} "
+                f"l {x2} {y2-r} b {x2} {y2} {x2} {y2} {x2-r} {y2} "
+                f"l {x1+r} {y2} b {x1} {y2} {x1} {y2} {x1} {y2-r} "
+                f"l {x1} {y1+r} b {x1} {y1} {x1} {y1} {x1+r} {y1}"
             )
+            
+            ass_events.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{{\\p1\\an7\\pos(0,0)\\1c{box_color}\\1a{box_alpha}\\3a&HFF&\\bord0\\shad0}}{drawing_cmd}")
+            
+            text_x, text_y = (x1 + x2) // 2, (y1 + y2) // 2
+            ass_events.append(f"Dialogue: 1,{start},{end},Default,,0,0,0,,{{\\an5\\pos({text_x},{text_y})\\bord0\\shad0\\3a&HFF&}}{text}")
 
-            # Drawing tags:
-            # \p1 = enable drawing mode
-            # \an7 = top-left alignment (for absolute positioning)
-            # \pos(0,0) = position at origin (drawing uses absolute coords)
-            # \1c = primary color (fill), \1a = primary alpha (separated!)
-            # \3a&HFF& = hide border (fully transparent outline)
-            # \bord0 = no border
-            # \shad0 = no shadow
-            box_event = f"Dialogue: 0,{start_time},{end_time},Default,,0,0,0,,{{\\p1\\an7\\pos(0,0)\\1c{box_color}\\1a{box_alpha}\\3a&HFF&\\bord0\\shad0}}{drawing_cmd}"
-            ass_events.append(box_event)
+        return header + '\n'.join(ass_events)
 
-            # Event 2: Draw text on top (Layer 1)
-            # Calculate text center position for proper alignment
-            text_x = (x1 + x2) // 2  # Center of box horizontally
-            text_y = (y1 + y2) // 2  # Center of box vertically
-            # \an5 = center anchor point (text centers at position)
-            # \pos(x,y) = absolute position for text
-            # \bord0 = no border, \shad0 = no shadow, \3a&HFF& = transparent outline
-            text_event = f"Dialogue: 1,{start_time},{end_time},Default,,0,0,0,,{{\\an5\\pos({text_x},{text_y})\\bord0\\shad0\\3a&HFF&}}{text}"
-            ass_events.append(text_event)
-
-        # Combine header + events
-        return ass_header + '\n'.join(ass_events)
+    # ============================================================================
+    # 3. BURN SUBTITLES (NEW GPU LOGIC + SAFE COPY)
+    # ============================================================================
 
     def burn_subtitles(self, video_path, ass_path, output_path, progress_callback=None):
-        """
-        Burn ASS subtitles into video with real-time progress
+        success = self._run_ffmpeg_burn(video_path, ass_path, output_path, self.gpu_encoder, progress_callback)
+        if not success and self.gpu_encoder == 'h264_nvenc':
+            print("\n⚠️ GPU Burn failed. Switching to CPU fallback...")
+            self.gpu_encoder = 'libx264'
+            return self._run_ffmpeg_burn(video_path, ass_path, output_path, 'libx264', progress_callback)
+        return success
 
-        Args:
-            video_path: Input video path
-            ass_path: ASS subtitle file path
-            output_path: Output video with burned subtitles
-            progress_callback: Optional function(percentage, message) for progress updates
-
-        Returns:
-            bool: True if successful
-        """
+    def _run_ffmpeg_burn(self, video_path, ass_path, output_path, encoder, progress_callback):
         try:
-            print(f"🔥 Burning subtitles into video: {output_path}")
-
-            # Ensure files exist
-            if not os.path.exists(video_path):
-                print(f"❌ Video not found: {video_path}")
-                return False
-
-            if not os.path.exists(ass_path):
-                print(f"❌ ASS file not found: {ass_path}")
-                return False
-
-            # Get video duration for progress calculation
-            duration = self._get_video_duration(video_path)
-
-            print(f"ℹ️  Video duration: {duration/60:.1f} minutes")
-            print(f"ℹ️  Using {self.gpu_encoder} encoder for subtitle burning")
-
-            # FFmpeg command: Burn ASS subtitles
-            # Use relative path from video directory to avoid path escaping issues
-            import shutil
+            print(f"🔥 Burning using {encoder}...")
+            
             video_dir = os.path.dirname(os.path.abspath(video_path))
-            ass_abs_path = os.path.abspath(ass_path)
-            ass_filename = os.path.basename(ass_path)
-
-            # Check if ASS file is already in video directory
-            if os.path.dirname(ass_abs_path) != video_dir:
-                # Copy to video directory if different
-                temp_ass_path = os.path.join(video_dir, ass_filename)
-                shutil.copy2(ass_path, temp_ass_path)
-                print(f"🔍 DEBUG: Copied ASS to video dir: {ass_filename}", flush=True)
-            else:
-                print(f"🔍 DEBUG: ASS already in video dir: {ass_filename}", flush=True)
-
-            # FFmpeg command: Burn ASS subtitles with GPU encoding
-            # Use absolute path for input video, relative path for ASS (in same dir)
-            video_abs_path = os.path.abspath(video_path)
-            output_abs_path = os.path.abspath(output_path)
-
-            cmd = [
-                'ffmpeg',
-                '-i', video_abs_path,
-                '-vf', f"subtitles={ass_filename}",
-                '-c:v', self.gpu_encoder,       # Video codec (GPU if available)
-            ]
-
-            # Add GPU-specific flags for NVENC
-            if self.gpu_encoder == 'h264_nvenc':
-                cmd.extend([
-                    '-preset', 'slow',          # NVENC preset (fast/medium/slow)
-                    '-profile:v', 'main',       # H.264 profile
-                    '-rc', 'vbr',               # Variable bitrate
-                    '-cq', '23',                # Quality level
-                    '-b:v', '5M',               # Target bitrate
-                    '-maxrate', '5M',           # Max bitrate
-                    '-bufsize', '10M',          # Buffer size
-                    '-g', '250',                # GOP size (keyframe interval)
-                ])
-
-            # Common options
-            cmd.extend([
-                '-c:a', 'copy',                 # Copy audio (no re-encode)
-                '-progress', 'pipe:1',          # Enable progress output
-                '-y',
-                output_abs_path
-            ])
-
-            # Run FFmpeg with real-time progress monitoring
-            print(f"🔍 DEBUG: Starting subtitle burning...")
-            print(f"🔍 DEBUG: Encoder: {self.gpu_encoder}")
-            print(f"🔍 DEBUG: Working dir: {video_dir}", flush=True)
-
-            # Run FFmpeg from video directory so relative path works
-            # Redirect stderr to stdout to read all output
-            process = subprocess.Popen(cmd,
-                                     stdout=subprocess.PIPE,
-                                     stderr=subprocess.STDOUT,
-                                     universal_newlines=True,
-                                     bufsize=1,
-                                     cwd=video_dir)  # Set working directory
-            print(f"🔍 DEBUG: Process started, PID: {process.pid}", flush=True)
-
-            # Monitor progress with throttling to avoid spamming Telegram API
-            import time
-            last_reported = 0  # Track last reported percentage
-            last_progress_time = time.time()
-
+            ass_name = os.path.basename(ass_path)
+            dest_ass_path = os.path.join(video_dir, ass_name)
+            
+            # SAFE COPY
             try:
-                for line in process.stdout:
-                    if line.startswith('out_time_ms='):
-                        try:
-                            # Extract current time in microseconds
-                            time_str = line.split('=')[1].strip()
-                            if time_str == 'N/A':
-                                continue
-                            time_ms = int(time_str)
-                            current_time = time_ms / 1000000  # Convert to seconds
-                        except (ValueError, IndexError):
-                            continue
-
-                        if duration > 0:
-                            percentage = min(100, (current_time / duration) * 100)
-
-                            # Throttle: Only update every 5% to avoid API rate limits
-                            if percentage - last_reported >= 5.0 or percentage >= 99.9:
-                                print(f"\r🔥 Subtitle burning progress: {percentage:.1f}%", end='', flush=True)
-                                print(f" (time: {current_time:.1f}/{duration:.1f}s)", flush=True)
-
-                                if progress_callback:
-                                    progress_callback(percentage, f"Burning subtitles: {percentage:.1f}%")
-
-                                last_reported = percentage
-                                last_progress_time = time.time()
-
-                    # Check for stalled progress
-                    if last_progress_time > 0 and (time.time() - last_progress_time) > 30:
-                        print(f"\n⚠️ WARNING: No progress update for 30 seconds! Last: {last_reported:.1f}%")
-                        if process.poll() is not None:
-                            print(f"❌ FFmpeg process died! Return code: {process.returncode}")
-                            break
-                        last_progress_time = time.time()
-
-            except Exception as e:
-                print(f"\n❌ Error during subtitle burning monitoring: {e}")
-                import traceback
-                traceback.print_exc()
-
-            process.wait()
-            print()  # New line after progress
-
-            if process.returncode == 0:
-                print(f"✅ Subtitles burned: {output_path}", flush=True)
-                return True
+                if os.path.abspath(ass_path) != os.path.abspath(dest_ass_path):
+                    shutil.copy2(ass_path, dest_ass_path)
+            except shutil.SameFileError: pass
+            except Exception as e: print(f"⚠️ Copy warning: {e}")
+            
+            cmd = ['ffmpeg', '-y', '-i', video_path]
+            
+            if encoder == 'h264_nvenc':
+                cmd.extend([
+                    '-vf', f"subtitles={ass_name}",
+                    '-c:v', 'h264_nvenc',
+                    '-preset', 'fast',
+                    '-b:v', '5M',
+                    '-pix_fmt', 'yuv420p'
+                ])
             else:
-                print(f"❌ FFmpeg failed with return code: {process.returncode}", flush=True)
-                return False
-
+                cmd.extend([
+                    '-vf', f"subtitles={ass_name}",
+                    '-c:v', 'libx264',
+                    '-preset', 'medium',
+                    '-crf', '23',
+                    '-pix_fmt', 'yuv420p'
+                ])
+                
+            cmd.extend(['-c:a', 'copy', '-progress', 'pipe:1', output_path])
+            
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, bufsize=1, cwd=video_dir)
+            for line in process.stdout: pass 
+            process.wait()
+            return process.returncode == 0
+            
         except Exception as e:
-            print(f"❌ Subtitle burn error: {e}")
+            print(f"❌ Burn Error: {e}")
             return False
 
     def create_video_with_subtitles(self, image_path, audio_path, output_path, ass_style=None, progress_callback=None, event_loop=None):
-        """
-        Complete pipeline: Image + Audio → Video with subtitles
-
-        Args:
-            image_path: Path to image
-            audio_path: Path to audio
-            output_path: Final output video path
-            ass_style: Optional custom ASS style
-            progress_callback: Optional async function(message) for progress updates
-            event_loop: Optional event loop for running async callbacks
-
-        Returns:
-            str: Path to final video or None if failed
-        """
-
-        def send_progress(msg):
-            """Helper to send progress updates safely"""
-            if progress_callback and event_loop:
-                try:
-                    asyncio.run_coroutine_threadsafe(progress_callback(msg), event_loop)
-                except Exception as e:
-                    print(f"⚠️ Progress callback error: {e}")
-
         try:
-            print("\n" + "="*60)
-            print("🎬 VIDEO GENERATION PIPELINE")
-            print("="*60)
-
-            # Ensure output directory exists
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
-
-            # Temp file paths (use same directory as output)
-            output_dir = os.path.dirname(output_path)
-            base_name = Path(audio_path).stem
-            temp_video = os.path.join(output_dir, f"{base_name}_temp.mp4")
-            srt_path = os.path.join(output_dir, f"{base_name}.srt")
-            ass_path = os.path.join(output_dir, f"{base_name}.ass")
-
-            # Step 1: Create video (image + audio)
-            print("\n📹 Step 1/4: Creating video from image + audio...")
-            send_progress("📹 [0-25%] Creating video from image + audio...")
-
-            # Progress callback for video creation (0-25% range)
-            def video_progress(pct, msg):
-                scaled_pct = pct * 0.25  # Scale to 0-25%
-                send_progress(f"📹 [{scaled_pct:.1f}%] {msg}")
-
-            if not self.create_video_from_image_audio(image_path, audio_path, temp_video, progress_callback=video_progress):
-                return None
-
-            # Step 2: Generate subtitles with Whisper
-            print("\n📝 Step 2/4: Generating subtitles with Whisper...")
-            send_progress("📝 [50%] Generating subtitles with Whisper AI...")
-
-            if not self.generate_subtitles_whisper(audio_path, srt_path):
-                return None
-
-            # Step 3: Convert SRT → ASS with styling
-            print("\n🎨 Step 3/4: Converting SRT → ASS with styling...")
-            send_progress("🎨 [75%] Converting subtitles to ASS format...")
-
-            if not self.convert_srt_to_ass(srt_path, ass_style, ass_path):
-                return None
-
-            # Step 4: Burn subtitles into video
-            print("\n🔥 Step 4/4: Burning subtitles into video...")
-            send_progress("🔥 [75-100%] Burning subtitles into video...")
-
-            # Progress callback for subtitle burning (75-100% range)
-            def burn_progress(pct, msg):
-                scaled_pct = 75 + (pct * 0.25)  # Scale to 75-100%
-                send_progress(f"🔥 [{scaled_pct:.1f}%] {msg}")
-
-            if not self.burn_subtitles(temp_video, ass_path, output_path, progress_callback=burn_progress):
-                return None
-
-            # Cleanup temp files
-            try:
-                os.remove(temp_video)
-                os.remove(srt_path)
-                os.remove(ass_path)
-                print("\n🧹 Cleaned up temporary files")
-            except:
-                pass
-
-            send_progress("✅ [100%] Video generation complete!")
-
-            print("\n" + "="*60)
-            print(f"✅ VIDEO PIPELINE COMPLETE: {output_path}")
-            print("="*60 + "\n")
-
+            print("🎬 Starting Pipeline...")
+            temp_video = output_path.replace('.mp4', '_temp.mp4')
+            srt_path = output_path.replace('.mp4', '.srt')
+            ass_path = output_path.replace('.mp4', '.ass')
+            
+            if not self.create_video_from_image_audio(image_path, audio_path, temp_video, progress_callback): return None
+            if not self.generate_subtitles_whisper(audio_path, srt_path): return None
+            if not self.convert_srt_to_ass(srt_path, ass_style, ass_path): return None
+            if not self.burn_subtitles(temp_video, ass_path, output_path, progress_callback): return None
+                
+            for f in [temp_video, srt_path, ass_path]:
+                if os.path.exists(f): os.remove(f)
             return output_path
-
         except Exception as e:
-            print(f"\n❌ Video pipeline error: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"❌ Pipeline Error: {e}")
             return None
-
-    def create_video_with_subtitles_multi_image(self, image_paths, audio_path, output_path, ass_style=None, progress_callback=None, event_loop=None):
-        """
-        Complete pipeline: Multiple Images + Audio → Video with transitions and subtitles
-
-        Args:
-            image_paths: List of image paths
-            audio_path: Path to audio
-            output_path: Final output video path
-            ass_style: Optional custom ASS style
-            progress_callback: Optional async function(message) for progress updates
-            event_loop: Optional event loop for running async callbacks
-
-        Returns:
-            str: Path to final video or None if failed
-        """
-
-        def send_progress(msg):
-            """Helper to send progress updates safely"""
-            if progress_callback and event_loop:
-                try:
-                    asyncio.run_coroutine_threadsafe(progress_callback(msg), event_loop)
-                except Exception as e:
-                    print(f"⚠️ Progress callback error: {e}")
-
-        try:
-            print("\n" + "="*60)
-            print("🎬 MULTI-IMAGE VIDEO GENERATION PIPELINE")
-            print("="*60)
-
-            # Ensure output directory exists
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
-
-            # Temp file paths (use same directory as output)
-            output_dir = os.path.dirname(output_path)
-            base_name = Path(audio_path).stem
-            temp_video = os.path.join(output_dir, f"{base_name}_temp_multi.mp4")
-            srt_path = os.path.join(output_dir, f"{base_name}.srt")
-            ass_path = os.path.join(output_dir, f"{base_name}.ass")
-
-            # Step 1: Create multi-image video (images + audio)
-            print(f"\n📹 Step 1/4: Creating video from {len(image_paths)} images + audio...")
-            send_progress(f"📹 [0-25%] Creating video from {len(image_paths)} images with transitions...")
-
-            # Progress callback for video creation (0-25% range)
-            def video_progress(pct, msg):
-                scaled_pct = pct * 0.25  # Scale to 0-25%
-                send_progress(f"📹 [{scaled_pct:.1f}%] {msg}")
-
-            if not self.create_video_from_multiple_images_audio(image_paths, audio_path, temp_video, progress_callback=video_progress):
-                return None
-
-            # Step 2: Generate subtitles with Whisper
-            print("\n📝 Step 2/4: Generating subtitles with Whisper...")
-            send_progress("📝 [50%] Generating subtitles with Whisper AI...")
-
-            if not self.generate_subtitles_whisper(audio_path, srt_path):
-                return None
-
-            # Step 3: Convert SRT → ASS with styling
-            print("\n🎨 Step 3/4: Converting SRT → ASS with styling...")
-            send_progress("🎨 [75%] Converting subtitles to ASS format...")
-
-            if not self.convert_srt_to_ass(srt_path, ass_style, ass_path):
-                return None
-
-            # Step 4: Burn subtitles into video
-            print("\n🔥 Step 4/4: Burning subtitles into video...")
-            send_progress("🔥 [75-100%] Burning subtitles into video...")
-
-            # Progress callback for subtitle burning (75-100% range)
-            def burn_progress(pct, msg):
-                scaled_pct = 75 + (pct * 0.25)  # Scale to 75-100%
-                send_progress(f"🔥 [{scaled_pct:.1f}%] {msg}")
-
-            if not self.burn_subtitles(temp_video, ass_path, output_path, progress_callback=burn_progress):
-                return None
-
-            # Cleanup temp files
-            try:
-                os.remove(temp_video)
-                os.remove(srt_path)
-                os.remove(ass_path)
-                print("\n🧹 Cleaned up temporary files")
-            except:
-                pass
-
-            send_progress("✅ [100%] Multi-image video generation complete!")
-
-            print("\n" + "="*60)
-            print(f"✅ MULTI-IMAGE VIDEO PIPELINE COMPLETE: {output_path}")
-            print("="*60 + "\n")
-
-            return output_path
-
-        except Exception as e:
-            print(f"\n❌ Multi-image video pipeline error: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
-
-
-# Example usage
-if __name__ == '__main__':
-    vg = VideoGenerator()
-
-    # Test video creation
-    result = vg.create_video_with_subtitles(
-        image_path="test_image.jpg",
-        audio_path="test_audio.wav",
-        output_path="output/test_final.mp4",
-        ass_style="Style: Banner,Arial,48,&H00FFFFFF,&H00FFFFFF,&H80000000,&H00000000,-1,0,0,0,100,100,0,0,3,12,0,5,40,40,40,1"
-    )
-
-    if result:
-        print(f"✅ Success: {result}")
-    else:
-        print("❌ Failed")
