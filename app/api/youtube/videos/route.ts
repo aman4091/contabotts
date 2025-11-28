@@ -1,11 +1,58 @@
 import { NextRequest, NextResponse } from "next/server"
+import { cookies } from "next/headers"
+import fs from "fs"
+import path from "path"
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY
+const DATA_DIR = process.env.DATA_DIR || "/root/tts/data"
+
+async function getUser() {
+  const cookieStore = await cookies()
+  return cookieStore.get("user")?.value
+}
+
+// Get fetched videoIds for a channel
+function getFetchedVideoIds(channelCode: string, username?: string): Set<string> {
+  const userDir = username ? path.join(DATA_DIR, "users", username) : DATA_DIR
+  const filePath = path.join(userDir, "fetched-videos", `${channelCode}.json`)
+
+  if (fs.existsSync(filePath)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(filePath, "utf-8"))
+      return new Set(data.videoIds || [])
+    } catch {
+      return new Set()
+    }
+  }
+  return new Set()
+}
+
+// Save fetched videoIds for a channel
+function saveFetchedVideoIds(channelCode: string, videoIds: string[], username?: string): void {
+  const userDir = username ? path.join(DATA_DIR, "users", username) : DATA_DIR
+  const dirPath = path.join(userDir, "fetched-videos")
+  const filePath = path.join(dirPath, `${channelCode}.json`)
+
+  // Create directory if not exists
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true })
+  }
+
+  // Get existing and merge
+  const existing = getFetchedVideoIds(channelCode, username)
+  videoIds.forEach(id => existing.add(id))
+
+  fs.writeFileSync(filePath, JSON.stringify({
+    videoIds: Array.from(existing),
+    lastUpdated: new Date().toISOString()
+  }, null, 2))
+}
 
 export async function POST(request: NextRequest) {
   try {
+    const username = await getUser()
     const body = await request.json()
-    const { channelUrl, maxResults = 1000, minDuration = 600, maxDuration = 7200 } = body
+    const { channelUrl, channelCode, maxResults = 1000, minDuration = 600, maxDuration = 7200 } = body
 
     if (!YOUTUBE_API_KEY) {
       return NextResponse.json({ error: "YouTube API key not configured" }, { status: 500 })
@@ -27,16 +74,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Could not find uploads playlist" }, { status: 400 })
     }
 
-    // Fetch videos from playlist
-    const videos = await fetchPlaylistVideos(uploadsPlaylistId, maxResults)
+    // Get already fetched videoIds (to exclude)
+    const alreadyFetched = channelCode ? getFetchedVideoIds(channelCode, username) : new Set<string>()
+    console.log(`Already fetched ${alreadyFetched.size} videos for ${channelCode}`)
+
+    // Fetch more videos to account for filtering
+    const fetchCount = maxResults + alreadyFetched.size + 500 // Fetch extra to have enough after filtering
+    const videos = await fetchPlaylistVideos(uploadsPlaylistId, fetchCount)
 
     // Get video details (duration, views) and filter
     const detailedVideos = await getVideoDetails(videos.map(v => v.videoId))
 
-    // Filter by duration
+    // Filter by duration AND exclude already fetched
     const filteredVideos = detailedVideos.filter(v => {
       const duration = parseDuration(v.duration)
-      return duration >= minDuration && duration <= maxDuration
+      const isValidDuration = duration >= minDuration && duration <= maxDuration
+      const isNew = !alreadyFetched.has(v.videoId)
+      return isValidDuration && isNew
     })
 
     // Sort by views
@@ -45,10 +99,16 @@ export async function POST(request: NextRequest) {
     // Take top N
     const topVideos = filteredVideos.slice(0, maxResults)
 
+    // Save newly fetched videoIds
+    if (channelCode && topVideos.length > 0) {
+      saveFetchedVideoIds(channelCode, topVideos.map(v => v.videoId), username)
+    }
+
     return NextResponse.json({
       success: true,
       channelId,
       total: topVideos.length,
+      alreadyFetched: alreadyFetched.size,
       videos: topVideos
     })
   } catch (error) {

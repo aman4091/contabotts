@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Unified Worker (Audio -> Video Sequential)
-Runs on Vast.ai - Handles both Audio and Video jobs in a single loop
+Unified Worker (Audio + Video in Single Job)
+Runs on Vast.ai - Generates Audio then Video in one go
 
 Flow:
 1. Claim Audio Job
-2. Generate Audio -> Upload to Contabo -> Create Video Job
-3. IMMEDIATELY Claim Video Job (stops Audio polling)
-4. Generate Video -> Upload to Contabo
-5. Loop back to Audio
+2. Generate Audio -> Upload to Gofile
+3. Generate Video (using local audio) -> Upload to Gofile
+4. Send Telegram notifications
+5. Loop back
 """
 
 import os
@@ -109,46 +109,6 @@ class FileServerQueue:
     def fail_audio_job(self, job_id: str, worker_id: str, error_message: str) -> bool:
         try:
             r = requests.post(f"{self.base_url}/queue/audio/jobs/{job_id}/fail", json={"worker_id": worker_id, "error_message": error_message}, headers=self.headers, timeout=30)
-            return r.status_code == 200
-        except: return False
-
-    # --- VIDEO METHODS ---
-    def create_video_job(self, audio_job: Dict) -> bool:
-        try:
-            video_job = {
-                "audio_job_id": audio_job["job_id"],
-                "channel_code": audio_job["channel_code"],
-                "video_number": audio_job["video_number"],
-                "date": audio_job["date"],
-                "organized_path": audio_job["organized_path"],
-                "image_folder": "nature",
-                "priority": 1,
-                "username": audio_job.get("username")
-            }
-            r = requests.post(f"{self.base_url}/queue/video/jobs", json=video_job, headers=self.headers, timeout=30)
-            if r.status_code == 200:
-                print(f"✅ Video job created on server")
-                return True
-            return False
-        except Exception as e:
-            print(f"❌ Create video job error: {e}")
-            return False
-
-    def claim_video_job(self, worker_id: str) -> Optional[Dict]:
-        try:
-            r = requests.post(f"{self.base_url}/queue/video/claim", json={"worker_id": worker_id}, headers=self.headers, timeout=30)
-            return r.json().get("job") if r.status_code == 200 else None
-        except: return None
-
-    def complete_video_job(self, job_id: str, worker_id: str, gofile_link: str = None) -> bool:
-        try:
-            r = requests.post(f"{self.base_url}/queue/video/jobs/{job_id}/complete", json={"worker_id": worker_id, "gofile_link": gofile_link}, headers=self.headers, timeout=30)
-            return r.status_code == 200
-        except: return False
-
-    def fail_video_job(self, job_id: str, worker_id: str, error_message: str) -> bool:
-        try:
-            r = requests.post(f"{self.base_url}/queue/video/jobs/{job_id}/fail", json={"worker_id": worker_id, "error_message": error_message}, headers=self.headers, timeout=30)
             return r.status_code == 200
         except: return False
 
@@ -261,167 +221,159 @@ def generate_audio_f5tts(script_text: str, ref_audio: str, out_path: str, chunk_
         return False
 
 # ============================================================================
-# JOB PROCESSORS
+# JOB PROCESSOR (Audio + Video Combined)
 # ============================================================================
 
-async def process_audio_job(job: Dict) -> bool:
-    """Standard Audio Job Process"""
+async def process_job(job: Dict) -> bool:
+    """Process Audio + Video in single job - all local, upload to Gofile"""
     job_id = job["job_id"]
     channel = job["channel_code"]
     org_path = job["organized_path"]
-    
-    print(f"\n🎧 Processing AUDIO Job: {job_id[:8]}")
+
+    print(f"\n🎯 Processing Job: {job_id[:8]} ({channel} #{job['video_number']})")
     queue.send_heartbeat(WORKER_ID, status="busy", current_job=job_id)
 
     # Local Paths
-    local_script = os.path.join(TEMP_DIR, "script.txt")
     local_ref_audio = os.path.join(TEMP_DIR, f"{channel}_ref.wav")
     local_audio_out = os.path.join(OUTPUT_DIR, f"audio_{job_id}.wav")
+    local_video_out = os.path.join(OUTPUT_DIR, f"video_{job_id}.mp4")
+    local_image = None
 
     try:
-        # 1. Get Script & Ref Audio
+        # ========== STEP 1: AUDIO GENERATION ==========
+        print("\n" + "="*50)
+        print("🎧 STEP 1: Audio Generation")
+        print("="*50)
+
+        # Get Script & Ref Audio
         script = queue.get_script(org_path)
         if not script: raise Exception("Script fetch failed")
         if not queue.get_reference_audio(channel, local_ref_audio): raise Exception("Ref audio failed")
 
-        # 2. Generate Audio
-        if not generate_audio_f5tts(script, local_ref_audio, local_audio_out): raise Exception("TTS failed")
+        # Generate Audio
+        if not generate_audio_f5tts(script, local_ref_audio, local_audio_out):
+            raise Exception("TTS failed")
 
-        # 3. Upload to Contabo (STANDARD)
-        print("📤 Uploading audio to Contabo...")
-        if not queue.upload_file(local_audio_out, f"{org_path.lstrip('/')}/audio.wav"):
-            raise Exception("Upload failed")
+        # Upload Audio to Gofile
+        print("📤 Uploading audio to Gofile...")
+        audio_gofile = await upload_to_gofile(local_audio_out)
+        if not audio_gofile:
+            raise Exception("Audio Gofile upload failed")
 
-        # 4. Gofile & Complete
-        gofile_link = await upload_to_gofile(local_audio_out)
-        queue.complete_audio_job(job_id, WORKER_ID, gofile_link)
-        queue.increment_worker_stat(WORKER_ID, "jobs_completed")
-        
-        # 5. Create Video Job
-        queue.create_video_job(job)
-        
-        # Notify
-        send_telegram(f"🎵 <b>Audio Complete</b>\n{channel} #{job['video_number']}\nGofile: {gofile_link}", username=job.get("username"))
-        return True
+        print(f"✅ Audio uploaded: {audio_gofile}")
 
-    except Exception as e:
-        print(f"❌ Audio Failed: {e}")
-        queue.fail_audio_job(job_id, WORKER_ID, str(e))
-        return False
-    finally:
-        # Don't delete local_audio_out yet! Video might use it (Optimization)
-        try: os.remove(local_script)
-        except: pass
+        # Send Audio Notification
+        script_preview = script[:500] + "..." if len(script) > 500 else script
+        send_telegram(
+            f"🎵 <b>Audio Complete</b>\n"
+            f"<b>Channel:</b> {channel} | <b>Video:</b> #{job['video_number']}\n"
+            f"<b>Date:</b> {job.get('date', 'N/A')}\n\n"
+            f"<b>📜 Script:</b>\n<code>{script_preview}</code>\n\n"
+            f"<b>🔗 Download:</b> {audio_gofile}",
+            username=job.get("username")
+        )
 
-async def process_video_job(job: Dict) -> bool:
-    """Standard Video Job Process"""
-    job_id = job["job_id"]
-    channel = job["channel_code"]
-    org_path = job["organized_path"]
-    
-    print(f"\n🎬 Processing VIDEO Job: {job_id[:8]}")
-    queue.send_heartbeat(WORKER_ID, status="busy", current_job=job_id)
-    
-    local_audio = os.path.join(TEMP_DIR, "audio.wav")
-    local_video_out = os.path.join(OUTPUT_DIR, f"video_{job_id}.mp4")
+        # ========== STEP 2: VIDEO GENERATION ==========
+        print("\n" + "="*50)
+        print("🎬 STEP 2: Video Generation")
+        print("="*50)
 
-    try:
-        # 1. Get Audio (Use standard download logic to be safe)
-        print("📥 Checking Audio...")
-        # Optimization: Check if we have it from previous step
-        # But strictly following "Jaisa pehle chalta tha", we try download
-        remote_audio = f"{org_path.lstrip('/')}/audio.wav"
-        if not queue.download_file(remote_audio, local_audio):
-             raise Exception("Audio download failed")
-             
-        # 2. Get Image
+        # Get Image
         image_folder = job.get('image_folder', 'nature')
         local_image = queue.get_random_image(image_folder)
         if not local_image: raise Exception("Image fetch failed")
 
-        # 3. Generate Video
-        print("🎥 Generating Video...")
+        # Generate Video (using local audio directly - no download needed!)
+        print("🎥 Generating Video with subtitles...")
         async def prog(msg): print(f"   {msg}")
-        
+
         final_vid = await asyncio.to_thread(
             video_gen.create_video_with_subtitles,
-            local_image, local_audio, local_video_out,
+            local_image, local_audio_out, local_video_out,  # Using local audio!
             job.get('subtitle_style'), prog, asyncio.get_event_loop()
         )
-        
+
         if not final_vid: raise Exception("Video generation failed")
 
-        # 4. Upload to Contabo
-        print("📤 Uploading video to Contabo...")
-        if not queue.upload_file(final_vid, f"{org_path.lstrip('/')}/video.mp4"):
-             print("⚠️ Video upload failed")
+        # Upload Video to Gofile
+        print("📤 Uploading video to Gofile...")
+        video_gofile = await upload_to_gofile(final_vid)
+        if not video_gofile:
+            raise Exception("Video Gofile upload failed")
 
-        # 5. Gofile & Complete
-        gofile = await upload_to_gofile(final_vid)
-        queue.complete_video_job(job_id, WORKER_ID, gofile)
-        
-        # Notify
-        send_telegram(f"🎬 <b>Video Complete</b>\n{channel} #{job['video_number']}\nGofile: {gofile}", username=job.get("username"))
+        print(f"✅ Video uploaded: {video_gofile}")
+
+        # ========== STEP 3: COMPLETE JOB ==========
+        # Complete with video gofile link (primary output)
+        queue.complete_audio_job(job_id, WORKER_ID, video_gofile)
+        queue.increment_worker_stat(WORKER_ID, "jobs_completed")
+
+        # Send Video Notification
+        send_telegram(
+            f"🎬 <b>Video Complete</b>\n"
+            f"<b>Channel:</b> {channel} | <b>Video:</b> #{job['video_number']}\n"
+            f"<b>Date:</b> {job.get('date', 'N/A')}\n\n"
+            f"<b>📜 Script:</b>\n<code>{script_preview}</code>\n\n"
+            f"<b>🔗 Download:</b> {video_gofile}",
+            username=job.get("username")
+        )
+
+        print("\n" + "="*50)
+        print(f"✅ JOB COMPLETE: {job_id[:8]}")
+        print(f"   Audio: {audio_gofile}")
+        print(f"   Video: {video_gofile}")
+        print("="*50)
+
         return True
 
     except Exception as e:
-        print(f"❌ Video Failed: {e}")
-        queue.fail_video_job(job_id, WORKER_ID, str(e))
+        print(f"❌ Job Failed: {e}")
+        traceback.print_exc()
+        queue.fail_audio_job(job_id, WORKER_ID, str(e))
         return False
     finally:
+        # Cleanup all temp files
         try:
-            for f in [local_audio, local_video_out, local_image]:
+            for f in [local_audio_out, local_video_out, local_image, local_ref_audio]:
                 if f and os.path.exists(f): os.remove(f)
         except: pass
 
 
 # ============================================================================
-# MAIN LOOP (SEQUENTIAL)
+# MAIN LOOP (SIMPLIFIED - Audio + Video in one go)
 # ============================================================================
 
 async def main():
-    print(f"🚀 UNIFIED WORKER STARTED (Audio -> then Video)")
+    print(f"🚀 UNIFIED WORKER STARTED (Audio + Video Combined)")
     print(f"Worker ID: {WORKER_ID}")
-    
-    # Register
+    print(f"Poll Interval: {POLL_INTERVAL}s")
+
+    # Register with GPU info
     gpu = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], capture_output=True, text=True).stdout.strip()
     queue.send_heartbeat(WORKER_ID, status="online", gpu_model=gpu)
+    print(f"GPU: {gpu}")
 
     while True:
         try:
-            # STEP 1: Look for AUDIO Job
-            audio_job = queue.claim_audio_job(WORKER_ID)
-            
-            if audio_job:
-                # Process Audio
-                success = await process_audio_job(audio_job)
-                
-                if success:
-                    # STEP 2: IMMEDIATELY Look for VIDEO Job (Don't check Audio queue again)
-                    # We try to claim the job we just created (or any pending video job)
-                    print("\n⚡ Switching to Video Queue immediately...")
-                    video_job = queue.claim_video_job(WORKER_ID)
-                    
-                    if video_job:
-                        await process_video_job(video_job)
-                    else:
-                        print("⚠️ No video job found (maybe delay in creation), skipping...")
-            
+            # Look for Audio Job (which now includes video generation)
+            job = queue.claim_audio_job(WORKER_ID)
+
+            if job:
+                # Process Audio + Video in one go
+                await process_job(job)
             else:
-                # If no audio job, check if there are pending video jobs left over?
-                # Optional: Uncomment below if you want it to help clear video backlog
-                # video_job = queue.claim_video_job(WORKER_ID)
-                # if video_job: await process_video_job(video_job)
-                
                 print(f"⏳ Waiting for jobs... ({POLL_INTERVAL}s)")
                 await asyncio.sleep(POLL_INTERVAL)
-                
+
             queue.send_heartbeat(WORKER_ID, status="online")
 
         except KeyboardInterrupt:
-            print("👋 Stopped"); break
+            print("👋 Stopped")
+            break
         except Exception as e:
-            print(f"Loop Error: {e}"); await asyncio.sleep(10)
+            print(f"Loop Error: {e}")
+            traceback.print_exc()
+            await asyncio.sleep(10)
 
 if __name__ == "__main__":
     asyncio.run(main())

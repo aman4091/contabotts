@@ -16,7 +16,8 @@ import {
   Check,
   Calendar as CalendarIcon,
   Loader2,
-  Trash2
+  Trash2,
+  ExternalLink
 } from "lucide-react"
 import { useRouter } from "next/navigation"
 
@@ -30,6 +31,7 @@ interface Slot {
   hasVideo: boolean
   isCompleted: boolean
   path: string
+  gofileLink?: string | null
 }
 
 interface TargetChannel {
@@ -147,6 +149,12 @@ export default function CalendarPage() {
   }
 
   function downloadFile(slot: Slot, fileType: string) {
+    // For audio and video, use gofile link if available
+    if ((fileType === "audio" || fileType === "video") && slot.gofileLink) {
+      window.open(slot.gofileLink, "_blank")
+      return
+    }
+    // For transcript and script, use local download
     const url = `/api/calendar/download?date=${slot.date}&channel=${slot.channelCode}&slot=${slot.slotNumber}&file=${fileType}`
     window.open(url, "_blank")
   }
@@ -295,7 +303,7 @@ export default function CalendarPage() {
           >
             <FileAudio className="w-4 h-4 mr-2 text-green-400" />
             Audio
-            {slot.hasAudio && <Download className="w-3 h-3 ml-auto" />}
+            {slot.hasAudio && (slot.gofileLink ? <ExternalLink className="w-3 h-3 ml-auto" /> : <Download className="w-3 h-3 ml-auto" />)}
           </Button>
 
           {/* Video */}
@@ -308,7 +316,7 @@ export default function CalendarPage() {
           >
             <Video className="w-4 h-4 mr-2 text-red-400" />
             Video
-            {slot.hasVideo && <Download className="w-3 h-3 ml-auto" />}
+            {slot.hasVideo && (slot.gofileLink ? <ExternalLink className="w-3 h-3 ml-auto" /> : <Download className="w-3 h-3 ml-auto" />)}
           </Button>
         </div>
 

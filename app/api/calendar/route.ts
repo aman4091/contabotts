@@ -4,6 +4,8 @@ import fs from "fs"
 import path from "path"
 
 const DATA_DIR = process.env.DATA_DIR || "/root/tts/data"
+const FILE_SERVER_URL = process.env.FILE_SERVER_URL || "http://38.242.144.132:8000"
+const FILE_SERVER_API_KEY = process.env.FILE_SERVER_API_KEY || "tts-secret-key-2024"
 
 async function getUser() {
   const cookieStore = await cookies()
@@ -32,6 +34,43 @@ function saveCompletedSlots(slots: Record<string, boolean>, username?: string): 
     fs.mkdirSync(dir, { recursive: true })
   }
   fs.writeFileSync(filePath, JSON.stringify(slots, null, 2))
+}
+
+// Get gofile_link from audio jobs for a specific date/channel/slot
+async function getGofileLink(date: string, channelCode: string, slotNumber: number, username?: string): Promise<string | null> {
+  try {
+    // First check local audio queue
+    const completedDir = path.join(DATA_DIR, "audio-queue", "completed")
+    if (fs.existsSync(completedDir)) {
+      const files = fs.readdirSync(completedDir)
+      for (const file of files) {
+        if (file.endsWith(".json")) {
+          const jobPath = path.join(completedDir, file)
+          const job = JSON.parse(fs.readFileSync(jobPath, "utf-8"))
+          if (job.date === date && job.channel_code === channelCode && job.video_number === slotNumber) {
+            if (!username || job.username === username) {
+              return job.gofile_link || null
+            }
+          }
+        }
+      }
+    }
+
+    // Fallback: try file server API
+    const res = await fetch(`${FILE_SERVER_URL}/queue/audio/jobs?date=${date}&channel=${channelCode}&slot=${slotNumber}`, {
+      headers: { "x-api-key": FILE_SERVER_API_KEY }
+    })
+    if (res.ok) {
+      const data = await res.json()
+      if (data.job && data.job.gofile_link) {
+        return data.job.gofile_link
+      }
+    }
+    return null
+  } catch (error) {
+    console.error("Error getting gofile link:", error)
+    return null
+  }
 }
 
 // GET - Get slots for a date and channel
@@ -68,16 +107,20 @@ export async function GET(request: NextRequest) {
           const slotNum = parseInt(videoDir.split("_")[1])
           const slotKey = `${date}_${channelCode}_${slotNum}`
 
+          // Get gofile link for this slot
+          const gofileLink = await getGofileLink(date, channelCode, slotNum, username)
+
           const slot = {
             slotNumber: slotNum,
             date,
             channelCode,
             hasTranscript: fs.existsSync(path.join(slotPath, "transcript.txt")),
             hasScript: fs.existsSync(path.join(slotPath, "script.txt")),
-            hasAudio: fs.existsSync(path.join(slotPath, "audio.wav")),
-            hasVideo: fs.existsSync(path.join(slotPath, "video.mp4")),
+            hasAudio: !!gofileLink, // Audio available if gofile link exists
+            hasVideo: !!gofileLink, // Video available if gofile link exists
             isCompleted: completedSlots[slotKey] || false,
-            path: `/organized/${date}/${channelCode}/${videoDir}`
+            path: `/organized/${date}/${channelCode}/${videoDir}`,
+            gofileLink: gofileLink
           }
           slots.push(slot)
         }
@@ -87,16 +130,19 @@ export async function GET(request: NextRequest) {
       while (slots.length < 4) {
         const slotNum: number = slots.length + 1
         const slotKey = `${date}_${channelCode}_${slotNum}`
+        const gofileLink = await getGofileLink(date, channelCode, slotNum, username)
+
         slots.push({
           slotNumber: slotNum,
           date,
           channelCode,
           hasTranscript: false,
           hasScript: false,
-          hasAudio: false,
-          hasVideo: false,
+          hasAudio: !!gofileLink,
+          hasVideo: !!gofileLink,
           isCompleted: completedSlots[slotKey] || false,
-          path: `/organized/${date}/${channelCode}/video_${slotNum}`
+          path: `/organized/${date}/${channelCode}/video_${slotNum}`,
+          gofileLink: gofileLink
         })
       }
 

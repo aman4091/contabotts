@@ -169,7 +169,7 @@ function HomeContent() {
   async function handleSelectTranscript(item: TranscriptItem) {
     setSelectedTranscript(item)
     try {
-      const res = await fetch(`/api/transcripts/${item.index}?channel=${selectedSource}`)
+      const res = await fetch(`/api/transcripts?channel=${selectedSource}&index=${item.index}`)
       const data = await res.json()
       // Strip Title and Video ID lines
       const cleanContent = (data.content || "")
@@ -201,6 +201,7 @@ function HomeContent() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           channelUrl: channel.youtube_channel_url,
+          channelCode: selectedSource, // Track fetched videos per channel
           maxResults: maxVideos,
           minDuration: parseDuration(minDuration),
           maxDuration: parseDuration(maxDuration)
@@ -213,7 +214,8 @@ function HomeContent() {
         setFetchedVideos([])
       } else {
         setFetchedVideos(data.videos || [])
-        toast.success(`Found ${data.videos?.length || 0} videos`)
+        const skipMsg = data.alreadyFetched > 0 ? ` (skipped ${data.alreadyFetched} already fetched)` : ""
+        toast.success(`Found ${data.videos?.length || 0} NEW videos${skipMsg}`)
       }
     } catch (error) {
       console.error("Error fetching videos:", error)
