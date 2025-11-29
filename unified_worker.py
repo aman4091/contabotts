@@ -58,6 +58,31 @@ def send_telegram(message: str, username: str = None):
         }, timeout=10)
     except: pass
 
+def send_telegram_document(script_text: str, caption: str, filename: str, username: str = None):
+    """Send script as .txt file attachment"""
+    bot_token, chat_id = get_user_telegram_config(username)
+    if not bot_token or not chat_id: return
+    try:
+        # Create temp file
+        temp_file = os.path.join(TEMP_DIR, filename)
+        with open(temp_file, 'w', encoding='utf-8') as f:
+            f.write(script_text)
+
+        # Send document
+        with open(temp_file, 'rb') as f:
+            requests.post(
+                f"https://api.telegram.org/bot{bot_token}/sendDocument",
+                data={"chat_id": chat_id, "caption": caption, "parse_mode": "HTML"},
+                files={"document": (filename, f, "text/plain")},
+                timeout=30
+            )
+
+        # Cleanup
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+    except Exception as e:
+        print(f"Telegram document error: {e}")
+
 # Worker Config
 WORKER_ID = os.getenv("WORKER_ID", f"unified_{socket.gethostname()}_{uuid.uuid4().hex[:8]}")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "30"))
@@ -269,14 +294,15 @@ async def process_job(job: Dict) -> bool:
 
         print(f"✅ Audio uploaded: {audio_gofile}")
 
-        # Send Audio Notification
-        script_preview = script[:500] + "..." if len(script) > 500 else script
-        send_telegram(
-            f"🎵 <b>Audio Complete</b>\n"
-            f"<b>Channel:</b> {channel} | <b>Video:</b> #{job['video_number']}\n"
-            f"<b>Date:</b> {job.get('date', 'N/A')}\n\n"
-            f"<b>📜 Script:</b>\n<code>{script_preview}</code>\n\n"
-            f"<b>🔗 Download:</b> {audio_gofile}",
+        # Send Audio Notification with script as .txt file
+        script_filename = f"{channel}_V{job['video_number']}_{job.get('date', 'unknown')}_script.txt"
+        send_telegram_document(
+            script_text=script,
+            caption=f"🎵 <b>Audio Complete</b>\n"
+                    f"<b>Channel:</b> {channel} | <b>Video:</b> #{job['video_number']}\n"
+                    f"<b>Date:</b> {job.get('date', 'N/A')}\n\n"
+                    f"<b>🔗 Audio:</b> {audio_gofile}",
+            filename=script_filename,
             username=job.get("username")
         )
 
@@ -315,13 +341,14 @@ async def process_job(job: Dict) -> bool:
         queue.complete_audio_job(job_id, WORKER_ID, video_gofile)
         queue.increment_worker_stat(WORKER_ID, "jobs_completed")
 
-        # Send Video Notification
-        send_telegram(
-            f"🎬 <b>Video Complete</b>\n"
-            f"<b>Channel:</b> {channel} | <b>Video:</b> #{job['video_number']}\n"
-            f"<b>Date:</b> {job.get('date', 'N/A')}\n\n"
-            f"<b>📜 Script:</b>\n<code>{script_preview}</code>\n\n"
-            f"<b>🔗 Download:</b> {video_gofile}",
+        # Send Video Notification with script as .txt file
+        send_telegram_document(
+            script_text=script,
+            caption=f"🎬 <b>Video Complete</b>\n"
+                    f"<b>Channel:</b> {channel} | <b>Video:</b> #{job['video_number']}\n"
+                    f"<b>Date:</b> {job.get('date', 'N/A')}\n\n"
+                    f"<b>🔗 Video:</b> {video_gofile}",
+            filename=script_filename,
             username=job.get("username")
         )
 

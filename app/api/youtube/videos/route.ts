@@ -79,25 +79,28 @@ export async function POST(request: NextRequest) {
     console.log(`Already fetched ${alreadyFetched.size} videos for ${channelCode}`)
 
     // Fetch more videos to account for filtering
-    const fetchCount = maxResults + alreadyFetched.size + 500 // Fetch extra to have enough after filtering
+    // If maxResults is 0 (no limit), fetch up to 5000 videos
+    const fetchCount = maxResults === 0 ? 5000 : maxResults + alreadyFetched.size + 500
     const videos = await fetchPlaylistVideos(uploadsPlaylistId, fetchCount)
 
     // Get video details (duration, views) and filter
     const detailedVideos = await getVideoDetails(videos.map(v => v.videoId))
 
     // Filter by duration AND exclude already fetched
+    // 0 = no limit for min/max duration
     const filteredVideos = detailedVideos.filter(v => {
       const duration = parseDuration(v.duration)
-      const isValidDuration = duration >= minDuration && duration <= maxDuration
+      const minOk = minDuration === 0 || duration >= minDuration
+      const maxOk = maxDuration === 0 || duration <= maxDuration
       const isNew = !alreadyFetched.has(v.videoId)
-      return isValidDuration && isNew
+      return minOk && maxOk && isNew
     })
 
     // Sort by views
     filteredVideos.sort((a, b) => b.viewCount - a.viewCount)
 
-    // Take top N
-    const topVideos = filteredVideos.slice(0, maxResults)
+    // Take top N (0 = no limit)
+    const topVideos = maxResults === 0 ? filteredVideos : filteredVideos.slice(0, maxResults)
 
     // Save newly fetched videoIds
     if (channelCode && topVideos.length > 0) {
@@ -209,10 +212,10 @@ async function getVideoDetails(videoIds: string[]): Promise<any[]> {
       for (const item of data.items) {
         details.push({
           videoId: item.id,
-          title: item.snippet.title,
-          duration: item.contentDetails.duration,
-          viewCount: parseInt(item.statistics.viewCount || "0"),
-          publishedAt: item.snippet.publishedAt
+          title: item.snippet?.title || "",
+          duration: item.contentDetails?.duration,
+          viewCount: parseInt(item.statistics?.viewCount || "0"),
+          publishedAt: item.snippet?.publishedAt
         })
       }
     }
@@ -221,8 +224,9 @@ async function getVideoDetails(videoIds: string[]): Promise<any[]> {
   return details
 }
 
-function parseDuration(iso8601: string): number {
+function parseDuration(iso8601: string | undefined): number {
   // Parse ISO 8601 duration (PT1H2M3S)
+  if (!iso8601) return 0
   const match = iso8601.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/)
   if (!match) return 0
 

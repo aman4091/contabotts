@@ -86,9 +86,9 @@ function HomeContent() {
   const [addingToQueue, setAddingToQueue] = useState(false)
 
   // Fetch settings
-  const [maxVideos, setMaxVideos] = useState(1000)
-  const [minDuration, setMinDuration] = useState("10:00")
-  const [maxDuration, setMaxDuration] = useState("120:00")
+  const [maxVideos, setMaxVideos] = useState(0)
+  const [minDuration, setMinDuration] = useState(0)
+  const [maxDuration, setMaxDuration] = useState(0)
 
   // Progress
   const [fetchProgress, setFetchProgress] = useState({ current: 0, total: 0 })
@@ -203,8 +203,8 @@ function HomeContent() {
           channelUrl: channel.youtube_channel_url,
           channelCode: selectedSource, // Track fetched videos per channel
           maxResults: maxVideos,
-          minDuration: parseDuration(minDuration),
-          maxDuration: parseDuration(maxDuration)
+          minDuration: minDuration * 60,
+          maxDuration: maxDuration * 60
         })
       })
       const data = await res.json()
@@ -424,17 +424,6 @@ function HomeContent() {
     }
   }
 
-  function parseDuration(str: string): number {
-    const parts = str.split(":").map(Number)
-    if (parts.length === 2) {
-      return parts[0] * 60 + parts[1]
-    }
-    if (parts.length === 3) {
-      return parts[0] * 3600 + parts[1] * 60 + parts[2]
-    }
-    return 0
-  }
-
   function formatCharCount(count: number): string {
     if (count >= 1000) {
       return (count / 1000).toFixed(1) + "K"
@@ -600,20 +589,28 @@ function HomeContent() {
               />
             </div>
 
-            {/* Duration Filter */}
+            {/* Duration Filter (minutes) */}
             <div className="space-y-2">
-              <Label>Duration (min - max)</Label>
-              <div className="flex gap-2">
+              <Label>Duration (minutes)</Label>
+              <div className="flex gap-2 items-center">
                 <Input
-                  placeholder="10:00"
+                  type="number"
+                  placeholder="0"
                   value={minDuration}
-                  onChange={e => setMinDuration(e.target.value)}
+                  onChange={e => setMinDuration(parseInt(e.target.value) || 0)}
+                  className="w-20"
+                  min={0}
                 />
+                <span className="text-muted-foreground">to</span>
                 <Input
-                  placeholder="120:00"
+                  type="number"
+                  placeholder="0"
                   value={maxDuration}
-                  onChange={e => setMaxDuration(e.target.value)}
+                  onChange={e => setMaxDuration(parseInt(e.target.value) || 0)}
+                  className="w-20"
+                  min={0}
                 />
+                <span className="text-xs text-muted-foreground">0 = no limit</span>
               </div>
             </div>
           </div>
@@ -664,7 +661,7 @@ function HomeContent() {
           <CardHeader className="pb-2">
             <CardTitle className="text-lg flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-violet-500" />
-              Transcripts
+              Transcripts {selectedSource && <span className="text-xs text-muted-foreground">({selectedSource})</span>}
             </CardTitle>
           </CardHeader>
           <CardContent>

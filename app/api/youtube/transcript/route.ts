@@ -51,10 +51,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No videos to process" }, { status: 400 })
     }
 
-    // Fetch transcripts with rate limiting (20/sec)
+    // Fetch transcripts with rate limiting (10/sec)
     let saved = 0
     let failed = 0
-    const batchSize = 20
+    const batchSize = 10
     const delayBetweenBatches = 1000 // 1 second
 
     for (let i = 0; i < videoList.length; i += batchSize) {

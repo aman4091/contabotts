@@ -150,8 +150,9 @@ export async function POST(request: NextRequest) {
     // Save to organized folder
     saveToOrganized(date, targetChannel, videoNumber, fullTranscript, script)
 
-    // Priority: 10 for replacement jobs, 1 for normal jobs
-    const jobPriority = customPriority ? parseInt(customPriority) : (customSlot ? 10 : 1)
+    // Priority: 10 for replacement jobs, 5 for manual jobs, 1 for auto-processing
+    // Manual dashboard jobs get priority 5 (higher than auto-processing which uses 1)
+    const jobPriority = customPriority ? parseInt(customPriority) : (customSlot ? 10 : 5)
 
     // Create job via File Server (not Supabase!)
     const jobId = randomUUID()
