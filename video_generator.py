@@ -26,6 +26,7 @@ def hex_to_ass_color(hex_color, opacity=100):
     return f"&H{alpha:02X}{b:02X}{g:02X}{r:02X}"
 
 def load_subtitle_settings():
+    # Global settings file - same for all users
     settings_file = os.path.join(os.path.dirname(__file__), "data", "subtitle-settings.json")
     defaults = {
         "font": {"family": "Arial", "size": 48, "color": "#FFFFFF"},
@@ -35,6 +36,7 @@ def load_subtitle_settings():
     }
     try:
         if os.path.exists(settings_file):
+            print(f"📝 Loading subtitle settings from: {settings_file}")
             with open(settings_file, 'r') as f:
                 settings = json.load(f)
                 for key in defaults:
@@ -232,7 +234,7 @@ class VideoGenerator:
         try:
             print(f"🎨 Converting SRT to ASS (Original Style)...")
             if not output_ass_path: output_ass_path = srt_path.replace('.srt', '.ass')
-            
+
             sub_settings = load_subtitle_settings()
             
             if not ass_style:

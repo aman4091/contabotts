@@ -1,19 +1,11 @@
 import { NextRequest, NextResponse } from "next/server"
-import { cookies } from "next/headers"
 import fs from "fs"
 import path from "path"
 
 const DATA_DIR = process.env.DATA_DIR || "/root/tts/data"
 
-async function getUser() {
-  const cookieStore = await cookies()
-  return cookieStore.get("user")?.value
-}
-
-function getSettingsPath(username?: string): string {
-  if (username) {
-    return path.join(DATA_DIR, "users", username, "subtitle-settings.json")
-  }
+// Global settings path - same for all users
+function getSettingsPath(): string {
   return path.join(DATA_DIR, "subtitle-settings.json")
 }
 
@@ -51,8 +43,7 @@ function ensureDir(filePath: string) {
 
 export async function GET() {
   try {
-    const username = await getUser()
-    const settingsPath = getSettingsPath(username)
+    const settingsPath = getSettingsPath()
 
     if (fs.existsSync(settingsPath)) {
       const data = fs.readFileSync(settingsPath, "utf-8")
@@ -69,8 +60,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const username = await getUser()
-    const settingsPath = getSettingsPath(username)
+    const settingsPath = getSettingsPath()
     ensureDir(settingsPath)
 
     const settings = await request.json()
