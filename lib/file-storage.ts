@@ -26,6 +26,7 @@ export interface TargetChannel {
   channel_code: string
   channel_name: string
   reference_audio: string
+  image_folder?: string
   is_active: boolean
 }
 

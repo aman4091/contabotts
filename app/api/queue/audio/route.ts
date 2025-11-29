@@ -5,7 +5,8 @@ import {
   saveToOrganized,
   getNextVideoNumber,
   completeTranscript,
-  getTranscript
+  getTranscript,
+  getTargetChannels
 } from "@/lib/file-storage"
 import { getTomorrowDate, addDays } from "@/lib/utils"
 
@@ -50,6 +51,7 @@ async function createAudioJob(job: {
   organized_path: string
   priority: number
   username?: string
+  image_folder?: string
 }): Promise<{ success: boolean; job_id?: string; error?: string }> {
   try {
     const response = await fetch(`${FILE_SERVER_URL}/queue/audio/jobs`, {
@@ -154,6 +156,11 @@ export async function POST(request: NextRequest) {
     // Manual dashboard jobs get priority 5 (higher than auto-processing which uses 1)
     const jobPriority = customPriority ? parseInt(customPriority) : (customSlot ? 10 : 5)
 
+    // Get target channel's image folder
+    const targetChannels = getTargetChannels(username)
+    const targetChannelConfig = targetChannels.find(c => c.channel_code === targetChannel)
+    const imageFolder = targetChannelConfig?.image_folder || undefined
+
     // Create job via File Server (not Supabase!)
     const jobId = randomUUID()
     const result = await createAudioJob({
@@ -165,7 +172,8 @@ export async function POST(request: NextRequest) {
       audio_counter: audioCounter,
       organized_path: organizedPath,
       priority: jobPriority,
-      username: username
+      username: username,
+      image_folder: imageFolder
     })
 
     if (!result.success) {

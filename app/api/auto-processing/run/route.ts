@@ -3,7 +3,7 @@ import { cookies } from "next/headers"
 import { randomUUID } from "crypto"
 import fs from "fs"
 import path from "path"
-import { saveToOrganized, getNextVideoNumber } from "@/lib/file-storage"
+import { saveToOrganized, getNextVideoNumber, getTargetChannels } from "@/lib/file-storage"
 import { getTomorrowDate, addDays } from "@/lib/utils"
 
 const DATA_DIR = process.env.DATA_DIR || "/root/tts/data"
@@ -314,6 +314,11 @@ async function addToQueue(username: string, targetChannel: string, transcript: s
       return { success: false, error: "No available slots" }
     }
 
+    // Get target channel's image folder
+    const targetChannels = getTargetChannels(username)
+    const targetChannelConfig = targetChannels.find(c => c.channel_code === targetChannel)
+    const imageFolder = targetChannelConfig?.image_folder || undefined
+
     // Get audio counter
     const counterRes = await fetch(`${FILE_SERVER_URL}/counter/increment/audio`, {
       method: "POST",
@@ -343,7 +348,8 @@ async function addToQueue(username: string, targetChannel: string, transcript: s
         audio_counter: audioCounter,
         organized_path: organizedPath,
         priority: 1, // LOW priority for auto-processing
-        username: username
+        username: username,
+        image_folder: imageFolder
       })
     })
 

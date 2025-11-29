@@ -30,6 +30,7 @@ interface TargetChannel {
   channel_code: string
   channel_name: string
   reference_audio: string
+  image_folder: string
   is_active: boolean
 }
 
@@ -62,7 +63,8 @@ export default function SettingsPage() {
   const [newTarget, setNewTarget] = useState({
     channel_code: "",
     channel_name: "",
-    reference_audio: ""
+    reference_audio: "",
+    image_folder: ""
   })
 
   useEffect(() => {
@@ -182,7 +184,7 @@ export default function SettingsPage() {
 
       if (res.ok) {
         toast.success("Target channel added")
-        setNewTarget({ channel_code: "", channel_name: "", reference_audio: "" })
+        setNewTarget({ channel_code: "", channel_name: "", reference_audio: "", image_folder: "" })
         loadAll()
       } else {
         const data = await res.json()
@@ -365,7 +367,7 @@ export default function SettingsPage() {
                     <div className="min-w-0 flex-1">
                       <div className="font-medium text-foreground">{channel.channel_name}</div>
                       <div className="text-sm text-muted-foreground truncate">
-                        {channel.channel_code} - Reference: {channel.reference_audio}
+                        {channel.channel_code} - Audio: {channel.reference_audio} - Images: {channel.image_folder || "default"}
                       </div>
                     </div>
                     <div className="flex items-center gap-2 self-end sm:self-auto">
@@ -387,7 +389,7 @@ export default function SettingsPage() {
               {/* Add new */}
               <div className="border-t border-border pt-4">
                 <h4 className="font-medium mb-2 text-foreground">Add New Target Channel</h4>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <Input
                     placeholder="Code (e.g., BI)"
                     value={newTarget.channel_code}
@@ -402,6 +404,11 @@ export default function SettingsPage() {
                     placeholder="Reference Audio (e.g., BI.wav)"
                     value={newTarget.reference_audio}
                     onChange={e => setNewTarget(s => ({ ...s, reference_audio: e.target.value }))}
+                  />
+                  <Input
+                    placeholder="Image Folder (e.g., 1, 2, BI)"
+                    value={newTarget.image_folder}
+                    onChange={e => setNewTarget(s => ({ ...s, image_folder: e.target.value }))}
                   />
                 </div>
                 <Button
