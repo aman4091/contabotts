@@ -34,6 +34,7 @@ export async function POST(request: NextRequest) {
       channel_code: body.channel_code,
       channel_name: body.channel_name,
       reference_audio: body.reference_audio,
+      image_folder: body.image_folder || undefined,
       is_active: body.is_active !== false
     }
 

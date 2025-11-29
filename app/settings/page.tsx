@@ -17,7 +17,11 @@ import {
   Loader2,
   Upload,
   FolderPlus,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Edit2,
+  X,
+  Music,
+  Check
 } from "lucide-react"
 
 interface SourceChannel {
@@ -56,11 +60,18 @@ interface ImageFolder {
   imageCount: number
 }
 
+interface AudioFile {
+  name: string
+  size: number
+  sizeFormatted: string
+}
+
 export default function SettingsPage() {
   const [sourceChannels, setSourceChannels] = useState<SourceChannel[]>([])
   const [targetChannels, setTargetChannels] = useState<TargetChannel[]>([])
   const [settings, setSettings] = useState<Settings | null>(null)
   const [imageFolders, setImageFolders] = useState<ImageFolder[]>([])
+  const [audioFiles, setAudioFiles] = useState<AudioFile[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
@@ -77,11 +88,21 @@ export default function SettingsPage() {
     image_folder: ""
   })
 
+  // Edit target channel
+  const [editingChannel, setEditingChannel] = useState<TargetChannel | null>(null)
+  const [savingEdit, setSavingEdit] = useState(false)
+
   // Image folder states
   const [newFolderName, setNewFolderName] = useState("")
   const [creatingFolder, setCreatingFolder] = useState(false)
   const [uploadingTo, setUploadingTo] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Audio upload states
+  const [showAudioUpload, setShowAudioUpload] = useState(false)
+  const [newAudioName, setNewAudioName] = useState("")
+  const [uploadingAudio, setUploadingAudio] = useState(false)
+  const audioInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     loadAll()
@@ -90,22 +111,25 @@ export default function SettingsPage() {
   async function loadAll() {
     setLoading(true)
     try {
-      const [sourceRes, targetRes, settingsRes, foldersRes] = await Promise.all([
+      const [sourceRes, targetRes, settingsRes, foldersRes, audioRes] = await Promise.all([
         fetch("/api/source-channels"),
         fetch("/api/target-channels"),
         fetch("/api/settings"),
-        fetch("/api/images/folders")
+        fetch("/api/images/folders"),
+        fetch("/api/reference-audio")
       ])
 
       const sourceData = await sourceRes.json()
       const targetData = await targetRes.json()
       const settingsData = await settingsRes.json()
       const foldersData = await foldersRes.json()
+      const audioData = await audioRes.json()
 
       setSourceChannels(sourceData.channels || [])
       setTargetChannels(targetData.channels || [])
       setSettings(settingsData)
       setImageFolders(foldersData.folders || [])
+      setAudioFiles(audioData.files || [])
     } catch (error) {
       console.error("Error loading settings:", error)
       toast.error("Failed to load settings")
@@ -187,7 +211,7 @@ export default function SettingsPage() {
 
   async function addTargetChannel() {
     if (!newTarget.channel_code || !newTarget.channel_name || !newTarget.reference_audio) {
-      toast.error("All fields required")
+      toast.error("Code, Name and Reference Audio required")
       return
     }
 
@@ -211,6 +235,32 @@ export default function SettingsPage() {
       }
     } catch (error) {
       toast.error("Failed to add channel")
+    }
+  }
+
+  async function updateTargetChannel() {
+    if (!editingChannel) return
+
+    setSavingEdit(true)
+    try {
+      const res = await fetch("/api/target-channels", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(editingChannel)
+      })
+
+      if (res.ok) {
+        toast.success("Channel updated")
+        setEditingChannel(null)
+        loadAll()
+      } else {
+        const data = await res.json()
+        toast.error(data.error || "Failed to update channel")
+      }
+    } catch (error) {
+      toast.error("Failed to update channel")
+    } finally {
+      setSavingEdit(false)
     }
   }
 
@@ -318,6 +368,45 @@ export default function SettingsPage() {
     }
   }
 
+  // Audio upload functions
+  function triggerAudioUpload() {
+    audioInputRef.current?.click()
+  }
+
+  async function handleAudioUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setUploadingAudio(true)
+    const formData = new FormData()
+    formData.append("file", file)
+    if (newAudioName.trim()) {
+      formData.append("name", newAudioName.trim())
+    }
+
+    try {
+      const res = await fetch("/api/reference-audio", {
+        method: "POST",
+        body: formData
+      })
+
+      const data = await res.json()
+      if (res.ok) {
+        toast.success(`Uploaded: ${data.filename}`)
+        setNewAudioName("")
+        setShowAudioUpload(false)
+        loadAll()
+      } else {
+        toast.error(data.error || "Upload failed")
+      }
+    } catch (error) {
+      toast.error("Upload failed")
+    } finally {
+      setUploadingAudio(false)
+      if (audioInputRef.current) audioInputRef.current.value = ""
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
@@ -333,7 +422,7 @@ export default function SettingsPage() {
         <p className="text-muted-foreground text-sm mt-1">Configure channels, prompts, images and AI settings</p>
       </div>
 
-      {/* Hidden file input */}
+      {/* Hidden file inputs */}
       <input
         type="file"
         ref={fileInputRef}
@@ -342,15 +431,229 @@ export default function SettingsPage() {
         multiple
         onChange={handleFileUpload}
       />
+      <input
+        type="file"
+        ref={audioInputRef}
+        className="hidden"
+        accept=".wav,.mp3,audio/*"
+        onChange={handleAudioUpload}
+      />
 
-      <Tabs defaultValue="images" className="space-y-4">
+      <Tabs defaultValue="target" className="space-y-4">
         <TabsList className="flex flex-wrap h-auto gap-1">
-          <TabsTrigger value="images" className="text-xs sm:text-sm">Images</TabsTrigger>
           <TabsTrigger value="target" className="text-xs sm:text-sm">Target</TabsTrigger>
+          <TabsTrigger value="images" className="text-xs sm:text-sm">Images</TabsTrigger>
           <TabsTrigger value="source" className="text-xs sm:text-sm">Source</TabsTrigger>
           <TabsTrigger value="prompts" className="text-xs sm:text-sm">Prompts</TabsTrigger>
           <TabsTrigger value="ai" className="text-xs sm:text-sm">AI</TabsTrigger>
         </TabsList>
+
+        {/* Target Channels Tab */}
+        <TabsContent value="target" className="space-y-4">
+          <Card className="glass border-white/10">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-emerald-400" />
+                Target Channels
+              </CardTitle>
+              <CardDescription>Output channels for generated audio/video</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Existing channels */}
+              <div className="space-y-2">
+                {targetChannels.map(channel => (
+                  <div key={channel.channel_code}>
+                    {editingChannel?.channel_code === channel.channel_code ? (
+                      // Edit mode
+                      <div className="p-4 border border-emerald-500/50 rounded-lg bg-emerald-500/5 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-emerald-400">Editing: {channel.channel_code}</span>
+                          <Button variant="ghost" size="sm" onClick={() => setEditingChannel(null)}>
+                            <X className="w-4 h-4" />
+                          </Button>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <Label className="text-xs text-muted-foreground">Reference Audio</Label>
+                            <Select
+                              value={editingChannel.reference_audio}
+                              onValueChange={v => setEditingChannel({ ...editingChannel, reference_audio: v })}
+                            >
+                              <SelectTrigger className="mt-1">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {audioFiles.map(audio => (
+                                  <SelectItem key={audio.name} value={audio.name}>
+                                    {audio.name} ({audio.sizeFormatted})
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground">Image Folder</Label>
+                            <Select
+                              value={editingChannel.image_folder || ""}
+                              onValueChange={v => setEditingChannel({ ...editingChannel, image_folder: v })}
+                            >
+                              <SelectTrigger className="mt-1">
+                                <SelectValue placeholder="Select folder" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {imageFolders.map(folder => (
+                                  <SelectItem key={folder.name} value={folder.name}>
+                                    {folder.name} ({folder.imageCount} images)
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                        <Button
+                          size="sm"
+                          onClick={updateTargetChannel}
+                          disabled={savingEdit}
+                          className="bg-emerald-600 hover:bg-emerald-500"
+                        >
+                          {savingEdit ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Check className="w-4 h-4 mr-1" />}
+                          Save Changes
+                        </Button>
+                      </div>
+                    ) : (
+                      // View mode
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3 border border-border rounded gap-2 hover:border-emerald-500/30 transition-colors">
+                        <div className="min-w-0 flex-1">
+                          <div className="font-medium text-foreground">{channel.channel_name}</div>
+                          <div className="text-sm text-muted-foreground truncate">
+                            {channel.channel_code} | Audio: {channel.reference_audio} | Images: {channel.image_folder || "nature"}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 self-end sm:self-auto">
+                          <Badge variant={channel.is_active ? "success" : "secondary"}>
+                            {channel.is_active ? "Active" : "Inactive"}
+                          </Badge>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setEditingChannel({ ...channel })}
+                            className="border-blue-500/30 text-blue-400 hover:bg-blue-500/10"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => deleteTargetChannel(channel.channel_code)}
+                          >
+                            <Trash2 className="w-4 h-4 text-red-500" />
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Add new */}
+              <div className="border-t border-border pt-4">
+                <h4 className="font-medium mb-3 text-foreground">Add New Target Channel</h4>
+
+                {/* Upload Audio Section */}
+                {showAudioUpload ? (
+                  <div className="mb-4 p-3 rounded-lg border border-cyan-500/30 bg-cyan-500/5">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Music className="w-4 h-4 text-cyan-400" />
+                      <span className="text-sm font-medium">Upload Reference Audio</span>
+                    </div>
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="Audio name (optional)"
+                        value={newAudioName}
+                        onChange={e => setNewAudioName(e.target.value)}
+                        className="flex-1"
+                      />
+                      <Button
+                        onClick={triggerAudioUpload}
+                        disabled={uploadingAudio}
+                        className="bg-cyan-600 hover:bg-cyan-500"
+                      >
+                        {uploadingAudio ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                        <span className="ml-1">Select File</span>
+                      </Button>
+                      <Button variant="ghost" size="icon" onClick={() => setShowAudioUpload(false)}>
+                        <X className="w-4 h-4" />
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">Supports .wav and .mp3</p>
+                  </div>
+                ) : null}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <Input
+                    placeholder="Code (e.g., BI)"
+                    value={newTarget.channel_code}
+                    onChange={e => setNewTarget(s => ({ ...s, channel_code: e.target.value.toUpperCase() }))}
+                  />
+                  <Input
+                    placeholder="Name"
+                    value={newTarget.channel_name}
+                    onChange={e => setNewTarget(s => ({ ...s, channel_name: e.target.value }))}
+                  />
+                  <div className="flex gap-2">
+                    <Select
+                      value={newTarget.reference_audio}
+                      onValueChange={v => setNewTarget(s => ({ ...s, reference_audio: v }))}
+                    >
+                      <SelectTrigger className="flex-1">
+                        <SelectValue placeholder="Select Reference Audio" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {audioFiles.map(audio => (
+                          <SelectItem key={audio.name} value={audio.name}>
+                            {audio.name} ({audio.sizeFormatted})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={() => setShowAudioUpload(true)}
+                      className="border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10"
+                      title="Upload new audio"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </Button>
+                  </div>
+                  <Select
+                    value={newTarget.image_folder}
+                    onValueChange={v => setNewTarget(s => ({ ...s, image_folder: v }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select Image Folder" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {imageFolders.map(folder => (
+                        <SelectItem key={folder.name} value={folder.name}>
+                          {folder.name} ({folder.imageCount} images)
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button
+                  className="mt-2 bg-gradient-to-r from-violet-600 to-cyan-500 hover:from-violet-500 hover:to-cyan-400 border-0 text-white"
+                  onClick={addTargetChannel}
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  Add Channel
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         {/* Images Tab */}
         <TabsContent value="images" className="space-y-4">
@@ -426,90 +729,6 @@ export default function SettingsPage() {
                     </div>
                   ))
                 )}
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Target Channels Tab */}
-        <TabsContent value="target" className="space-y-4">
-          <Card className="glass border-white/10">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-emerald-400" />
-                Target Channels
-              </CardTitle>
-              <CardDescription>Output channels for generated audio</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {/* Existing channels */}
-              <div className="space-y-2">
-                {targetChannels.map(channel => (
-                  <div key={channel.channel_code} className="flex flex-col sm:flex-row sm:items-center justify-between p-3 border border-border rounded gap-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="font-medium text-foreground">{channel.channel_name}</div>
-                      <div className="text-sm text-muted-foreground truncate">
-                        {channel.channel_code} - Audio: {channel.reference_audio} - Images: {channel.image_folder || "nature"}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 self-end sm:self-auto">
-                      <Badge variant={channel.is_active ? "success" : "secondary"}>
-                        {channel.is_active ? "Active" : "Inactive"}
-                      </Badge>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => deleteTargetChannel(channel.channel_code)}
-                      >
-                        <Trash2 className="w-4 h-4 text-red-500" />
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Add new */}
-              <div className="border-t border-border pt-4">
-                <h4 className="font-medium mb-2 text-foreground">Add New Target Channel</h4>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <Input
-                    placeholder="Code (e.g., BI)"
-                    value={newTarget.channel_code}
-                    onChange={e => setNewTarget(s => ({ ...s, channel_code: e.target.value.toUpperCase() }))}
-                  />
-                  <Input
-                    placeholder="Name"
-                    value={newTarget.channel_name}
-                    onChange={e => setNewTarget(s => ({ ...s, channel_name: e.target.value }))}
-                  />
-                  <Input
-                    placeholder="Reference Audio (e.g., BI.wav)"
-                    value={newTarget.reference_audio}
-                    onChange={e => setNewTarget(s => ({ ...s, reference_audio: e.target.value }))}
-                  />
-                  <Select
-                    value={newTarget.image_folder}
-                    onValueChange={v => setNewTarget(s => ({ ...s, image_folder: v }))}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select Image Folder" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {imageFolders.map(folder => (
-                        <SelectItem key={folder.name} value={folder.name}>
-                          {folder.name} ({folder.imageCount} images)
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <Button
-                  className="mt-2 bg-gradient-to-r from-violet-600 to-cyan-500 hover:from-violet-500 hover:to-cyan-400 border-0 text-white"
-                  onClick={addTargetChannel}
-                >
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add Channel
-                </Button>
               </div>
             </CardContent>
           </Card>
