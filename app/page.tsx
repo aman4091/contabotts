@@ -85,6 +85,9 @@ function HomeContent() {
   const [processingAI, setProcessingAI] = useState(false)
   const [addingToQueue, setAddingToQueue] = useState(false)
 
+  // Audio generation mode: "unified" = Unified Worker (Audio+Video), "finalbot" = FinalWorkingBot (External Audio)
+  const [audioMode, setAudioMode] = useState<"unified" | "finalbot">("unified")
+
   // Fetch settings
   const [maxVideos, setMaxVideos] = useState(0)
   const [minDuration, setMinDuration] = useState(0)
@@ -401,7 +404,10 @@ function HomeContent() {
         requestBody.priority = "10"  // High priority
       }
 
-      const res = await fetch("/api/queue/audio", {
+      // Choose endpoint based on audio mode
+      const endpoint = audioMode === "finalbot" ? "/api/finalbot/jobs" : "/api/queue/audio"
+
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody)
@@ -411,8 +417,9 @@ function HomeContent() {
       if (data.error) {
         toast.error(data.error)
       } else {
+        const modeLabel = audioMode === "finalbot" ? " [FinalBot]" : ""
         const priorityLabel = priorityMode.enabled ? " (PRIORITY)" : ""
-        toast.success(`Added to queue${priorityLabel}! ${data.channelCode} Video ${data.videoNumber} | Date: ${data.date}`)
+        toast.success(`Added to queue${modeLabel}${priorityLabel}! ${data.channelCode} Video ${data.videoNumber} | Date: ${data.date}`)
         setProcessedScript("")
         setTranscriptContent("")
         setYoutubeUrl("")
@@ -815,18 +822,49 @@ function HomeContent() {
               />
             </div>
 
+            {/* Audio Mode Selector */}
+            <div className="flex items-center gap-4 p-3 rounded-lg bg-muted/50 border">
+              <span className="text-sm font-medium text-muted-foreground">Audio:</span>
+              <div className="flex gap-2">
+                <Button
+                  variant={audioMode === "unified" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setAudioMode("unified")}
+                  className={audioMode === "unified" ? "bg-violet-600 hover:bg-violet-500" : ""}
+                >
+                  <Mic className="w-3 h-3 mr-1" />
+                  Unified Worker
+                </Button>
+                <Button
+                  variant={audioMode === "finalbot" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setAudioMode("finalbot")}
+                  className={audioMode === "finalbot" ? "bg-cyan-600 hover:bg-cyan-500" : ""}
+                >
+                  <Bot className="w-3 h-3 mr-1" />
+                  FinalBot
+                </Button>
+              </div>
+            </div>
+
             {/* Add to queue button */}
             <Button
-              className="w-full bg-gradient-to-r from-violet-600 to-cyan-500 hover:from-violet-500 hover:to-cyan-400 border-0 text-white font-semibold shadow-lg shadow-violet-500/25 transition-all duration-300"
+              className={`w-full border-0 text-white font-semibold shadow-lg transition-all duration-300 ${
+                audioMode === "finalbot"
+                  ? "bg-gradient-to-r from-cyan-600 to-teal-500 hover:from-cyan-500 hover:to-teal-400 shadow-cyan-500/25"
+                  : "bg-gradient-to-r from-violet-600 to-cyan-500 hover:from-violet-500 hover:to-cyan-400 shadow-violet-500/25"
+              }`}
               onClick={handleAddToQueue}
               disabled={!processedScript || !selectedTarget || addingToQueue}
             >
               {addingToQueue ? (
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : audioMode === "finalbot" ? (
+                <Bot className="w-4 h-4 mr-2" />
               ) : (
                 <Plus className="w-4 h-4 mr-2" />
               )}
-              Add to Audio Queue ({selectedTarget || "Select Target"})
+              {audioMode === "finalbot" ? "Send to FinalBot" : "Add to Audio Queue"} ({selectedTarget || "Select Target"})
             </Button>
           </CardContent>
         </Card>

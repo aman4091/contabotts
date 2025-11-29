@@ -1028,6 +1028,205 @@ async def list_workers(
 
 
 # ============================================================================
+# FINALBOT QUEUE (External Audio Generation via Telegram Bot)
+# ============================================================================
+
+def get_finalbot_paths():
+    """Get paths for finalbot queue"""
+    base = Path(BASE_PATH) / "finalbot-queue"
+    return {
+        "pending": base / "pending",
+        "processing": base / "processing",
+        "completed": base / "completed",
+        "failed": base / "failed"
+    }
+
+
+@app.post("/finalbot/jobs")
+async def create_finalbot_job(
+    job: dict = Body(...),
+    x_api_key: Optional[str] = Header(None)
+):
+    """
+    Create a new job for FinalWorkingBot processing
+
+    This job will be picked up by audio_link_bot.py which will:
+    1. Send script to Telegram chat
+    2. Wait for FinalWorkingBot to generate audio
+    3. Capture Gofile link and call /finalbot/complete
+    """
+    verify_api_key(x_api_key)
+    paths = get_finalbot_paths()
+
+    job_id = job.get("job_id", str(uuid.uuid4()))
+    job["job_id"] = job_id
+    job["created_at"] = datetime.now().isoformat()
+    job["status"] = "pending"
+
+    # Save to pending folder
+    job_file = paths["pending"] / f"{job_id}.json"
+    paths["pending"].mkdir(parents=True, exist_ok=True)
+
+    with open(job_file, "w") as f:
+        json.dump(job, f, indent=2)
+
+    return {"success": True, "job_id": job_id, "status": "pending"}
+
+
+@app.get("/finalbot/pending")
+async def get_pending_finalbot_jobs(
+    x_api_key: Optional[str] = Header(None)
+):
+    """Get all pending finalbot jobs"""
+    verify_api_key(x_api_key)
+    paths = get_finalbot_paths()
+    paths["pending"].mkdir(parents=True, exist_ok=True)
+
+    jobs = []
+    for job_file in paths["pending"].glob("*.json"):
+        try:
+            with open(job_file) as f:
+                job_data = json.load(f)
+                jobs.append(job_data)
+        except:
+            continue
+
+    # Sort by priority desc, created_at asc
+    jobs.sort(key=lambda x: (-x.get("priority", 0), x.get("created_at", "")))
+
+    return {"jobs": jobs, "count": len(jobs)}
+
+
+@app.post("/finalbot/claim/{job_id}")
+async def claim_finalbot_job(
+    job_id: str,
+    x_api_key: Optional[str] = Header(None)
+):
+    """Claim a finalbot job (move from pending to processing)"""
+    verify_api_key(x_api_key)
+    paths = get_finalbot_paths()
+
+    pending_file = paths["pending"] / f"{job_id}.json"
+    if not pending_file.exists():
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Move to processing
+    paths["processing"].mkdir(parents=True, exist_ok=True)
+    processing_file = paths["processing"] / f"{job_id}.json"
+
+    try:
+        with open(pending_file) as f:
+            job_data = json.load(f)
+
+        job_data["claimed_at"] = datetime.now().isoformat()
+        job_data["status"] = "processing"
+
+        with open(processing_file, "w") as f:
+            json.dump(job_data, f, indent=2)
+
+        pending_file.unlink()
+
+        return {"success": True, "job_id": job_id, "status": "processing"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/finalbot/complete/{job_id}")
+async def complete_finalbot_job(
+    job_id: str,
+    data: dict = Body(...),
+    x_api_key: Optional[str] = Header(None)
+):
+    """
+    Complete a finalbot job with audio URL
+    This automatically creates a VIDEO job for the unified worker
+    """
+    verify_api_key(x_api_key)
+    paths = get_finalbot_paths()
+
+    audio_url = data.get("audio_url")
+    if not audio_url:
+        raise HTTPException(status_code=400, detail="audio_url required")
+
+    # Find job in processing
+    processing_file = paths["processing"] / f"{job_id}.json"
+    if not processing_file.exists():
+        raise HTTPException(status_code=404, detail="Job not found in processing")
+
+    try:
+        with open(processing_file) as f:
+            job_data = json.load(f)
+
+        # Move to completed
+        paths["completed"].mkdir(parents=True, exist_ok=True)
+        job_data["audio_url"] = audio_url
+        job_data["completed_at"] = datetime.now().isoformat()
+        job_data["status"] = "completed"
+
+        completed_file = paths["completed"] / f"{job_id}.json"
+        with open(completed_file, "w") as f:
+            json.dump(job_data, f, indent=2)
+
+        processing_file.unlink()
+
+        # === CREATE VIDEO JOB ===
+        video_paths = get_queue_paths("video")
+        video_job_id = str(uuid.uuid4())
+
+        video_job = {
+            "job_id": video_job_id,
+            "audio_url": audio_url,  # Gofile link for audio
+            "channel_code": job_data.get("channel_code"),
+            "video_number": job_data.get("video_number"),
+            "date": job_data.get("date"),
+            "organized_path": job_data.get("organized_path"),
+            "script_text": job_data.get("script_text"),
+            "username": job_data.get("username"),
+            "image_folder": job_data.get("image_folder", "nature"),
+            "priority": job_data.get("priority", 5),
+            "created_at": datetime.now().isoformat(),
+            "source": "finalbot",  # Mark source as finalbot
+            "finalbot_job_id": job_id
+        }
+
+        video_paths["pending"].mkdir(parents=True, exist_ok=True)
+        video_job_file = video_paths["pending"] / f"{video_job_id}.json"
+
+        with open(video_job_file, "w") as f:
+            json.dump(video_job, f, indent=2)
+
+        print(f"[FinalBot] Audio complete for {job_id[:8]}, created video job {video_job_id[:8]}")
+
+        return {
+            "success": True,
+            "job_id": job_id,
+            "audio_url": audio_url,
+            "video_job_id": video_job_id,
+            "message": "Video job created"
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/finalbot/stats")
+async def get_finalbot_stats(
+    x_api_key: Optional[str] = Header(None)
+):
+    """Get finalbot queue statistics"""
+    verify_api_key(x_api_key)
+    paths = get_finalbot_paths()
+
+    stats = {}
+    for status, path in paths.items():
+        path.mkdir(parents=True, exist_ok=True)
+        stats[status] = len(list(path.glob("*.json")))
+
+    stats["total"] = sum(stats.values())
+    return stats
+
+
+# ============================================================================
 # MAIN
 # ============================================================================
 

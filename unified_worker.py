@@ -137,6 +137,25 @@ class FileServerQueue:
             return r.status_code == 200
         except: return False
 
+    # --- VIDEO METHODS (for FinalBot jobs with audio_url) ---
+    def claim_video_job(self, worker_id: str) -> Optional[Dict]:
+        try:
+            r = requests.post(f"{self.base_url}/queue/video/claim", json={"worker_id": worker_id}, headers=self.headers, timeout=30)
+            return r.json().get("job") if r.status_code == 200 else None
+        except: return None
+
+    def complete_video_job(self, job_id: str, worker_id: str, gofile_link: str = None) -> bool:
+        try:
+            r = requests.post(f"{self.base_url}/queue/video/jobs/{job_id}/complete", json={"worker_id": worker_id, "gofile_link": gofile_link}, headers=self.headers, timeout=30)
+            return r.status_code == 200
+        except: return False
+
+    def fail_video_job(self, job_id: str, worker_id: str, error_message: str) -> bool:
+        try:
+            r = requests.post(f"{self.base_url}/queue/video/jobs/{job_id}/fail", json={"worker_id": worker_id, "error_message": error_message}, headers=self.headers, timeout=30)
+            return r.status_code == 200
+        except: return False
+
     # --- COMMON FILE OPS ---
     def download_file(self, remote_path: str, local_path: str) -> bool:
         try:
@@ -224,6 +243,90 @@ async def upload_to_gofile(file_path: str) -> Optional[str]:
     except Exception as e:
         print(f"Gofile error: {e}")
         return None
+
+async def download_from_gofile(gofile_url: str, local_path: str) -> bool:
+    """Download audio file from Gofile URL"""
+    try:
+        import httpx
+        print(f"📥 Downloading from Gofile: {gofile_url}")
+
+        # Extract content ID from URL (e.g., https://gofile.io/d/abc123 -> abc123)
+        content_id = gofile_url.rstrip('/').split('/')[-1]
+
+        # Get content info
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            # Get file info
+            info_url = f"https://api.gofile.io/contents/{content_id}?wt=4fd6sg89d7s6"
+            info_resp = await client.get(info_url)
+
+            if info_resp.status_code != 200:
+                print(f"   Failed to get Gofile info: {info_resp.status_code}")
+                return False
+
+            info = info_resp.json()
+            if info.get("status") != "ok":
+                print(f"   Gofile API error: {info}")
+                return False
+
+            # Find the audio file (first file in contents)
+            contents = info.get("data", {}).get("children", {})
+            if not contents:
+                # Try alternate structure
+                contents = info.get("data", {}).get("contents", {})
+
+            audio_file = None
+            for file_id, file_info in contents.items():
+                if file_info.get("type") == "file":
+                    name = file_info.get("name", "").lower()
+                    if name.endswith(('.wav', '.mp3', '.m4a', '.aac', '.flac')):
+                        audio_file = file_info
+                        break
+
+            if not audio_file:
+                # Just take the first file
+                for file_id, file_info in contents.items():
+                    if file_info.get("type") == "file":
+                        audio_file = file_info
+                        break
+
+            if not audio_file:
+                print("   No audio file found in Gofile")
+                return False
+
+            # Download the file
+            download_url = audio_file.get("link")
+            if not download_url:
+                print("   No download link in file info")
+                return False
+
+            print(f"   Downloading: {audio_file.get('name')} ({audio_file.get('size', 0) // 1024 // 1024}MB)")
+
+            # Download with proper headers
+            headers = {
+                "Cookie": f"accountToken={os.getenv('GOFILE_TOKEN', '')}",
+                "Accept": "*/*"
+            }
+
+            async with client.stream("GET", download_url, headers=headers, follow_redirects=True) as resp:
+                if resp.status_code != 200:
+                    print(f"   Download failed: {resp.status_code}")
+                    return False
+
+                os.makedirs(os.path.dirname(local_path), exist_ok=True)
+                with open(local_path, "wb") as f:
+                    async for chunk in resp.aiter_bytes(chunk_size=8192):
+                        f.write(chunk)
+
+            if os.path.exists(local_path) and os.path.getsize(local_path) > 0:
+                print(f"   Downloaded: {os.path.getsize(local_path) // 1024}KB")
+                return True
+
+            return False
+
+    except Exception as e:
+        print(f"❌ Gofile download error: {e}")
+        traceback.print_exc()
+        return False
 
 def generate_audio_f5tts(script_text: str, ref_audio: str, out_path: str, chunk_size=500) -> bool:
     try:
@@ -380,13 +483,119 @@ async def process_job(job: Dict) -> bool:
 
 
 # ============================================================================
-# MAIN LOOP (SIMPLIFIED - Audio + Video in one go)
+# VIDEO-ONLY JOB PROCESSOR (For FinalBot jobs with audio_url)
+# ============================================================================
+
+async def process_video_job(job: Dict) -> bool:
+    """Process Video-Only Job - Audio already available via Gofile URL"""
+    job_id = job["job_id"]
+    channel = job.get("channel_code", "UNKNOWN")
+    audio_url = job.get("audio_url")
+
+    print(f"\n🎬 Processing VIDEO Job: {job_id[:8]} ({channel} #{job.get('video_number', '?')})")
+    print(f"   Source: FinalBot | Audio URL: {audio_url[:50]}...")
+    queue.send_heartbeat(WORKER_ID, status="busy", current_job=job_id)
+
+    # Local Paths
+    local_audio = os.path.join(TEMP_DIR, f"audio_{job_id}.wav")
+    local_video_out = os.path.join(OUTPUT_DIR, f"video_{job_id}.mp4")
+    local_image = None
+
+    try:
+        # ========== STEP 1: DOWNLOAD AUDIO FROM GOFILE ==========
+        print("\n" + "="*50)
+        print("📥 STEP 1: Download Audio from Gofile")
+        print("="*50)
+
+        if not audio_url:
+            raise Exception("No audio_url in job")
+
+        if not await download_from_gofile(audio_url, local_audio):
+            raise Exception(f"Failed to download audio from: {audio_url}")
+
+        print(f"✅ Audio downloaded: {os.path.getsize(local_audio) // 1024}KB")
+
+        # ========== STEP 2: VIDEO GENERATION ==========
+        print("\n" + "="*50)
+        print("🎬 STEP 2: Video Generation")
+        print("="*50)
+
+        # Get Image
+        image_folder = job.get('image_folder', 'nature')
+        local_image = queue.get_random_image(image_folder)
+        if not local_image: raise Exception("Image fetch failed")
+
+        # Generate Video
+        print("🎥 Generating Video with subtitles...")
+        async def prog(msg): print(f"   {msg}")
+
+        final_vid = await asyncio.to_thread(
+            video_gen.create_video_with_subtitles,
+            local_image, local_audio, local_video_out,
+            job.get('subtitle_style'), prog, asyncio.get_event_loop()
+        )
+
+        if not final_vid: raise Exception("Video generation failed")
+
+        # Upload Video to Gofile
+        print("📤 Uploading video to Gofile...")
+        video_gofile = await upload_to_gofile(final_vid)
+        if not video_gofile:
+            raise Exception("Video Gofile upload failed")
+
+        print(f"✅ Video uploaded: {video_gofile}")
+
+        # ========== STEP 3: COMPLETE JOB ==========
+        queue.complete_video_job(job_id, WORKER_ID, video_gofile)
+        queue.increment_worker_stat(WORKER_ID, "jobs_completed")
+
+        # Get script for notification (from job or fetch from organized path)
+        script = job.get("script_text", "")
+        if not script and job.get("organized_path"):
+            script = queue.get_script(job["organized_path"]) or ""
+
+        # Send Video Notification
+        script_filename = f"{channel}_V{job.get('video_number', '0')}_{job.get('date', 'unknown')}_script.txt"
+        send_telegram_document(
+            script_text=script or "Script not available",
+            caption=f"🎬 <b>Video Complete (FinalBot)</b>\n"
+                    f"<b>Channel:</b> {channel} | <b>Video:</b> #{job.get('video_number', '?')}\n"
+                    f"<b>Date:</b> {job.get('date', 'N/A')}\n\n"
+                    f"<b>🔗 Video:</b> {video_gofile}",
+            filename=script_filename,
+            username=job.get("username")
+        )
+
+        print("\n" + "="*50)
+        print(f"✅ VIDEO JOB COMPLETE: {job_id[:8]}")
+        print(f"   Audio (from Gofile): {audio_url[:50]}...")
+        print(f"   Video: {video_gofile}")
+        print("="*50)
+
+        return True
+
+    except Exception as e:
+        print(f"❌ Video Job Failed: {e}")
+        traceback.print_exc()
+        queue.fail_video_job(job_id, WORKER_ID, str(e))
+        return False
+    finally:
+        # Cleanup all temp files
+        try:
+            for f in [local_audio, local_video_out, local_image]:
+                if f and os.path.exists(f): os.remove(f)
+        except: pass
+
+
+# ============================================================================
+# MAIN LOOP (Audio+Video AND Video-Only jobs)
 # ============================================================================
 
 async def main():
     print(f"🚀 UNIFIED WORKER STARTED (Audio + Video Combined)")
     print(f"Worker ID: {WORKER_ID}")
     print(f"Poll Interval: {POLL_INTERVAL}s")
+    print(f"Queues: Audio (full A+V) + Video (FinalBot)")
 
     # Register with GPU info
     gpu = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], capture_output=True, text=True).stdout.strip()
@@ -395,13 +604,23 @@ async def main():
 
     while True:
         try:
-            # Look for Audio Job (which now includes video generation)
-            job = queue.claim_audio_job(WORKER_ID)
+            job_found = False
 
-            if job:
-                # Process Audio + Video in one go
-                await process_job(job)
-            else:
+            # 1. Check Audio Queue (Full Audio + Video generation)
+            audio_job = queue.claim_audio_job(WORKER_ID)
+            if audio_job:
+                job_found = True
+                await process_job(audio_job)
+
+            # 2. Check Video Queue (FinalBot jobs - audio already done)
+            if not job_found:
+                video_job = queue.claim_video_job(WORKER_ID)
+                if video_job:
+                    job_found = True
+                    await process_video_job(video_job)
+
+            # 3. Wait if no jobs
+            if not job_found:
                 print(f"⏳ Waiting for jobs... ({POLL_INTERVAL}s)")
                 await asyncio.sleep(POLL_INTERVAL)
 

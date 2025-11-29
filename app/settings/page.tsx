@@ -138,8 +138,17 @@ export default function SettingsPage() {
   const [uploadingAudio, setUploadingAudio] = useState(false)
   const audioInputRef = useRef<HTMLInputElement>(null)
 
+  // FinalBot settings
+  const [finalbotSettings, setFinalbotSettings] = useState({
+    botToken: "",
+    chatId: ""
+  })
+  const [savingFinalbot, setSavingFinalbot] = useState(false)
+  const [finalbotStats, setFinalbotStats] = useState({ pending: 0, processing: 0, completed: 0 })
+
   useEffect(() => {
     loadAll()
+    loadFinalbotSettings()
   }, [])
 
   async function loadAll() {
@@ -197,6 +206,52 @@ export default function SettingsPage() {
       toast.error("Failed to save settings")
     } finally {
       setSaving(false)
+    }
+  }
+
+  // FinalBot settings functions
+  async function loadFinalbotSettings() {
+    try {
+      const [settingsRes, statsRes] = await Promise.all([
+        fetch("/api/finalbot/settings"),
+        fetch("/api/finalbot/jobs")
+      ])
+
+      if (settingsRes.ok) {
+        const data = await settingsRes.json()
+        setFinalbotSettings({
+          botToken: data.botToken || "",
+          chatId: data.chatId || ""
+        })
+      }
+
+      if (statsRes.ok) {
+        const stats = await statsRes.json()
+        setFinalbotStats(stats)
+      }
+    } catch (error) {
+      console.error("Error loading FinalBot settings:", error)
+    }
+  }
+
+  async function saveFinalbotSettings() {
+    setSavingFinalbot(true)
+    try {
+      const res = await fetch("/api/finalbot/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(finalbotSettings)
+      })
+
+      if (res.ok) {
+        toast.success("FinalBot settings saved")
+      } else {
+        toast.error("Failed to save FinalBot settings")
+      }
+    } catch (error) {
+      toast.error("Failed to save FinalBot settings")
+    } finally {
+      setSavingFinalbot(false)
     }
   }
 
@@ -629,6 +684,7 @@ export default function SettingsPage() {
           <TabsTrigger value="source" className="text-xs sm:text-sm">Source</TabsTrigger>
           <TabsTrigger value="prompts" className="text-xs sm:text-sm">Prompts</TabsTrigger>
           <TabsTrigger value="ai" className="text-xs sm:text-sm">AI</TabsTrigger>
+          <TabsTrigger value="finalbot" className="text-xs sm:text-sm">FinalBot</TabsTrigger>
         </TabsList>
 
         {/* Target Channels Tab */}
@@ -1209,6 +1265,86 @@ export default function SettingsPage() {
               >
                 {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
                 Save AI Settings
+              </Button>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* FinalBot Settings Tab */}
+        <TabsContent value="finalbot" className="space-y-4">
+          <Card className="glass border-white/10">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-cyan-500" />
+                FinalBot Settings
+              </CardTitle>
+              <CardDescription>Configure the Telegram bot for external audio generation</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Stats */}
+              <div className="flex gap-4 p-3 rounded-lg bg-muted/50">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-yellow-500">{finalbotStats.pending}</div>
+                  <div className="text-xs text-muted-foreground">Pending</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-blue-500">{finalbotStats.processing}</div>
+                  <div className="text-xs text-muted-foreground">Processing</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-green-500">{finalbotStats.completed}</div>
+                  <div className="text-xs text-muted-foreground">Completed</div>
+                </div>
+              </div>
+
+              {/* Bot Token */}
+              <div>
+                <Label>Bot Token</Label>
+                <Input
+                  type="password"
+                  value={finalbotSettings.botToken}
+                  onChange={e => setFinalbotSettings(s => ({ ...s, botToken: e.target.value }))}
+                  placeholder="Enter Telegram Bot Token"
+                  className="mt-1 font-mono"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  The bot that monitors the chat for FinalWorkingBot responses
+                </p>
+              </div>
+
+              {/* Chat ID */}
+              <div>
+                <Label>Chat ID</Label>
+                <Input
+                  value={finalbotSettings.chatId}
+                  onChange={e => setFinalbotSettings(s => ({ ...s, chatId: e.target.value }))}
+                  placeholder="Enter Telegram Chat ID"
+                  className="mt-1 font-mono"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  The chat where both bots communicate (script sent here, audio link received here)
+                </p>
+              </div>
+
+              {/* Instructions */}
+              <div className="p-3 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-sm">
+                <p className="font-medium text-cyan-400 mb-2">How FinalBot works:</p>
+                <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
+                  <li>Select &quot;FinalBot&quot; mode on the main page</li>
+                  <li>Script is sent to the Telegram chat</li>
+                  <li>FinalWorkingBot generates audio and sends Gofile link</li>
+                  <li>Audio link is captured and video job is created</li>
+                  <li>Unified Worker generates video from the audio</li>
+                </ol>
+              </div>
+
+              <Button
+                onClick={saveFinalbotSettings}
+                disabled={savingFinalbot}
+                className="bg-gradient-to-r from-cyan-600 to-teal-500 hover:from-cyan-500 hover:to-teal-400 border-0 text-white"
+              >
+                {savingFinalbot ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+                Save FinalBot Settings
               </Button>
             </CardContent>
           </Card>
