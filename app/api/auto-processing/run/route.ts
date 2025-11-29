@@ -314,10 +314,11 @@ async function addToQueue(username: string, targetChannel: string, transcript: s
       return { success: false, error: "No available slots" }
     }
 
-    // Get target channel's image folder
+    // Get target channel's config (image folder + reference audio)
     const targetChannels = getTargetChannels(username)
     const targetChannelConfig = targetChannels.find(c => c.channel_code === targetChannel)
     const imageFolder = targetChannelConfig?.image_folder || undefined
+    const referenceAudio = targetChannelConfig?.reference_audio || `${targetChannel}.wav`
 
     // Get audio counter
     const counterRes = await fetch(`${FILE_SERVER_URL}/counter/increment/audio`, {
@@ -349,7 +350,8 @@ async function addToQueue(username: string, targetChannel: string, transcript: s
         organized_path: organizedPath,
         priority: 1, // LOW priority for auto-processing
         username: username,
-        image_folder: imageFolder
+        image_folder: imageFolder,
+        reference_audio: referenceAudio
       })
     })
 

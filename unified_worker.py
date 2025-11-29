@@ -162,13 +162,16 @@ class FileServerQueue:
             return r.text if r.status_code == 200 else None
         except: return None
 
-    def get_reference_audio(self, channel_code: str, local_path: str) -> bool:
-        """Try wav first, then mp3"""
-        # Try wav first
-        if self.download_file(f"reference-audio/{channel_code}.wav", local_path):
+    def get_reference_audio(self, reference_audio: str, local_path: str) -> bool:
+        """Download reference audio by filename"""
+        # Download the exact file specified
+        if self.download_file(f"reference-audio/{reference_audio}", local_path):
             return True
-        # Try mp3
-        if self.download_file(f"reference-audio/{channel_code}.mp3", local_path):
+        # Fallback: try without extension variations
+        base_name = reference_audio.rsplit('.', 1)[0] if '.' in reference_audio else reference_audio
+        if self.download_file(f"reference-audio/{base_name}.wav", local_path):
+            return True
+        if self.download_file(f"reference-audio/{base_name}.mp3", local_path):
             return True
         return False
 
@@ -261,8 +264,11 @@ async def process_job(job: Dict) -> bool:
     job_id = job["job_id"]
     channel = job["channel_code"]
     org_path = job["organized_path"]
+    # Get reference_audio from job, fallback to channel_code.wav
+    ref_audio_file = job.get("reference_audio") or f"{channel}.wav"
 
     print(f"\n🎯 Processing Job: {job_id[:8]} ({channel} #{job['video_number']})")
+    print(f"   Reference Audio: {ref_audio_file}")
     queue.send_heartbeat(WORKER_ID, status="busy", current_job=job_id)
 
     # Local Paths
@@ -280,7 +286,7 @@ async def process_job(job: Dict) -> bool:
         # Get Script & Ref Audio
         script = queue.get_script(org_path)
         if not script: raise Exception("Script fetch failed")
-        if not queue.get_reference_audio(channel, local_ref_audio): raise Exception("Ref audio failed")
+        if not queue.get_reference_audio(ref_audio_file, local_ref_audio): raise Exception(f"Ref audio failed: {ref_audio_file}")
 
         # Generate Audio
         if not generate_audio_f5tts(script, local_ref_audio, local_audio_out):

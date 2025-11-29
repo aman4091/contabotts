@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server"
+import { cookies } from "next/headers"
 import { getSettings } from "@/lib/file-storage"
+
+async function getUser() {
+  const cookieStore = await cookies()
+  return cookieStore.get("user")?.value
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -15,7 +21,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Transcript required" }, { status: 400 })
     }
 
-    const settings = getSettings()
+    const username = await getUser()
+    const settings = getSettings(username)
     const prompt = customPrompt || settings.prompts.youtube
     const maxChunkSize = settings.ai.max_chunk_size || 7000
 
@@ -82,7 +89,11 @@ function splitIntoChunks(text: string, maxSize: number): string[] {
 
 async function callGemini(prompt: string, model: string = "gemini-2.0-flash-exp", apiKey: string): Promise<string | null> {
   try {
+    // Use v1beta for all models
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
+
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 300000) // 5 min timeout
 
     const res = await fetch(url, {
       method: "POST",
@@ -97,23 +108,33 @@ async function callGemini(prompt: string, model: string = "gemini-2.0-flash-exp"
         }],
         generationConfig: {
           temperature: 0.7,
-          maxOutputTokens: 8192
+          maxOutputTokens: 65536 // Increased for larger outputs
         }
-      })
+      }),
+      signal: controller.signal
     })
+
+    clearTimeout(timeout)
 
     if (!res.ok) {
       const errorText = await res.text()
-      console.error("Gemini API error:", errorText)
+      console.error("Gemini API error:", res.status, errorText)
       return null
     }
 
     const data = await res.json()
 
+    // Check for blocked content
+    if (data.candidates?.[0]?.finishReason === "SAFETY") {
+      console.error("Content blocked by safety filters")
+      return null
+    }
+
     if (data.candidates?.[0]?.content?.parts?.[0]?.text) {
       return data.candidates[0].content.parts[0].text
     }
 
+    console.error("No text in response:", JSON.stringify(data).slice(0, 500))
     return null
   } catch (error) {
     console.error("Error calling Gemini:", error)

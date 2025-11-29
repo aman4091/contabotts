@@ -212,12 +212,24 @@ export async function PUT(request: NextRequest) {
 
     saveChannels(username, data)
 
+    // Refresh video pool if requested
+    if (body.refreshPool) {
+      const videoPool = await fetchVideoPool(channel.sourceChannelId, channel.minDuration, channel.maxDuration)
+      const existingPool = loadVideoPool(username, channel.sourceChannelId)
+      saveVideoPool(username, channel.sourceChannelId, {
+        videoPool,
+        processedVideoIds: existingPool.processedVideoIds || [],
+        lastPoolRefreshAt: new Date().toISOString()
+      })
+    }
+
     return NextResponse.json({
       success: true,
       channel: {
         ...channel,
         stats: getChannelStats(username, channel.sourceChannelId)
-      }
+      },
+      poolRefreshed: body.refreshPool || false
     })
   } catch (error) {
     console.error("Error updating channel:", error)

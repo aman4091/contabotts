@@ -52,6 +52,7 @@ async function createAudioJob(job: {
   priority: number
   username?: string
   image_folder?: string
+  reference_audio?: string
 }): Promise<{ success: boolean; job_id?: string; error?: string }> {
   try {
     const response = await fetch(`${FILE_SERVER_URL}/queue/audio/jobs`, {
@@ -156,10 +157,11 @@ export async function POST(request: NextRequest) {
     // Manual dashboard jobs get priority 5 (higher than auto-processing which uses 1)
     const jobPriority = customPriority ? parseInt(customPriority) : (customSlot ? 10 : 5)
 
-    // Get target channel's image folder
+    // Get target channel's config (image folder + reference audio)
     const targetChannels = getTargetChannels(username)
     const targetChannelConfig = targetChannels.find(c => c.channel_code === targetChannel)
     const imageFolder = targetChannelConfig?.image_folder || undefined
+    const referenceAudio = targetChannelConfig?.reference_audio || `${targetChannel}.wav`
 
     // Create job via File Server (not Supabase!)
     const jobId = randomUUID()
@@ -173,7 +175,8 @@ export async function POST(request: NextRequest) {
       organized_path: organizedPath,
       priority: jobPriority,
       username: username,
-      image_folder: imageFolder
+      image_folder: imageFolder,
+      reference_audio: referenceAudio
     })
 
     if (!result.success) {

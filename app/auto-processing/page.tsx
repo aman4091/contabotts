@@ -217,6 +217,29 @@ export default function AutoProcessingPage() {
     }
   }
 
+  async function refreshPool(channel: MonitoredChannel) {
+    setProcessing(channel.id)
+    try {
+      const res = await fetch(`/api/auto-processing/channels?id=${channel.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refreshPool: true })
+      })
+      const data = await res.json()
+
+      if (data.success) {
+        toast.success(`Pool refreshed! ${data.channel.stats?.poolSize || 0} videos found`)
+        await loadChannels()
+      } else {
+        toast.error(data.error || "Failed to refresh")
+      }
+    } catch (error) {
+      toast.error("Error refreshing pool")
+    } finally {
+      setProcessing(null)
+    }
+  }
+
   async function processNow(channelId: string) {
     setProcessing(channelId)
     try {
@@ -594,6 +617,20 @@ export default function AutoProcessingPage() {
                             checked={channel.isActive}
                             onCheckedChange={() => toggleActive(channel)}
                           />
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => refreshPool(channel)}
+                            disabled={processing === channel.id}
+                            className="border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10"
+                            title="Refresh video pool"
+                          >
+                            {processing === channel.id ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <RefreshCw className="w-4 h-4" />
+                            )}
+                          </Button>
                           <Button
                             size="sm"
                             variant="outline"
