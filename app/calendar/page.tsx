@@ -17,7 +17,9 @@ import {
   Calendar as CalendarIcon,
   Loader2,
   Trash2,
-  ExternalLink
+  ExternalLink,
+  Image as ImageIcon,
+  Type
 } from "lucide-react"
 import { useRouter } from "next/navigation"
 
@@ -29,6 +31,8 @@ interface Slot {
   hasScript: boolean
   hasAudio: boolean
   hasVideo: boolean
+  hasTitle?: boolean
+  hasThumbnail?: boolean
   isCompleted: boolean
   path: string
   gofileLink?: string | null
@@ -216,7 +220,7 @@ export default function CalendarPage() {
   }
 
   function SlotCard({ slot, isToday = false }: { slot: Slot; isToday?: boolean }) {
-    const hasAnyFile = slot.hasTranscript || slot.hasScript || slot.hasAudio || slot.hasVideo
+    const hasAnyFile = slot.hasTranscript || slot.hasScript || slot.hasAudio || slot.hasVideo || slot.hasThumbnail
 
     return (
       <div
@@ -317,6 +321,22 @@ export default function CalendarPage() {
             <Video className="w-4 h-4 mr-2 text-red-400" />
             Video
             {slot.hasVideo && (slot.gofileLink ? <ExternalLink className="w-3 h-3 ml-auto" /> : <Download className="w-3 h-3 ml-auto" />)}
+          </Button>
+
+          {/* Thumbnail */}
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={!slot.hasThumbnail || slot.isCompleted}
+            onClick={() => {
+              const url = `/api/slots/thumbnail?date=${slot.date}&channel=${slot.channelCode}&slot=${slot.slotNumber}`
+              window.open(url, "_blank")
+            }}
+            className="justify-start text-xs h-9"
+          >
+            <ImageIcon className="w-4 h-4 mr-2 text-pink-400" />
+            Thumbnail
+            {slot.hasThumbnail && <Download className="w-3 h-3 ml-auto" />}
           </Button>
         </div>
 

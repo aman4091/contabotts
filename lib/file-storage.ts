@@ -34,6 +34,7 @@ export interface Settings {
   prompts: {
     youtube: string
     channel: string
+    title: string
   }
   ai: {
     provider: string
@@ -112,7 +113,7 @@ export function saveTargetChannels(channels: TargetChannel[], username?: string)
 // Settings
 export function getSettings(username?: string): Settings {
   const defaults: Settings = {
-    prompts: { youtube: '', channel: '' },
+    prompts: { youtube: '', channel: '', title: '' },
     ai: { provider: 'gemini', model: 'gemini-2.0-flash', max_chunk_size: 7000, temperature: 0.7 },
     audio: { chunk_size: 500, speed: 1.0, remove_silence: true },
     video: { default_image_folder: 'nature', subtitle_style: '' }

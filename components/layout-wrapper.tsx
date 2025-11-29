@@ -16,7 +16,8 @@ import {
   LogOut,
   User,
   Calendar,
-  Zap
+  Zap,
+  Image as ImageIcon
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -61,6 +62,12 @@ const navItems = [
     href: "/auto-processing",
     icon: Zap,
     description: "Auto daily jobs"
+  },
+  {
+    title: "Titles & Thumbnails",
+    href: "/titles-thumbnails",
+    icon: ImageIcon,
+    description: "Generate titles & thumbnails"
   },
   {
     title: "Subtitles",

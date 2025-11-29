@@ -46,6 +46,7 @@ interface Settings {
   prompts: {
     youtube: string
     channel: string
+    title: string
   }
   ai: {
     provider: string
@@ -834,6 +835,18 @@ export default function SettingsPage() {
                   } : s)}
                   className="h-32 mt-1 font-mono text-sm"
                   placeholder="Enter channel-specific prompt..."
+                />
+              </div>
+              <div>
+                <Label>Title Generation Prompt</Label>
+                <Textarea
+                  value={settings?.prompts.title || ""}
+                  onChange={e => setSettings(s => s ? {
+                    ...s,
+                    prompts: { ...s.prompts, title: e.target.value }
+                  } : s)}
+                  className="h-32 mt-1 font-mono text-sm"
+                  placeholder="Generate 20 viral YouTube titles for the following script. Titles should be catchy, attention-grabbing, and optimized for clicks..."
                 />
               </div>
               <Button

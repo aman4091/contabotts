@@ -118,6 +118,8 @@ export async function GET(request: NextRequest) {
             hasScript: fs.existsSync(path.join(slotPath, "script.txt")),
             hasAudio: !!gofileLink, // Audio available if gofile link exists
             hasVideo: !!gofileLink, // Video available if gofile link exists
+            hasTitle: fs.existsSync(path.join(slotPath, "title.txt")),
+            hasThumbnail: fs.existsSync(path.join(slotPath, "thumbnail.png")),
             isCompleted: completedSlots[slotKey] || false,
             path: `/organized/${date}/${channelCode}/${videoDir}`,
             gofileLink: gofileLink
@@ -140,6 +142,8 @@ export async function GET(request: NextRequest) {
           hasScript: false,
           hasAudio: !!gofileLink,
           hasVideo: !!gofileLink,
+          hasTitle: false,
+          hasThumbnail: false,
           isCompleted: completedSlots[slotKey] || false,
           path: `/organized/${date}/${channelCode}/video_${slotNum}`,
           gofileLink: gofileLink
