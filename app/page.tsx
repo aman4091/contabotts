@@ -96,6 +96,23 @@ function HomeContent() {
   // Fetched videos (to pass to transcript fetch)
   const [fetchedVideos, setFetchedVideos] = useState<any[]>([])
 
+  // Clean script - remove asterisks, double quotes, and other special characters
+  function cleanScript(text: string): string {
+    return text
+      .replace(/\*+/g, '')           // Remove asterisks
+      .replace(/"/g, '')             // Remove double quotes
+      .replace(/"/g, '')             // Remove curly double quote left
+      .replace(/"/g, '')             // Remove curly double quote right
+      .replace(/'/g, "'")            // Replace curly single quote with straight
+      .replace(/'/g, "'")            // Replace curly single quote with straight
+      .replace(/…/g, '...')          // Replace ellipsis with dots
+      .replace(/—/g, '-')            // Replace em dash with hyphen
+      .replace(/–/g, '-')            // Replace en dash with hyphen
+      .replace(/\s+/g, ' ')          // Replace multiple spaces with single
+      .replace(/^\s+|\s+$/gm, '')    // Trim each line
+      .trim()
+  }
+
   // Load initial data
   useEffect(() => {
     loadSourceChannels()
@@ -320,7 +337,7 @@ function HomeContent() {
       if (data.error) {
         toast.error(data.error)
       } else {
-        setProcessedScript(data.result || "")
+        setProcessedScript(cleanScript(data.result || ""))
         toast.success("AI processing complete")
       }
     } catch (error) {
@@ -782,6 +799,17 @@ function HomeContent() {
               <Textarea
                 value={processedScript}
                 onChange={e => setProcessedScript(e.target.value)}
+                onPaste={e => {
+                  e.preventDefault()
+                  const pastedText = e.clipboardData.getData('text')
+                  const cleanedText = cleanScript(pastedText)
+                  const target = e.target as HTMLTextAreaElement
+                  const start = target.selectionStart
+                  const end = target.selectionEnd
+                  const currentText = processedScript
+                  const newText = currentText.substring(0, start) + cleanedText + currentText.substring(end)
+                  setProcessedScript(newText)
+                }}
                 className="h-[200px] mt-1 font-mono text-sm"
                 placeholder="AI processed script will appear here, or paste manually..."
               />

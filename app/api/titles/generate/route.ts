@@ -46,7 +46,7 @@ Script:
     const prompt = customPrompt || settings.prompts?.title || defaultPrompt
     const fullPrompt = `${prompt}\n\n${script.slice(0, 5000)}` // Limit script to 5000 chars for title gen
 
-    const titles = await generateTitles(fullPrompt, settings.ai.model, GEMINI_API_KEY)
+    const titles = await generateTitles(fullPrompt, "gemini-3-pro-preview", GEMINI_API_KEY)
 
     if (!titles || titles.length === 0) {
       return NextResponse.json({ error: "Failed to generate titles" }, { status: 500 })

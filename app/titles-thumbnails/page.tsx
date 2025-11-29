@@ -1,13 +1,12 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { toast } from "sonner"
 import {
   Loader2,
@@ -64,6 +63,7 @@ export default function TitlesThumbnailsPage() {
   // Loading states
   const [loading, setLoading] = useState(true)
   const [loadingSlots, setLoadingSlots] = useState(false)
+  const [thumbnailRefreshKey, setThumbnailRefreshKey] = useState(0)
 
   // Load initial data
   useEffect(() => {
@@ -209,11 +209,8 @@ export default function TitlesThumbnailsPage() {
     }
   }
 
-  async function saveTitle() {
-    if (!selectedTitle) {
-      toast.error("Please select a title first")
-      return
-    }
+  async function saveTitle(title: string) {
+    if (!title) return
 
     setSavingTitle(true)
     try {
@@ -224,16 +221,19 @@ export default function TitlesThumbnailsPage() {
           date: selectedDate,
           channel: selectedChannel,
           slot: selectedSlot,
-          title: selectedTitle
+          title: title
         })
       })
 
       const data = await res.json()
 
       if (data.success) {
-        setSavedTitle(selectedTitle)
-        toast.success("Title saved!")
-        loadSlots() // Refresh to show hasTitle
+        setSavedTitle(title)
+        setSelectedTitle(title)
+        toast.success("Title saved! Creating thumbnail...")
+
+        // Auto generate thumbnail (don't reload slots - keeps titles list)
+        await generateThumbnailAuto(title)
       } else {
         toast.error(data.error || "Failed to save title")
       }
@@ -242,6 +242,34 @@ export default function TitlesThumbnailsPage() {
       toast.error("Failed to save title")
     } finally {
       setSavingTitle(false)
+    }
+  }
+
+  async function generateThumbnailAuto(title: string) {
+    try {
+      const res = await fetch("/api/slots/thumbnail", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          date: selectedDate,
+          channel: selectedChannel,
+          slot: selectedSlot,
+          title: title
+        })
+      })
+
+      const data = await res.json()
+
+      if (data.success) {
+        toast.success("Thumbnail created!")
+        // Trigger thumbnail section refresh
+        setThumbnailRefreshKey(prev => prev + 1)
+      } else {
+        toast.error(data.error || "Thumbnail failed")
+      }
+    } catch (error) {
+      console.error("Error generating thumbnail:", error)
+      toast.error("Thumbnail generation failed")
     }
   }
 
@@ -456,47 +484,35 @@ export default function TitlesThumbnailsPage() {
               {/* Generated Titles */}
               {generatedTitles.length > 0 && (
                 <div className="space-y-3">
-                  <Label>Select a Title ({generatedTitles.length} generated)</Label>
-                  <RadioGroup
-                    value={selectedTitle}
-                    onValueChange={setSelectedTitle}
-                    className="max-h-80 overflow-y-auto space-y-2"
-                  >
+                  <Label>Click a title to select & auto-create thumbnail ({generatedTitles.length} generated)</Label>
+                  <div className="max-h-80 overflow-y-auto space-y-2">
                     {generatedTitles.map((title, index) => (
                       <div
                         key={index}
                         className={`flex items-start space-x-3 p-3 rounded-lg border transition-all cursor-pointer ${
-                          selectedTitle === title
+                          savedTitle === title
+                            ? "border-emerald-500 bg-emerald-500/10"
+                            : selectedTitle === title
                             ? "border-violet-500 bg-violet-500/10"
                             : "border-border hover:border-violet-500/50"
-                        }`}
-                        onClick={() => setSelectedTitle(title)}
+                        } ${savingTitle ? "opacity-50 pointer-events-none" : ""}`}
+                        onClick={() => !savingTitle && saveTitle(title)}
                       >
-                        <RadioGroupItem value={title} id={`title-${index}`} className="mt-1" />
-                        <label
-                          htmlFor={`title-${index}`}
-                          className="text-sm cursor-pointer flex-1"
-                        >
+                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center mt-0.5 ${
+                          savedTitle === title ? "border-emerald-500 bg-emerald-500" : "border-muted-foreground"
+                        }`}>
+                          {savedTitle === title && <Check className="w-3 h-3 text-white" />}
+                        </div>
+                        <span className="text-sm flex-1">
                           <span className="text-muted-foreground mr-2">{index + 1}.</span>
                           {title}
-                        </label>
+                        </span>
+                        {savingTitle && selectedTitle === title && (
+                          <Loader2 className="w-4 h-4 animate-spin text-violet-500" />
+                        )}
                       </div>
                     ))}
-                  </RadioGroup>
-
-                  {/* Save Button */}
-                  <Button
-                    onClick={saveTitle}
-                    disabled={!selectedTitle || savingTitle}
-                    className="w-full bg-emerald-600 hover:bg-emerald-500"
-                  >
-                    {savingTitle ? (
-                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                    ) : (
-                      <Save className="w-4 h-4 mr-2" />
-                    )}
-                    Save Title
-                  </Button>
+                  </div>
                 </div>
               )}
 
@@ -524,6 +540,7 @@ export default function TitlesThumbnailsPage() {
             selectedChannel={selectedChannel}
             selectedSlot={selectedSlot}
             savedTitle={savedTitle}
+            refreshKey={thumbnailRefreshKey}
           />
         </div>
       </div>
@@ -536,17 +553,37 @@ function ThumbnailSection({
   selectedDate,
   selectedChannel,
   selectedSlot,
-  savedTitle
+  savedTitle,
+  refreshKey
 }: {
   selectedDate: string
   selectedChannel: string
   selectedSlot: number | null
   savedTitle: string
+  refreshKey: number
 }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null)
   const [generatingThumbnail, setGeneratingThumbnail] = useState(false)
   const [savingThumbnail, setSavingThumbnail] = useState(false)
   const [showManualEdit, setShowManualEdit] = useState(false)
+  const [currentTemplateId, setCurrentTemplateId] = useState<string | null>(null)
+  const [bgImage, setBgImage] = useState<HTMLImageElement | null>(null)
+  const [overlayImage, setOverlayImage] = useState<HTMLImageElement | null>(null)
+  const [loadingBg, setLoadingBg] = useState(false)
+  const [bgFolder, setBgFolder] = useState("nature")
+  const [bgImagePath, setBgImagePath] = useState<string | null>(null)
+  const [overlayImg, setOverlayImg] = useState("")
+
+  // Overlay position and size from template
+  const [overlayPos, setOverlayPos] = useState({ x: 50, y: 50 })
+  const [overlaySize, setOverlaySize] = useState({ width: 300, height: 300 })
+
+  // Drag/resize state
+  const [dragging, setDragging] = useState(false)
+  const [resizing, setResizing] = useState(false)
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
+  const [textBoxHeight, setTextBoxHeight] = useState(150)
 
   // Manual edit state
   const [editSettings, setEditSettings] = useState({
@@ -560,6 +597,7 @@ function ThumbnailSection({
     paddingLeft: 20,
     positionX: 50,
     positionY: 480,
+    textWidth: 1180,
     shadowEnabled: true,
     shadowColor: "#000000",
     shadowBlur: 6,
@@ -568,14 +606,332 @@ function ThumbnailSection({
     outlineWidth: 3
   })
 
-  // Load existing thumbnail on slot change
+  // Canvas constants
+  const CANVAS_WIDTH = 1280
+  const CANVAS_HEIGHT = 720
+  const SCALE = 0.45 // Display smaller for mobile friendly
+
+  // Load template when manual edit is opened
+  const loadTemplate = useCallback(async () => {
+    try {
+      const res = await fetch("/api/thumbnail-templates")
+      const data = await res.json()
+      const templates = data.templates || []
+
+      // Find template for this channel or first available
+      let template = templates.find((t: { channelCode: string }) => t.channelCode === selectedChannel)
+      if (!template && templates.length > 0) {
+        template = templates[0]
+      }
+
+      if (template) {
+        setCurrentTemplateId(template.id)
+        setBgFolder(template.backgroundImageFolder || "nature")
+        setOverlayImg(template.overlayImage || "")
+        // Load overlay position and size from template
+        setOverlayPos(template.overlayPosition || { x: 50, y: 50 })
+        setOverlaySize(template.overlaySize || { width: 300, height: 300 })
+        setEditSettings({
+          fontFamily: template.textBox?.fontFamily || "Impact",
+          fontSize: template.textBox?.fontSize || 72,
+          fontColor: template.textBox?.fontColor || "#FFFFFF",
+          textAlign: template.textBox?.textAlign || "center",
+          paddingTop: template.textBox?.padding?.top || 10,
+          paddingRight: template.textBox?.padding?.right || 20,
+          paddingBottom: template.textBox?.padding?.bottom || 10,
+          paddingLeft: template.textBox?.padding?.left || 20,
+          positionX: template.textBox?.x || 50,
+          positionY: template.textBox?.y || 480,
+          textWidth: template.textBox?.width || 1180,
+          shadowEnabled: template.textBox?.shadow?.enabled ?? true,
+          shadowColor: template.textBox?.shadow?.color || "#000000",
+          shadowBlur: template.textBox?.shadow?.blur || 6,
+          outlineEnabled: template.textBox?.outline?.enabled ?? true,
+          outlineColor: template.textBox?.outline?.color || "#000000",
+          outlineWidth: template.textBox?.outline?.width || 3
+        })
+      }
+    } catch (error) {
+      console.error("Error loading template:", error)
+    }
+  }, [selectedChannel])
+
+  // Load background image for preview
+  const loadBackground = useCallback(async () => {
+    if (!showManualEdit) return
+    setLoadingBg(true)
+    try {
+      const res = await fetch(`/api/images/random?folder=${bgFolder}`)
+      if (res.ok) {
+        // Get image path from header
+        const imagePath = res.headers.get("X-Image-Path")
+        if (imagePath) {
+          setBgImagePath(imagePath)
+        }
+        const blob = await res.blob()
+        const url = URL.createObjectURL(blob)
+        const img = new Image()
+        img.onload = () => {
+          setBgImage(img)
+          setLoadingBg(false)
+        }
+        img.src = url
+      } else {
+        setLoadingBg(false)
+      }
+    } catch {
+      setLoadingBg(false)
+    }
+  }, [bgFolder, showManualEdit])
+
+  // Load overlay image
+  const loadOverlay = useCallback(async () => {
+    if (!overlayImg) {
+      setOverlayImage(null)
+      return
+    }
+    try {
+      const res = await fetch(`/api/images/overlay?name=${overlayImg}`)
+      if (res.ok) {
+        const blob = await res.blob()
+        const url = URL.createObjectURL(blob)
+        const img = new Image()
+        img.onload = () => setOverlayImage(img)
+        img.src = url
+      }
+    } catch {
+      setOverlayImage(null)
+    }
+  }, [overlayImg])
+
+  // Load template ONLY when manual edit first opens (not on every render)
+  const [templateLoaded, setTemplateLoaded] = useState(false)
+  useEffect(() => {
+    if (showManualEdit && !templateLoaded) {
+      loadTemplate()
+      setTemplateLoaded(true)
+    }
+    if (!showManualEdit) {
+      setTemplateLoaded(false)
+    }
+  }, [showManualEdit, templateLoaded, loadTemplate])
+
+  useEffect(() => {
+    if (showManualEdit) {
+      loadBackground()
+    }
+  }, [showManualEdit, bgFolder, loadBackground])
+
+  useEffect(() => {
+    if (showManualEdit) {
+      loadOverlay()
+    }
+  }, [showManualEdit, overlayImg, loadOverlay])
+
+  // Draw canvas preview
+  useEffect(() => {
+    if (!showManualEdit) return
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext("2d")
+    if (!ctx) return
+
+    // Clear
+    ctx.fillStyle = "#1a1a1a"
+    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT)
+
+    // Draw background
+    if (bgImage) {
+      ctx.drawImage(bgImage, 0, 0, CANVAS_WIDTH, CANVAS_HEIGHT)
+    }
+
+    // Draw overlay with template position and size
+    if (overlayImage && overlayImg) {
+      ctx.drawImage(
+        overlayImage,
+        overlayPos.x,
+        overlayPos.y,
+        overlaySize.width,
+        overlaySize.height
+      )
+    }
+
+    // Draw text with effects
+    if (savedTitle) {
+      ctx.save()
+      ctx.font = `bold ${editSettings.fontSize}px ${editSettings.fontFamily}, Impact, sans-serif`
+      ctx.textAlign = editSettings.textAlign
+      ctx.textBaseline = "top"
+
+      // Calculate x position based on alignment
+      let textX = editSettings.positionX
+      if (editSettings.textAlign === "center") {
+        textX = editSettings.positionX + editSettings.textWidth / 2
+      } else if (editSettings.textAlign === "right") {
+        textX = editSettings.positionX + editSettings.textWidth
+      }
+
+      // Wrap text
+      const words = savedTitle.split(" ")
+      const lines: string[] = []
+      let currentLine = ""
+      const maxWidth = editSettings.textWidth - editSettings.paddingLeft - editSettings.paddingRight
+
+      for (const word of words) {
+        const testLine = currentLine ? `${currentLine} ${word}` : word
+        const metrics = ctx.measureText(testLine)
+        if (metrics.width > maxWidth && currentLine) {
+          lines.push(currentLine)
+          currentLine = word
+        } else {
+          currentLine = testLine
+        }
+      }
+      if (currentLine) lines.push(currentLine)
+
+      const lineHeight = editSettings.fontSize * 1.2
+
+      // Draw each line
+      lines.forEach((line, i) => {
+        const y = editSettings.positionY + editSettings.paddingTop + i * lineHeight
+
+        // Shadow
+        if (editSettings.shadowEnabled) {
+          ctx.shadowColor = editSettings.shadowColor
+          ctx.shadowBlur = editSettings.shadowBlur
+          ctx.shadowOffsetX = 3
+          ctx.shadowOffsetY = 3
+        }
+
+        // Outline
+        if (editSettings.outlineEnabled) {
+          ctx.strokeStyle = editSettings.outlineColor
+          ctx.lineWidth = editSettings.outlineWidth * 2
+          ctx.lineJoin = "round"
+          ctx.strokeText(line, textX, y)
+        }
+
+        // Fill
+        ctx.shadowColor = "transparent"
+        ctx.fillStyle = editSettings.fontColor
+        ctx.fillText(line, textX, y)
+      })
+
+      ctx.restore()
+
+      // Calculate text box height
+      const calculatedHeight = Math.max(100, lines.length * lineHeight + editSettings.paddingTop + editSettings.paddingBottom)
+      setTextBoxHeight(calculatedHeight)
+
+      // Draw text box border
+      ctx.strokeStyle = "rgba(0, 188, 212, 0.7)"
+      ctx.lineWidth = 2
+      ctx.setLineDash([5, 5])
+      ctx.strokeRect(
+        editSettings.positionX,
+        editSettings.positionY,
+        editSettings.textWidth,
+        calculatedHeight
+      )
+      ctx.setLineDash([])
+
+      // Draw resize handle (bottom-right corner)
+      ctx.fillStyle = "#f97316" // orange
+      ctx.fillRect(
+        editSettings.positionX + editSettings.textWidth - 15,
+        editSettings.positionY + calculatedHeight - 15,
+        15,
+        15
+      )
+    }
+  }, [
+    showManualEdit, bgImage, overlayImage, overlayImg, overlayPos, overlaySize, savedTitle, editSettings
+  ])
+
+  // Get canvas position from mouse/touch event
+  const getCanvasPos = (e: React.MouseEvent | React.TouchEvent) => {
+    const canvas = canvasRef.current
+    if (!canvas) return { x: 0, y: 0 }
+    const rect = canvas.getBoundingClientRect()
+    const scaleX = CANVAS_WIDTH / rect.width
+    const scaleY = CANVAS_HEIGHT / rect.height
+
+    let clientX: number, clientY: number
+    if ('touches' in e) {
+      clientX = e.touches[0]?.clientX || e.changedTouches[0]?.clientX || 0
+      clientY = e.touches[0]?.clientY || e.changedTouches[0]?.clientY || 0
+    } else {
+      clientX = e.clientX
+      clientY = e.clientY
+    }
+
+    return {
+      x: (clientX - rect.left) * scaleX,
+      y: (clientY - rect.top) * scaleY
+    }
+  }
+
+  // Handle mouse/touch start
+  const handleCanvasStart = (e: React.MouseEvent | React.TouchEvent) => {
+    if ('touches' in e) e.preventDefault()
+    const pos = getCanvasPos(e)
+
+    // Check if clicking on resize handle (bottom-right corner)
+    const handleX = editSettings.positionX + editSettings.textWidth - 20
+    const handleY = editSettings.positionY + textBoxHeight - 20
+    if (pos.x >= handleX && pos.x <= handleX + 30 &&
+        pos.y >= handleY && pos.y <= handleY + 30) {
+      setResizing(true)
+      return
+    }
+
+    // Check if clicking inside text box for dragging
+    if (pos.x >= editSettings.positionX && pos.x <= editSettings.positionX + editSettings.textWidth &&
+        pos.y >= editSettings.positionY && pos.y <= editSettings.positionY + textBoxHeight) {
+      setDragging(true)
+      setDragOffset({
+        x: pos.x - editSettings.positionX,
+        y: pos.y - editSettings.positionY
+      })
+    }
+  }
+
+  // Handle mouse/touch move
+  const handleCanvasMove = (e: React.MouseEvent | React.TouchEvent) => {
+    if (!dragging && !resizing) return
+    e.preventDefault()
+    const pos = getCanvasPos(e)
+
+    if (resizing) {
+      // Resize text width
+      const newWidth = Math.max(200, Math.min(CANVAS_WIDTH - editSettings.positionX, pos.x - editSettings.positionX))
+      setEditSettings(prev => ({ ...prev, textWidth: Math.round(newWidth) }))
+    } else if (dragging) {
+      // Drag text box
+      const newX = Math.max(0, Math.min(CANVAS_WIDTH - editSettings.textWidth, pos.x - dragOffset.x))
+      const newY = Math.max(0, Math.min(CANVAS_HEIGHT - textBoxHeight, pos.y - dragOffset.y))
+      setEditSettings(prev => ({
+        ...prev,
+        positionX: Math.round(newX),
+        positionY: Math.round(newY)
+      }))
+    }
+  }
+
+  // Handle mouse/touch end
+  const handleCanvasEnd = () => {
+    setDragging(false)
+    setResizing(false)
+  }
+
+  // Load existing thumbnail on slot change or when refreshKey changes
   useEffect(() => {
     if (selectedSlot !== null && selectedChannel && selectedDate) {
       checkExistingThumbnail()
     } else {
       setThumbnailUrl(null)
     }
-  }, [selectedSlot, selectedChannel, selectedDate])
+  }, [selectedSlot, selectedChannel, selectedDate, refreshKey])
 
   async function checkExistingThumbnail() {
     try {
@@ -631,63 +987,198 @@ function ThumbnailSection({
     }
   }
 
+  // Save settings to template
+  async function saveToTemplate() {
+    if (!currentTemplateId) {
+      toast.error("No template to save to")
+      return
+    }
+
+    try {
+      // Load current templates
+      const res = await fetch("/api/thumbnail-templates")
+      const data = await res.json()
+      const templates = data.templates || []
+
+      // Find and update the template
+      const templateIndex = templates.findIndex((t: { id: string }) => t.id === currentTemplateId)
+      if (templateIndex === -1) {
+        toast.error("Template not found")
+        return
+      }
+
+      templates[templateIndex] = {
+        ...templates[templateIndex],
+        backgroundImageFolder: bgFolder,
+        overlayImage: overlayImg,
+        overlayPosition: overlayPos,
+        overlaySize: overlaySize,
+        textBox: {
+          x: editSettings.positionX,
+          y: editSettings.positionY,
+          width: editSettings.textWidth,
+          height: 200,
+          fontFamily: editSettings.fontFamily,
+          fontSize: editSettings.fontSize,
+          fontColor: editSettings.fontColor,
+          textAlign: editSettings.textAlign,
+          padding: {
+            top: editSettings.paddingTop,
+            right: editSettings.paddingRight,
+            bottom: editSettings.paddingBottom,
+            left: editSettings.paddingLeft
+          },
+          shadow: {
+            enabled: editSettings.shadowEnabled,
+            color: editSettings.shadowColor,
+            offsetX: 3,
+            offsetY: 3,
+            blur: editSettings.shadowBlur
+          },
+          outline: {
+            enabled: editSettings.outlineEnabled,
+            color: editSettings.outlineColor,
+            width: editSettings.outlineWidth
+          }
+        }
+      }
+
+      // Save templates
+      const saveRes = await fetch("/api/thumbnail-templates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ templates })
+      })
+
+      if (saveRes.ok) {
+        toast.success("Template saved!")
+      } else {
+        toast.error("Failed to save template")
+      }
+    } catch (error) {
+      console.error("Error saving template:", error)
+      toast.error("Failed to save template")
+    }
+  }
+
   async function applyManualEdit() {
     if (!savedTitle) {
       toast.error("No title to apply")
       return
     }
 
+    const canvas = canvasRef.current
+    if (!canvas) {
+      toast.error("Canvas not found")
+      return
+    }
+
     setSavingThumbnail(true)
     try {
-      const res = await fetch("/api/slots/thumbnail", {
-        method: "PUT",
+      // Get canvas image as base64 (without the border/handle - redraw clean version)
+      const cleanCanvas = document.createElement("canvas")
+      cleanCanvas.width = CANVAS_WIDTH
+      cleanCanvas.height = CANVAS_HEIGHT
+      const ctx = cleanCanvas.getContext("2d")
+      if (!ctx) {
+        toast.error("Cannot create canvas context")
+        return
+      }
+
+      // Draw background
+      if (bgImage) {
+        ctx.drawImage(bgImage, 0, 0, CANVAS_WIDTH, CANVAS_HEIGHT)
+      } else {
+        ctx.fillStyle = "#1a1a1a"
+        ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT)
+      }
+
+      // Draw overlay
+      if (overlayImage && overlayImg) {
+        ctx.drawImage(overlayImage, overlayPos.x, overlayPos.y, overlaySize.width, overlaySize.height)
+      }
+
+      // Draw text
+      ctx.save()
+      ctx.font = `bold ${editSettings.fontSize}px ${editSettings.fontFamily}, Impact, sans-serif`
+      ctx.textAlign = editSettings.textAlign
+      ctx.textBaseline = "top"
+
+      let textX = editSettings.positionX
+      if (editSettings.textAlign === "center") {
+        textX = editSettings.positionX + editSettings.textWidth / 2
+      } else if (editSettings.textAlign === "right") {
+        textX = editSettings.positionX + editSettings.textWidth
+      }
+
+      // Wrap text
+      const words = savedTitle.split(" ")
+      const lines: string[] = []
+      let currentLine = ""
+      const maxWidth = editSettings.textWidth - editSettings.paddingLeft - editSettings.paddingRight
+
+      for (const word of words) {
+        const testLine = currentLine ? `${currentLine} ${word}` : word
+        const metrics = ctx.measureText(testLine)
+        if (metrics.width > maxWidth && currentLine) {
+          lines.push(currentLine)
+          currentLine = word
+        } else {
+          currentLine = testLine
+        }
+      }
+      if (currentLine) lines.push(currentLine)
+
+      const lineHeight = editSettings.fontSize * 1.2
+
+      lines.forEach((line, i) => {
+        const y = editSettings.positionY + editSettings.paddingTop + i * lineHeight
+
+        if (editSettings.shadowEnabled) {
+          ctx.shadowColor = editSettings.shadowColor
+          ctx.shadowBlur = editSettings.shadowBlur
+          ctx.shadowOffsetX = 3
+          ctx.shadowOffsetY = 3
+        }
+
+        if (editSettings.outlineEnabled) {
+          ctx.strokeStyle = editSettings.outlineColor
+          ctx.lineWidth = editSettings.outlineWidth * 2
+          ctx.lineJoin = "round"
+          ctx.strokeText(line, textX, y)
+        }
+
+        ctx.shadowColor = "transparent"
+        ctx.fillStyle = editSettings.fontColor
+        ctx.fillText(line, textX, y)
+      })
+
+      ctx.restore()
+
+      // Get image data
+      const imageData = cleanCanvas.toDataURL("image/png")
+
+      // Send to server
+      const res = await fetch("/api/slots/thumbnail/upload", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           date: selectedDate,
           channel: selectedChannel,
           slot: selectedSlot,
-          title: savedTitle,
-          textBox: {
-            x: editSettings.positionX,
-            y: editSettings.positionY,
-            width: 1180,
-            height: 200,
-            fontFamily: editSettings.fontFamily,
-            fontSize: editSettings.fontSize,
-            fontColor: editSettings.fontColor,
-            textAlign: editSettings.textAlign,
-            padding: {
-              top: editSettings.paddingTop,
-              right: editSettings.paddingRight,
-              bottom: editSettings.paddingBottom,
-              left: editSettings.paddingLeft
-            },
-            shadow: {
-              enabled: editSettings.shadowEnabled,
-              color: editSettings.shadowColor,
-              offsetX: 3,
-              offsetY: 3,
-              blur: editSettings.shadowBlur
-            },
-            outline: {
-              enabled: editSettings.outlineEnabled,
-              color: editSettings.outlineColor,
-              width: editSettings.outlineWidth
-            }
-          }
+          imageData
         })
       })
 
       const data = await res.json()
 
       if (data.success) {
-        setThumbnailUrl(
-          `/api/slots/thumbnail?date=${selectedDate}&channel=${selectedChannel}&slot=${selectedSlot}&t=${Date.now()}`
-        )
-        toast.success("Thumbnail updated!")
-        setShowManualEdit(false)
+        const newUrl = `/api/slots/thumbnail?date=${selectedDate}&channel=${selectedChannel}&slot=${selectedSlot}&t=${Date.now()}`
+        setThumbnailUrl(newUrl)
+        toast.success("Thumbnail saved!")
+        setTimeout(() => setShowManualEdit(false), 100)
       } else {
-        toast.error(data.error || "Failed to update thumbnail")
+        toast.error(data.error || "Failed to save thumbnail")
       }
     } catch (error) {
       console.error("Error updating thumbnail:", error)
@@ -734,10 +1225,19 @@ function ThumbnailSection({
           <div className="space-y-4">
             <div className="rounded-lg overflow-hidden border border-border">
               <img
+                key={thumbnailUrl}
                 src={thumbnailUrl}
                 alt="Thumbnail Preview"
                 className="w-full h-auto"
                 style={{ maxHeight: "400px", objectFit: "contain" }}
+                onError={(e) => {
+                  // Retry loading once on error
+                  const target = e.target as HTMLImageElement
+                  if (!target.dataset.retried) {
+                    target.dataset.retried = "true"
+                    target.src = thumbnailUrl + "&retry=1"
+                  }
+                }}
               />
             </div>
 
@@ -753,10 +1253,10 @@ function ThumbnailSection({
               </Button>
               <Button
                 variant="outline"
-                onClick={() => window.location.href = "/settings"}
+                onClick={() => window.open("https://www.canva.com", "_blank")}
                 className="border-violet-500/30 text-violet-400 hover:bg-violet-500/10"
               >
-                <Settings className="w-4 h-4 mr-2" />
+                <ImageIcon className="w-4 h-4 mr-2" />
                 Open Canva
               </Button>
               <a
@@ -772,7 +1272,51 @@ function ThumbnailSection({
             {/* Manual Edit Panel */}
             {showManualEdit && (
               <div className="p-4 rounded-lg border border-pink-500/30 bg-pink-500/5 space-y-4">
-                <h4 className="font-medium text-pink-400">Manual Edit Mode</h4>
+                <div className="flex items-center justify-between">
+                  <h4 className="font-medium text-pink-400">Manual Edit Mode</h4>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={loadBackground}
+                    disabled={loadingBg}
+                    className="border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10"
+                  >
+                    <RefreshCw className={`w-4 h-4 mr-1 ${loadingBg ? "animate-spin" : ""}`} />
+                    New Background
+                  </Button>
+                </div>
+
+                {/* Live Canvas Preview */}
+                <div
+                  className="relative rounded-lg overflow-hidden border border-cyan-500/30 bg-black"
+                  style={{ cursor: dragging ? "grabbing" : resizing ? "se-resize" : "default" }}
+                >
+                  <canvas
+                    ref={canvasRef}
+                    width={CANVAS_WIDTH}
+                    height={CANVAS_HEIGHT}
+                    style={{
+                      width: "100%",
+                      height: "auto",
+                      maxHeight: "350px",
+                      objectFit: "contain",
+                      touchAction: "none"
+                    }}
+                    onMouseDown={handleCanvasStart}
+                    onMouseMove={handleCanvasMove}
+                    onMouseUp={handleCanvasEnd}
+                    onMouseLeave={handleCanvasEnd}
+                    onTouchStart={handleCanvasStart}
+                    onTouchMove={handleCanvasMove}
+                    onTouchEnd={handleCanvasEnd}
+                  />
+                  {loadingBg && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                      <Loader2 className="w-8 h-8 animate-spin text-white" />
+                    </div>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground text-center">Drag text box to move, drag orange corner to resize width</p>
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                   {/* Font Family */}
@@ -839,56 +1383,8 @@ function ThumbnailSection({
                   </div>
                 </div>
 
-                {/* Padding */}
-                <div className="grid grid-cols-4 gap-2">
-                  <div>
-                    <Label className="text-xs">Pad L</Label>
-                    <Input
-                      type="number"
-                      value={editSettings.paddingLeft}
-                      onChange={(e) =>
-                        setEditSettings({ ...editSettings, paddingLeft: parseInt(e.target.value) || 0 })
-                      }
-                      className="mt-1"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-xs">Pad R</Label>
-                    <Input
-                      type="number"
-                      value={editSettings.paddingRight}
-                      onChange={(e) =>
-                        setEditSettings({ ...editSettings, paddingRight: parseInt(e.target.value) || 0 })
-                      }
-                      className="mt-1"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-xs">Pad T</Label>
-                    <Input
-                      type="number"
-                      value={editSettings.paddingTop}
-                      onChange={(e) =>
-                        setEditSettings({ ...editSettings, paddingTop: parseInt(e.target.value) || 0 })
-                      }
-                      className="mt-1"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-xs">Pad B</Label>
-                    <Input
-                      type="number"
-                      value={editSettings.paddingBottom}
-                      onChange={(e) =>
-                        setEditSettings({ ...editSettings, paddingBottom: parseInt(e.target.value) || 0 })
-                      }
-                      className="mt-1"
-                    />
-                  </div>
-                </div>
-
-                {/* Position */}
-                <div className="grid grid-cols-2 gap-4">
+                {/* Position & Width */}
+                <div className="grid grid-cols-3 gap-4">
                   <div>
                     <Label className="text-xs">Position X</Label>
                     <Input
@@ -907,6 +1403,17 @@ function ThumbnailSection({
                       value={editSettings.positionY}
                       onChange={(e) =>
                         setEditSettings({ ...editSettings, positionY: parseInt(e.target.value) || 0 })
+                      }
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Text Width</Label>
+                    <Input
+                      type="number"
+                      value={editSettings.textWidth}
+                      onChange={(e) =>
+                        setEditSettings({ ...editSettings, textWidth: parseInt(e.target.value) || 1180 })
                       }
                       className="mt-1"
                     />
@@ -985,19 +1492,44 @@ function ThumbnailSection({
                   </div>
                 </div>
 
-                {/* Apply Button */}
-                <Button
-                  onClick={applyManualEdit}
-                  disabled={savingThumbnail}
-                  className="w-full bg-pink-600 hover:bg-pink-500"
-                >
-                  {savingThumbnail ? (
-                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                  ) : (
-                    <Check className="w-4 h-4 mr-2" />
-                  )}
-                  Apply Changes
-                </Button>
+                {/* Action Buttons */}
+                <div className="flex gap-2 flex-wrap">
+                  <Button
+                    onClick={applyManualEdit}
+                    disabled={savingThumbnail}
+                    className="flex-1 bg-pink-600 hover:bg-pink-500"
+                  >
+                    {savingThumbnail ? (
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    ) : (
+                      <Check className="w-4 h-4 mr-2" />
+                    )}
+                    Apply & Generate
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      const canvas = canvasRef.current
+                      if (!canvas) return
+                      const link = document.createElement("a")
+                      link.download = `manual_preview_${Date.now()}.png`
+                      link.href = canvas.toDataURL("image/png")
+                      link.click()
+                    }}
+                    variant="outline"
+                    className="border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10"
+                  >
+                    <Save className="w-4 h-4 mr-2" />
+                    Download Preview
+                  </Button>
+                  <Button
+                    onClick={saveToTemplate}
+                    variant="outline"
+                    className="border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10"
+                  >
+                    <Save className="w-4 h-4 mr-2" />
+                    Save to Template
+                  </Button>
+                </div>
               </div>
             )}
           </div>

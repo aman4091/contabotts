@@ -108,14 +108,22 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Get template
+    // Get template - first try by channel, then any template, then default
     const templates = loadTemplates(username)
+    console.log("User:", username, "Templates found:", templates.length)
+
     let template = templateId
       ? templates.find((t) => t.id === templateId)
       : templates.find((t) => t.channelCode === channel)
 
+    // If no channel-specific template, use first available template
+    if (!template && templates.length > 0) {
+      template = templates[0]
+      console.log("Using first available template:", template.name, "Font:", template.textBox.fontFamily, "Size:", template.textBox.fontSize)
+    }
+
     if (!template) {
-      // Use default template
+      // Use default template only if no templates exist
       template = {
         id: "default",
         channelCode: channel,
@@ -207,9 +215,11 @@ export async function POST(request: NextRequest) {
 // PUT - Update existing thumbnail with manual edits
 export async function PUT(request: NextRequest) {
   try {
+    const username = await getUser()
     const body = await request.json()
+    console.log("PUT thumbnail body:", JSON.stringify(body, null, 2))
 
-    const { date, channel, slot, title, textBox, backgroundImage } = body
+    const { date, channel, slot, title, textBox, backgroundImage, overlayImage, overlayPosition, overlaySize } = body
 
     if (!date || !channel || !slot || !title || !textBox) {
       return NextResponse.json(
@@ -218,8 +228,37 @@ export async function PUT(request: NextRequest) {
       )
     }
 
-    // Get background - use provided or get random from nature
-    const backgroundPath = backgroundImage || getRandomImage("nature")
+    console.log("PUT textBox settings:", JSON.stringify(textBox, null, 2))
+
+    // Get background - use provided or get random from template's folder
+    let backgroundPath = backgroundImage
+    let overlayPath = overlayImage ? getOverlayPath(overlayImage) : undefined
+    let finalOverlayPosition = overlayPosition
+    let finalOverlaySize = overlaySize
+
+    // If no background/overlay provided, load from template
+    if (!backgroundPath || !overlayImage) {
+      const templates = loadTemplates(username)
+      let template = templates.find((t) => t.channelCode === channel)
+      if (!template && templates.length > 0) {
+        template = templates[0]
+      }
+
+      if (template) {
+        if (!backgroundPath) {
+          backgroundPath = getRandomImage(template.backgroundImageFolder)
+        }
+        if (!overlayImage && template.overlayImage) {
+          overlayPath = getOverlayPath(template.overlayImage)
+          finalOverlayPosition = template.overlayPosition
+          finalOverlaySize = template.overlaySize
+        }
+      }
+    }
+
+    if (!backgroundPath) {
+      backgroundPath = getRandomImage("nature")
+    }
 
     if (!backgroundPath) {
       return NextResponse.json(
@@ -237,9 +276,14 @@ export async function PUT(request: NextRequest) {
       "thumbnail.png"
     )
 
-    // Generate with custom settings
+    console.log("Generating with overlay:", overlayPath, "position:", finalOverlayPosition, "size:", finalOverlaySize)
+
+    // Generate with custom settings including overlay
     await generateThumbnail({
       backgroundImagePath: backgroundPath,
+      overlayImagePath: overlayPath,
+      overlayPosition: finalOverlayPosition,
+      overlaySize: finalOverlaySize,
       title,
       textBox,
       outputPath
