@@ -1,46 +1,35 @@
 import { NextResponse } from "next/server"
-import { cookies } from "next/headers"
 import fs from "fs"
 import path from "path"
 
 const FILE_SERVER_URL = process.env.FILE_SERVER_URL || ""
 const FILE_SERVER_API_KEY = process.env.FILE_SERVER_API_KEY || ""
 
-async function getUser() {
-  const cookieStore = await cookies()
-  return cookieStore.get("user")?.value
-}
-
 export async function POST() {
   try {
-    const username = await getUser()
     const dataDir = path.join(process.cwd(), "data")
-    const userDir = username ? path.join(dataDir, "users", username) : dataDir
 
     const results = {
       organized: false,
-      calendar: false,
       queue: false,
-      counters: false
+      counters: false,
+      deletedFolders: 0
     }
 
-    // 1. Delete organized folder
-    const organizedPath = path.join(userDir, "organized")
+    // 1. Delete organized folder (this is where calendar/scripts/transcripts are stored)
+    // Path: /root/tts/data/organized/
+    const organizedPath = path.join(dataDir, "organized")
     if (fs.existsSync(organizedPath)) {
+      // Count folders before deleting
+      const folders = fs.readdirSync(organizedPath)
+      results.deletedFolders = folders.length
+
       fs.rmSync(organizedPath, { recursive: true, force: true })
       fs.mkdirSync(organizedPath, { recursive: true })
       results.organized = true
     }
 
-    // 2. Delete calendar data
-    const calendarPath = path.join(userDir, "calendar")
-    if (fs.existsSync(calendarPath)) {
-      fs.rmSync(calendarPath, { recursive: true, force: true })
-      fs.mkdirSync(calendarPath, { recursive: true })
-      results.calendar = true
-    }
-
-    // 3. Clear queue via file server
+    // 2. Clear queue via file server
     try {
       const queueRes = await fetch(`${FILE_SERVER_URL}/queue/reset`, {
         method: "POST",
@@ -51,7 +40,7 @@ export async function POST() {
       console.error("Queue reset failed:", e)
     }
 
-    // 4. Reset counters via file server
+    // 3. Reset counters via file server
     try {
       const counterRes = await fetch(`${FILE_SERVER_URL}/counter/reset`, {
         method: "POST",
