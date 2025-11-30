@@ -1,0 +1,69 @@
+SUBTITLE SETTINGS - VAST.AI WORKER FIX
+======================================
+
+PROBLEM:
+- Subtitle settings page mein jo settings save hoti hai wo /root/tts/data/subtitle-settings.json mein hai
+- Unified worker Vast.ai pe run hota hai, waha ye file nahi hai
+- Isliye worker default settings use karta hai, page ki settings nahi
+
+SOLUTION:
+Job queue mein subtitle_settings bhi bhejni padegi worker ko.
+
+FILES TO MODIFY:
+
+1. /root/tts/app/api/queue/audio/route.ts
+   - Add function to load subtitle settings:
+
+   function getSubtitleSettings() {
+     const settingsPath = path.join(DATA_DIR, "subtitle-settings.json")
+     try {
+       if (fs.existsSync(settingsPath)) {
+         return JSON.parse(fs.readFileSync(settingsPath, "utf-8"))
+       }
+     } catch {}
+     return {
+       font: { family: "Arial", size: 48, color: "#FFFFFF" },
+       background: { color: "#000000", opacity: 80, cornerRadius: 20 },
+       box: { hPadding: 25, vPadding: 15, charWidth: 0.6 },
+       position: { alignment: 5, marginV: 40, marginL: 40, marginR: 40 }
+     }
+   }
+
+   - Add to createAudioJob interface:
+     subtitle_settings?: object
+
+   - In POST handler, add to job creation:
+     subtitle_settings: getSubtitleSettings()
+
+
+2. /root/tts/unified_worker.py
+   - Receive subtitle_settings from job
+   - Pass to video_gen.create_video_with_subtitles() or
+   - Create ASS style string from settings before passing
+
+   Example in process_audio_job():
+
+   subtitle_settings = job.get('subtitle_settings', {})
+   if subtitle_settings:
+       # Convert settings to ASS style string
+       font = subtitle_settings.get('font', {})
+       bg = subtitle_settings.get('background', {})
+       pos = subtitle_settings.get('position', {})
+       # Build ass_style string...
+
+
+3. FILE SERVER (if needed)
+   - Make sure file server accepts subtitle_settings in job payload
+   - Store and return it when worker fetches job
+
+
+CURRENT SETTINGS FILE LOCATION:
+/root/tts/data/subtitle-settings.json
+
+CURRENT SETTINGS:
+{
+  "font": { "family": "Calibri", "size": 65, "color": "#FFFFFF" },
+  "background": { "color": "#000000", "opacity": 100, "cornerRadius": 20 },
+  "box": { "hPadding": 15, "vPadding": 12, "charWidth": 0.52 },
+  "position": { "alignment": 5, "marginV": 40, "marginL": 40, "marginR": 40 }
+}

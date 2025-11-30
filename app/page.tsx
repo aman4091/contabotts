@@ -23,7 +23,9 @@ import {
   Loader2,
   Mic,
   Play,
-  AlertTriangle
+  AlertTriangle,
+  Volume2,
+  VolumeX
 } from "lucide-react"
 
 interface SourceChannel {
@@ -84,6 +86,9 @@ function HomeContent() {
   const [fetchingTranscripts, setFetchingTranscripts] = useState(false)
   const [processingAI, setProcessingAI] = useState(false)
   const [addingToQueue, setAddingToQueue] = useState(false)
+
+  // Audio generation toggle (ON = create audio/video job, OFF = only save files)
+  const [audioEnabled, setAudioEnabled] = useState(true)
 
   // Fetch settings
   const [maxVideos, setMaxVideos] = useState(0)
@@ -391,7 +396,8 @@ function HomeContent() {
         transcript: transcriptContent,
         targetChannel: selectedTarget,
         sourceChannel: selectedSource || "YT_URL",
-        transcriptIndex: selectedTranscript?.index || 0
+        transcriptIndex: selectedTranscript?.index || 0,
+        audioEnabled: audioEnabled  // false = only save files, no audio/video job
       }
 
       // If in priority mode, add date, slot and priority
@@ -412,7 +418,8 @@ function HomeContent() {
         toast.error(data.error)
       } else {
         const priorityLabel = priorityMode.enabled ? " (PRIORITY)" : ""
-        toast.success(`Added to queue${priorityLabel}! ${data.channelCode} Video ${data.videoNumber} | Date: ${data.date}`)
+        const audioLabel = audioEnabled ? "" : " (Files Only)"
+        toast.success(`Added${priorityLabel}${audioLabel}! ${data.channelCode} Video ${data.videoNumber} | Date: ${data.date}`)
         setProcessedScript("")
         setTranscriptContent("")
         setYoutubeUrl("")
@@ -815,19 +822,34 @@ function HomeContent() {
               />
             </div>
 
-            {/* Add to queue button */}
-            <Button
-              className="w-full bg-gradient-to-r from-violet-600 to-cyan-500 hover:from-violet-500 hover:to-cyan-400 border-0 text-white font-semibold shadow-lg shadow-violet-500/25 transition-all duration-300"
-              onClick={handleAddToQueue}
-              disabled={!processedScript || !selectedTarget || addingToQueue}
-            >
-              {addingToQueue ? (
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              ) : (
-                <Plus className="w-4 h-4 mr-2" />
-              )}
-              Add to Audio Queue ({selectedTarget || "Select Target"})
-            </Button>
+            {/* Audio toggle + Add to queue button */}
+            <div className="flex gap-2 items-center">
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setAudioEnabled(!audioEnabled)}
+                className={`w-12 h-10 transition-all ${
+                  audioEnabled
+                    ? "border-green-500/50 bg-green-500/10 hover:bg-green-500/20 text-green-400"
+                    : "border-red-500/50 bg-red-500/10 hover:bg-red-500/20 text-red-400"
+                }`}
+                title={audioEnabled ? "Audio ON - will generate audio/video" : "Audio OFF - only save files"}
+              >
+                {audioEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
+              </Button>
+              <Button
+                className="flex-1 bg-gradient-to-r from-violet-600 to-cyan-500 hover:from-violet-500 hover:to-cyan-400 border-0 text-white font-semibold shadow-lg shadow-violet-500/25 transition-all duration-300"
+                onClick={handleAddToQueue}
+                disabled={!processedScript || !selectedTarget || addingToQueue}
+              >
+                {addingToQueue ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Plus className="w-4 h-4 mr-2" />
+                )}
+                {audioEnabled ? "Add to Audio Queue" : "Save Files Only"} ({selectedTarget || "Select Target"})
+              </Button>
+            </div>
           </CardContent>
         </Card>
       </div>

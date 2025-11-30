@@ -105,7 +105,8 @@ export async function POST(request: NextRequest) {
       transcriptIndex,
       date: customDate,
       slot: customSlot,
-      priority: customPriority
+      priority: customPriority,
+      audioEnabled = true  // Default to true for backward compatibility
     } = body
 
     if (!script || !targetChannel) {
@@ -153,6 +154,25 @@ export async function POST(request: NextRequest) {
     // Save to organized folder
     saveToOrganized(date, targetChannel, videoNumber, fullTranscript, script)
 
+    // Move transcript to completed folder
+    if (sourceChannel && transcriptIndex) {
+      completeTranscript(sourceChannel, transcriptIndex, username)
+    }
+
+    // If audio is disabled, skip creating audio job - only save files
+    if (!audioEnabled) {
+      return NextResponse.json({
+        success: true,
+        jobId: null,
+        channelCode: targetChannel,
+        videoNumber: videoNumber,
+        date: date,
+        audioCounter: audioCounter,
+        organizedPath: organizedPath,
+        audioSkipped: true
+      })
+    }
+
     // Priority: 10 for replacement jobs, 5 for manual jobs, 1 for auto-processing
     // Manual dashboard jobs get priority 5 (higher than auto-processing which uses 1)
     const jobPriority = customPriority ? parseInt(customPriority) : (customSlot ? 10 : 5)
@@ -182,11 +202,6 @@ export async function POST(request: NextRequest) {
     if (!result.success) {
       console.error("Job creation error:", result.error)
       return NextResponse.json({ error: "Failed to create job" }, { status: 500 })
-    }
-
-    // Move transcript to completed folder
-    if (sourceChannel && transcriptIndex) {
-      completeTranscript(sourceChannel, transcriptIndex, username)
     }
 
     return NextResponse.json({
