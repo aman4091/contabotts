@@ -21,7 +21,9 @@ import {
   Edit2,
   X,
   Music,
-  Check
+  Check,
+  AlertTriangle,
+  RotateCcw
 } from "lucide-react"
 import { ThumbnailEditor } from "@/components/thumbnail-editor"
 
@@ -137,6 +139,10 @@ export default function SettingsPage() {
   const [newAudioName, setNewAudioName] = useState("")
   const [uploadingAudio, setUploadingAudio] = useState(false)
   const audioInputRef = useRef<HTMLInputElement>(null)
+
+  // Reset system state
+  const [resetting, setResetting] = useState(false)
+  const [showResetConfirm, setShowResetConfirm] = useState(false)
 
   useEffect(() => {
     loadAll()
@@ -582,6 +588,29 @@ export default function SettingsPage() {
     }
   }
 
+  // Full system reset
+  async function handleSystemReset() {
+    setResetting(true)
+    try {
+      const res = await fetch("/api/system/reset", {
+        method: "POST"
+      })
+
+      const data = await res.json()
+      if (res.ok) {
+        toast.success("System reset complete! Everything cleared.")
+        setShowResetConfirm(false)
+        loadAll()
+      } else {
+        toast.error(data.error || "Reset failed")
+      }
+    } catch (error) {
+      toast.error("Reset failed")
+    } finally {
+      setResetting(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
@@ -629,6 +658,7 @@ export default function SettingsPage() {
           <TabsTrigger value="source" className="text-xs sm:text-sm">Source</TabsTrigger>
           <TabsTrigger value="prompts" className="text-xs sm:text-sm">Prompts</TabsTrigger>
           <TabsTrigger value="ai" className="text-xs sm:text-sm">AI</TabsTrigger>
+          <TabsTrigger value="danger" className="text-xs sm:text-sm text-red-400">Reset</TabsTrigger>
         </TabsList>
 
         {/* Target Channels Tab */}
@@ -1210,6 +1240,70 @@ export default function SettingsPage() {
                 {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
                 Save AI Settings
               </Button>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Danger Zone - System Reset */}
+        <TabsContent value="danger" className="space-y-4">
+          <Card className="glass border-red-500/20">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-red-400">
+                <AlertTriangle className="w-5 h-5" />
+                System Reset
+              </CardTitle>
+              <CardDescription>Complete system reset - use with caution</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-lg">
+                <h4 className="font-semibold text-red-400 mb-2">This will permanently delete:</h4>
+                <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
+                  <li>All organized folders (transcripts, scripts)</li>
+                  <li>All queue jobs (pending, processing, completed, failed)</li>
+                  <li>Entire calendar (all scheduled videos for all channels)</li>
+                  <li>Video number counters (will restart from 1)</li>
+                </ul>
+                <p className="text-xs text-red-400 mt-3">This action cannot be undone!</p>
+              </div>
+
+              {showResetConfirm ? (
+                <div className="flex flex-col gap-3 p-4 border border-red-500/50 rounded-lg bg-red-500/5">
+                  <p className="text-sm text-center">Are you sure? Type "RESET" to confirm:</p>
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="Type RESET"
+                      className="flex-1"
+                      onChange={e => {
+                        if (e.target.value === "RESET") {
+                          handleSystemReset()
+                        }
+                      }}
+                    />
+                    <Button
+                      variant="outline"
+                      onClick={() => setShowResetConfirm(false)}
+                      disabled={resetting}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                  {resetting && (
+                    <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Resetting system...
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <Button
+                  variant="destructive"
+                  className="w-full bg-red-600 hover:bg-red-500"
+                  onClick={() => setShowResetConfirm(true)}
+                >
+                  <RotateCcw className="w-4 h-4 mr-2" />
+                  Reset Entire System
+                </Button>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

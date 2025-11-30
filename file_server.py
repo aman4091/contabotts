@@ -901,6 +901,58 @@ async def get_counter(
 
 
 # ============================================================================
+# RESET OPERATIONS
+# ============================================================================
+
+@app.post("/queue/reset")
+async def reset_queue(
+    x_api_key: Optional[str] = Header(None)
+):
+    """
+    Reset all queues - delete all jobs from pending, processing, completed, failed
+    """
+    verify_api_key(x_api_key)
+
+    results = {"audio": {}, "video": {}}
+
+    for queue_type in ["audio", "video"]:
+        paths = get_queue_paths(queue_type)
+        for status, path in paths.items():
+            if path.exists():
+                count = len(list(path.glob("*.json")))
+                shutil.rmtree(path)
+                path.mkdir(parents=True, exist_ok=True)
+                results[queue_type][status] = count
+            else:
+                results[queue_type][status] = 0
+
+    return {"success": True, "deleted": results}
+
+
+@app.post("/counter/reset")
+async def reset_counters(
+    x_api_key: Optional[str] = Header(None)
+):
+    """
+    Reset all counters to 0
+    """
+    verify_api_key(x_api_key)
+
+    counter_file = Path(BASE_PATH) / "counters.json"
+
+    counters = {
+        "audio_counter": 0,
+        "video_counter": 0,
+        "updated_at": datetime.now().isoformat()
+    }
+
+    with open(counter_file, "w") as f:
+        json.dump(counters, f, indent=2)
+
+    return {"success": True, "counters": counters}
+
+
+# ============================================================================
 # WORKER OPERATIONS
 # ============================================================================
 
