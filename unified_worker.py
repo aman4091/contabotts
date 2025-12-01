@@ -112,11 +112,11 @@ except Exception as e:
     print(f"❌ Failed to load models: {e}")
     sys.exit(1)
 
-# Video Settings (Landscape 1920x1080)
-TARGET_W = 1920
-TARGET_H = 1080
-FONT_SIZE = 70
-TEXT_Y_POS = 540  # Dead Center
+# Video Settings (4K ULTRA HD - EXACT from l.py)
+TARGET_W = 3840
+TARGET_H = 2160
+FONT_SIZE = 110      # Bada Font for 4K
+TEXT_Y_POS = 1080    # Dead Center (2160 / 2)
 
 # ============================================================================
 # FILE SERVER QUEUE (Merged Audio + Video)
@@ -313,27 +313,27 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
             final_text = "\\N".join(lines)
 
-            # --- BOX CALCULATION (EXACT FROM l.py, scaled for 1080p) ---
-            char_width = FONT_SIZE * 0.55  # From l.py
+            # --- BOX CALCULATION (EXACT FROM l.py - 4K) ---
+            char_width = FONT_SIZE * 0.55
             longest_line = max(len(l) for l in lines)
             text_w = longest_line * char_width
             text_h = len(lines) * (FONT_SIZE * 1.4)
 
-            # Padding scaled from l.py (4K: 60/40 -> 1080p: 30/20)
-            padding_x = 30
-            padding_y = 20
+            # Padding (EXACT from l.py)
+            padding_x = 60
+            padding_y = 40
 
             box_w = text_w + padding_x
             box_h = text_h + padding_y
 
-            # Center Position
-            cx, cy = 960, TEXT_Y_POS
+            # Center Position (1920, 1080 for 4K)
+            cx, cy = 1920, TEXT_Y_POS
 
             x1 = int(cx - (box_w / 2))
             x2 = int(cx + (box_w / 2))
             y1 = int(cy - (box_h / 2))
             y2 = int(cy + (box_h / 2))
-            r = 30  # Radius scaled from l.py (4K: 60 -> 1080p: 30)
+            r = 60  # Rounded Radius for 4K (EXACT from l.py)
 
             # --- THE ROUNDED CORNER DRAWING COMMAND (RESTORED) ---
             draw = (
@@ -364,34 +364,33 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         return None
 
 def render_video(image_path: str, audio_path: str, ass_path: str, output_path: str) -> bool:
-    """Render video with subtitles using FFmpeg - HIGH QUALITY (from l.py)"""
+    """Render video with subtitles using FFmpeg - 4K ULTRA HD (EXACT from l.py)"""
     try:
-        print("🎬 Rendering Video (High Quality)...")
+        print("🎬 Rendering 4K Video (60 Mbps)...")
         safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
         vf = f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,subtitles='{safe_ass}'"
 
-        # --- HIGH QUALITY SETTINGS FROM l.py (scaled for 1080p) ---
-        # Try GPU first (NVENC) - Same settings as l.py
+        # --- 4K HIGH BITRATE SETTINGS (EXACT from l.py) ---
         cmd_gpu = [
             "ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path,
             "-vf", vf,
             "-c:v", "h264_nvenc",
-            "-preset", "p7",        # Best Quality (from l.py)
-            "-tune", "hq",          # High Quality (from l.py)
-            "-rc", "cbr",           # Constant Bitrate (from l.py)
-            "-b:v", "15M",          # 15 Mbps (scaled from 60M for 4K)
-            "-maxrate", "15M",      # Max bitrate
-            "-bufsize", "30M",      # Buffer (scaled from 120M)
-            "-c:a", "aac", "-b:a", "320k",  # High Quality Audio (from l.py)
+            "-preset", "p7",        # Best Quality
+            "-tune", "hq",          # High Quality
+            "-rc", "cbr",           # Constant Bitrate (Force size)
+            "-b:v", "60M",          # 60 Mbps Target
+            "-maxrate", "60M",      # 60 Mbps Max
+            "-bufsize", "120M",     # Buffer
+            "-c:a", "aac", "-b:a", "320k",  # High Quality Audio
             "-shortest", output_path
         ]
 
-        # CPU fallback - Same quality approach as l.py
+        # CPU fallback (EXACT from l.py)
         cmd_cpu = [
             "ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path,
             "-vf", vf,
-            "-c:v", "libx264", "-preset", "slow", "-crf", "16",  # From l.py
-            "-c:a", "aac", "-b:a", "320k",  # High Quality Audio (from l.py)
+            "-c:v", "libx264", "-preset", "slow", "-crf", "16",
+            "-c:a", "aac", "-b:a", "320k",
             "-shortest", output_path
         ]
 
