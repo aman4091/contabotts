@@ -283,8 +283,8 @@ async def process_job(job: Dict) -> bool:
         print("🎧 STEP 1: Audio Generation")
         print("="*50)
 
-        # Get Script & Ref Audio
-        script = queue.get_script(org_path)
+        # Get Script & Ref Audio (use script_text from job first, fallback to file)
+        script = job.get('script_text') or queue.get_script(org_path)
         if not script: raise Exception("Script fetch failed")
         if not queue.get_reference_audio(ref_audio_file, local_ref_audio): raise Exception(f"Ref audio failed: {ref_audio_file}")
 
