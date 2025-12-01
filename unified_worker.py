@@ -313,15 +313,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
             final_text = "\\N".join(lines)
 
-            # --- BOX CALCULATION (ROUNDED + TIGHT) ---
-            char_width = FONT_SIZE * 0.52
+            # --- BOX CALCULATION (EXACT FROM l.py, scaled for 1080p) ---
+            char_width = FONT_SIZE * 0.55  # From l.py
             longest_line = max(len(l) for l in lines)
             text_w = longest_line * char_width
             text_h = len(lines) * (FONT_SIZE * 1.4)
 
-            # Super Tight Padding
-            padding_x = 25
-            padding_y = 15
+            # Padding scaled from l.py (4K: 60/40 -> 1080p: 30/20)
+            padding_x = 30
+            padding_y = 20
 
             box_w = text_w + padding_x
             box_h = text_h + padding_y
@@ -333,7 +333,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             x2 = int(cx + (box_w / 2))
             y1 = int(cy - (box_h / 2))
             y2 = int(cy + (box_h / 2))
-            r = 40 # Radius for Rounded Corners
+            r = 30  # Radius scaled from l.py (4K: 60 -> 1080p: 30)
 
             # --- THE ROUNDED CORNER DRAWING COMMAND (RESTORED) ---
             draw = (
@@ -364,27 +364,34 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         return None
 
 def render_video(image_path: str, audio_path: str, ass_path: str, output_path: str) -> bool:
-    """Render video with subtitles using FFmpeg"""
+    """Render video with subtitles using FFmpeg - HIGH QUALITY (from l.py)"""
     try:
-        print("🎬 Rendering Video...")
+        print("🎬 Rendering Video (High Quality)...")
         safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
         vf = f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,subtitles='{safe_ass}'"
 
-        # Try GPU first (NVENC)
+        # --- HIGH QUALITY SETTINGS FROM l.py (scaled for 1080p) ---
+        # Try GPU first (NVENC) - Same settings as l.py
         cmd_gpu = [
             "ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path,
             "-vf", vf,
-            "-c:v", "h264_nvenc", "-preset", "p4", "-b:v", "5M",
-            "-c:a", "aac", "-b:a", "192k",
+            "-c:v", "h264_nvenc",
+            "-preset", "p7",        # Best Quality (from l.py)
+            "-tune", "hq",          # High Quality (from l.py)
+            "-rc", "cbr",           # Constant Bitrate (from l.py)
+            "-b:v", "15M",          # 15 Mbps (scaled from 60M for 4K)
+            "-maxrate", "15M",      # Max bitrate
+            "-bufsize", "30M",      # Buffer (scaled from 120M)
+            "-c:a", "aac", "-b:a", "320k",  # High Quality Audio (from l.py)
             "-shortest", output_path
         ]
 
-        # CPU fallback
+        # CPU fallback - Same quality approach as l.py
         cmd_cpu = [
             "ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path,
             "-vf", vf,
-            "-c:v", "libx264", "-preset", "medium", "-crf", "23",
-            "-c:a", "aac", "-b:a", "192k",
+            "-c:v", "libx264", "-preset", "slow", "-crf", "16",  # From l.py
+            "-c:a", "aac", "-b:a", "320k",  # High Quality Audio (from l.py)
             "-shortest", output_path
         ]
 
