@@ -29,9 +29,7 @@ import torch
 import numpy as np
 import soundfile as sf
 from f5_tts.api import F5TTS
-
-# Import Video Generator (Make sure video_generator.py is in same folder)
-from video_generator import VideoGenerator
+import whisper
 
 # ============================================================================
 # CONFIGURATION
@@ -101,16 +99,24 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # Load Models Globally
 print("🔄 Loading Models...")
 f5_model = None
-video_gen = None
+whisper_model = None
 
 try:
     f5_model = F5TTS()
     print("✅ F5-TTS model loaded")
-    video_gen = VideoGenerator()
-    print("✅ VideoGenerator loaded")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"🔄 Loading Whisper on {device.upper()}...")
+    whisper_model = whisper.load_model("base", device=device)
+    print("✅ Whisper model loaded")
 except Exception as e:
     print(f"❌ Failed to load models: {e}")
     sys.exit(1)
+
+# Video Settings (Landscape 1920x1080)
+TARGET_W = 1920
+TARGET_H = 1080
+FONT_SIZE = 70
+TEXT_Y_POS = 540  # Dead Center
 
 # ============================================================================
 # FILE SERVER QUEUE (Merged Audio + Video)
@@ -234,7 +240,7 @@ def generate_audio_f5tts(script_text: str, ref_audio: str, out_path: str, chunk_
     try:
         print(f"🎙️ Generating Audio (Len: {len(script_text)})...")
         if f5_model is None: return False
-        
+
         chunks = []
         curr = ""
         for s in script_text.replace("।", ".").split("."):
@@ -251,12 +257,152 @@ def generate_audio_f5tts(script_text: str, ref_audio: str, out_path: str, chunk_
                 res = f5_model.infer(ref_file=ref_audio, ref_text="", gen_text=chk, remove_silence=True, speed=1.0)
             audio_data = res[0] if isinstance(res, tuple) else res
             all_audio.append(audio_data)
-        
+
         if not all_audio: return False
         sf.write(out_path, np.concatenate(all_audio), rate)
         return os.path.exists(out_path)
     except Exception as e:
         print(f"❌ TTS Error: {e}")
+        traceback.print_exc()
+        return False
+
+def format_ass_time(seconds):
+    """Convert seconds to ASS time format"""
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    cs = int((seconds % 1) * 100)
+    return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
+
+def generate_subtitles(audio_path: str) -> Optional[str]:
+    """Generate ASS subtitles using Whisper - Landscape style with rounded box"""
+    try:
+        print(f"📝 Transcribing audio...")
+        if whisper_model is None: return None
+
+        result = whisper_model.transcribe(audio_path, word_timestamps=False)
+        ass_path = os.path.splitext(audio_path)[0] + ".ass"
+
+        header = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: {TARGET_W}
+PlayResY: {TARGET_H}
+
+[V4+ Styles]
+Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
+Style: Default,Arial,{FONT_SIZE},&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,1,0,2,20,20,50,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+        events = []
+
+        for segment in result['segments']:
+            start = format_ass_time(segment['start'])
+            end = format_ass_time(segment['end'])
+            text = segment['text'].strip()
+
+            # Split into lines (max 35 chars per line)
+            max_chars = 35
+            words = text.split()
+            lines = []
+            curr = []
+            for w in words:
+                if len(" ".join(curr + [w])) <= max_chars:
+                    curr.append(w)
+                else:
+                    lines.append(" ".join(curr))
+                    curr = [w]
+            lines.append(" ".join(curr))
+
+            final_text = "\\N".join(lines)
+
+            # Box calculation (rounded corners)
+            char_width = FONT_SIZE * 0.5
+            longest_line = max(len(l) for l in lines) if lines else 1
+            text_w = longest_line * char_width
+            text_h = len(lines) * (FONT_SIZE * 1.4)
+
+            padding_x = 15
+            padding_y = 15
+            box_w = text_w + padding_x
+            box_h = text_h + padding_y
+
+            # Center position
+            cx, cy = 960, TEXT_Y_POS
+            x1 = int(cx - (box_w / 2))
+            x2 = int(cx + (box_w / 2))
+            y1 = int(cy - (box_h / 2))
+            y2 = int(cy + (box_h / 2))
+            r = 40  # Radius for rounded corners
+
+            # Rounded corner drawing command
+            draw = (
+                f"m {x1+r} {y1} "
+                f"l {x2-r} {y1} "
+                f"b {x2} {y1} {x2} {y1} {x2} {y1+r} "
+                f"l {x2} {y2-r} "
+                f"b {x2} {y2} {x2} {y2} {x2-r} {y2} "
+                f"l {x1+r} {y2} "
+                f"b {x1} {y2} {x1} {y2} {x1} {y2-r} "
+                f"l {x1} {y1+r} "
+                f"b {x1} {y1} {x1} {y1} {x1+r} {y1}"
+            )
+
+            # Layer 0: Box (black background)
+            events.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{{\\p1\\an7\\pos(0,0)\\1c&H000000&\\1a&H00&\\bord0\\shad0}}{draw}{{\\p0}}")
+            # Layer 1: Text
+            events.append(f"Dialogue: 1,{start},{end},Default,,0,0,0,,{{\\pos({cx},{cy})\\an5}}{final_text}")
+
+        with open(ass_path, "w", encoding="utf-8") as f:
+            f.write(header + "\n".join(events))
+
+        print(f"✅ Subtitles generated: {len(result['segments'])} segments")
+        return ass_path
+    except Exception as e:
+        print(f"❌ Subtitle Error: {e}")
+        traceback.print_exc()
+        return None
+
+def render_video(image_path: str, audio_path: str, ass_path: str, output_path: str) -> bool:
+    """Render video with subtitles using FFmpeg"""
+    try:
+        print("🎬 Rendering Video...")
+        safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
+        vf = f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,subtitles='{safe_ass}'"
+
+        # Try GPU first (NVENC)
+        cmd_gpu = [
+            "ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path,
+            "-vf", vf,
+            "-c:v", "h264_nvenc", "-preset", "p4", "-b:v", "5M",
+            "-c:a", "aac", "-b:a", "192k",
+            "-shortest", output_path
+        ]
+
+        # CPU fallback
+        cmd_cpu = [
+            "ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path,
+            "-vf", vf,
+            "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+            "-c:a", "aac", "-b:a", "192k",
+            "-shortest", output_path
+        ]
+
+        print("   Attempting NVENC (GPU)...")
+        try:
+            subprocess.run(cmd_gpu, check=True, capture_output=True)
+            return os.path.exists(output_path)
+        except:
+            print("⚠️ GPU Failed. Switching to CPU...")
+            try:
+                subprocess.run(cmd_cpu, check=True, capture_output=True)
+                return os.path.exists(output_path)
+            except Exception as e:
+                print(f"❌ FFmpeg Failed: {e}")
+                return False
+    except Exception as e:
+        print(f"❌ Render Error: {e}")
         traceback.print_exc()
         return False
 
@@ -327,17 +473,19 @@ async def process_job(job: Dict) -> bool:
         local_image = queue.get_random_image(image_folder)
         if not local_image: raise Exception("Image fetch failed")
 
-        # Generate Video (using local audio directly - no download needed!)
+        # Generate Subtitles using Whisper (Landscape style)
         print("🎥 Generating Video with subtitles...")
-        async def prog(msg): print(f"   {msg}")
+        ass_path = generate_subtitles(local_audio_out)
+        if not ass_path: raise Exception("Subtitle generation failed")
 
-        final_vid = await asyncio.to_thread(
-            video_gen.create_video_with_subtitles,
-            local_image, local_audio_out, local_video_out,  # Using local audio!
-            job.get('subtitle_style'), prog, asyncio.get_event_loop()
-        )
+        # Render Video with FFmpeg
+        if not render_video(local_image, local_audio_out, ass_path, local_video_out):
+            raise Exception("Video render failed")
 
-        if not final_vid: raise Exception("Video generation failed")
+        final_vid = local_video_out
+
+        # Cleanup ASS file
+        if os.path.exists(ass_path): os.remove(ass_path)
 
         # Upload Video to Gofile
         print("📤 Uploading video to Gofile...")
