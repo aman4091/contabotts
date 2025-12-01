@@ -314,13 +314,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             final_text = "\\N".join(lines)
 
             # --- BOX CALCULATION (ROUNDED + TIGHT) ---
-            char_width = FONT_SIZE * 0.5
+            char_width = FONT_SIZE * 0.52
             longest_line = max(len(l) for l in lines)
             text_w = longest_line * char_width
             text_h = len(lines) * (FONT_SIZE * 1.4)
 
             # Super Tight Padding
-            padding_x = 15
+            padding_x = 20
             padding_y = 15
 
             box_w = text_w + padding_x
