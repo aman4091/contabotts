@@ -275,7 +275,7 @@ def format_ass_time(seconds):
     return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
 def generate_subtitles(audio_path: str) -> Optional[str]:
-    """Generate ASS subtitles using Whisper - Landscape style with rounded box"""
+    """Generate ASS subtitles using Whisper - Landscape style with rounded box (EXACT COPY from landscape_worker.py)"""
     try:
         print(f"📝 Transcribing audio...")
         if whisper_model is None: return None
@@ -302,54 +302,53 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             end = format_ass_time(segment['end'])
             text = segment['text'].strip()
 
-            # Split into lines (max 35 chars per line)
+            # --- LANDSCAPE LOGIC ---
             max_chars = 35
             words = text.split()
-            lines = []
-            curr = []
+            lines = []; curr = []
             for w in words:
-                if len(" ".join(curr + [w])) <= max_chars:
-                    curr.append(w)
-                else:
-                    lines.append(" ".join(curr))
-                    curr = [w]
+                if len(" ".join(curr + [w])) <= max_chars: curr.append(w)
+                else: lines.append(" ".join(curr)); curr = [w]
             lines.append(" ".join(curr))
 
             final_text = "\\N".join(lines)
 
-            # Box calculation (rounded corners)
+            # --- BOX CALCULATION (ROUNDED + TIGHT) ---
             char_width = FONT_SIZE * 0.5
-            longest_line = max(len(l) for l in lines) if lines else 1
+            longest_line = max(len(l) for l in lines)
             text_w = longest_line * char_width
             text_h = len(lines) * (FONT_SIZE * 1.4)
 
+            # Super Tight Padding
             padding_x = 15
             padding_y = 15
+
             box_w = text_w + padding_x
             box_h = text_h + padding_y
 
-            # Center position
+            # Center Position
             cx, cy = 960, TEXT_Y_POS
+
             x1 = int(cx - (box_w / 2))
             x2 = int(cx + (box_w / 2))
             y1 = int(cy - (box_h / 2))
             y2 = int(cy + (box_h / 2))
-            r = 40  # Radius for rounded corners
+            r = 40 # Radius for Rounded Corners
 
-            # Rounded corner drawing command
+            # --- THE ROUNDED CORNER DRAWING COMMAND (RESTORED) ---
             draw = (
-                f"m {x1+r} {y1} "
-                f"l {x2-r} {y1} "
-                f"b {x2} {y1} {x2} {y1} {x2} {y1+r} "
-                f"l {x2} {y2-r} "
-                f"b {x2} {y2} {x2} {y2} {x2-r} {y2} "
-                f"l {x1+r} {y2} "
-                f"b {x1} {y2} {x1} {y2} {x1} {y2-r} "
-                f"l {x1} {y1+r} "
-                f"b {x1} {y1} {x1} {y1} {x1+r} {y1}"
+                f"m {x1+r} {y1} "          # Move to top-left (after curve)
+                f"l {x2-r} {y1} "          # Line to top-right
+                f"b {x2} {y1} {x2} {y1} {x2} {y1+r} " # Curve Top-Right
+                f"l {x2} {y2-r} "          # Line down
+                f"b {x2} {y2} {x2} {y2} {x2-r} {y2} " # Curve Bottom-Right
+                f"l {x1+r} {y2} "          # Line left
+                f"b {x1} {y2} {x1} {y2} {x1} {y2-r} " # Curve Bottom-Left
+                f"l {x1} {y1+r} "          # Line up
+                f"b {x1} {y1} {x1} {y1} {x1+r} {y1}"  # Curve Top-Left (Close)
             )
 
-            # Layer 0: Box (black background)
+            # Layer 0: Box
             events.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{{\\p1\\an7\\pos(0,0)\\1c&H000000&\\1a&H00&\\bord0\\shad0}}{draw}{{\\p0}}")
             # Layer 1: Text
             events.append(f"Dialogue: 1,{start},{end},Default,,0,0,0,,{{\\pos({cx},{cy})\\an5}}{final_text}")
