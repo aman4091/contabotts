@@ -320,7 +320,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             text_h = len(lines) * (FONT_SIZE * 1.4)
 
             # Super Tight Padding
-            padding_x = 20
+            padding_x = 25
             padding_y = 15
 
             box_w = text_w + padding_x
