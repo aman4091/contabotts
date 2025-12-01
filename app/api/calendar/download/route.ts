@@ -1,11 +1,22 @@
 import { NextRequest, NextResponse } from "next/server"
+import { cookies } from "next/headers"
 import fs from "fs"
 import path from "path"
 
 const DATA_DIR = process.env.DATA_DIR || "/root/tts/data"
 
+async function getUser() {
+  const cookieStore = await cookies()
+  return cookieStore.get("user")?.value || "default"
+}
+
+function getUserOrganizedDir(username: string) {
+  return path.join(DATA_DIR, "users", username, "organized")
+}
+
 export async function GET(request: NextRequest) {
   try {
+    const username = await getUser()
     const { searchParams } = new URL(request.url)
     const videoId = searchParams.get("videoId")
     const file = searchParams.get("file") // transcript, script, thumbnail
@@ -26,7 +37,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Invalid file type" }, { status: 400 })
     }
 
-    const filePath = path.join(DATA_DIR, "organized", videoId, filename)
+    const filePath = path.join(getUserOrganizedDir(username), videoId, filename)
 
     if (!fs.existsSync(filePath)) {
       return NextResponse.json({ error: "File not found" }, { status: 404 })

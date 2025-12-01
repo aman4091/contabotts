@@ -113,8 +113,8 @@ export async function POST(request: NextRequest) {
       textBox
     } = body
 
-    if (!channelCode || !name) {
-      return NextResponse.json({ error: "Channel code and name required" }, { status: 400 })
+    if (!name) {
+      return NextResponse.json({ error: "Template name required" }, { status: 400 })
     }
 
     const templates = loadTemplates(username)
@@ -146,7 +146,7 @@ export async function POST(request: NextRequest) {
 
     const newTemplate: ThumbnailTemplate = {
       id: `template_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      channelCode,
+      channelCode: channelCode || "",
       name,
       backgroundImageFolder: backgroundImageFolder || "nature",
       overlayImage: overlayImage || "",

@@ -1,12 +1,23 @@
 import { NextResponse } from "next/server"
+import { cookies } from "next/headers"
 import fs from "fs"
 import path from "path"
 
 const DATA_DIR = process.env.DATA_DIR || "/root/tts/data"
 
+async function getUser() {
+  const cookieStore = await cookies()
+  return cookieStore.get("user")?.value || "default"
+}
+
+function getUserOrganizedDir(username: string) {
+  return path.join(DATA_DIR, "users", username, "organized")
+}
+
 export async function GET() {
   try {
-    const organizedDir = path.join(DATA_DIR, "organized")
+    const username = await getUser()
+    const organizedDir = getUserOrganizedDir(username)
 
     if (!fs.existsSync(organizedDir)) {
       return NextResponse.json({ slots: [] })

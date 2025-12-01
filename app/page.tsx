@@ -4,6 +4,7 @@ import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "sonner"
 import { Loader2, RefreshCw, Settings, Youtube, Search, X } from "lucide-react"
 import { VideoPopup } from "@/components/video-popup"
@@ -16,6 +17,13 @@ interface Video {
   thumbnail: string
   duration: number
   viewCount: number
+}
+
+interface ChannelVideoStatus {
+  channelCode: string
+  channelName: string
+  totalVideos: number
+  fetchedAt: string
 }
 
 interface AudioFile {
@@ -52,6 +60,10 @@ export default function HomePage() {
   const [remaining, setRemaining] = useState(0)
   const [channelName, setChannelName] = useState<string | null>(null)
 
+  // Channels
+  const [channelsWithVideos, setChannelsWithVideos] = useState<ChannelVideoStatus[]>([])
+  const [selectedChannel, setSelectedChannel] = useState<string>("")
+
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null)
   const [audioFiles, setAudioFiles] = useState<AudioFile[]>([])
   const [defaultReferenceAudio, setDefaultReferenceAudio] = useState("")
@@ -65,12 +77,45 @@ export default function HomePage() {
   const [urlVideoId, setUrlVideoId] = useState("")
 
   useEffect(() => {
-    loadVideos(1)
-    loadAudioFiles()
-    loadSettings()
+    loadInitialData()
   }, [])
 
+  // Load videos when channel changes
+  useEffect(() => {
+    if (selectedChannel) {
+      loadVideos(1)
+    }
+  }, [selectedChannel])
+
+  async function loadInitialData() {
+    setLoading(true)
+    try {
+      // Load channels that have videos fetched
+      const videoFetchRes = await fetch("/api/videos/fetch")
+      const videoFetchData = await videoFetchRes.json()
+
+      const channelsWithVids = videoFetchData.channels || []
+      setChannelsWithVideos(channelsWithVids)
+
+      // Select first channel that has videos
+      if (channelsWithVids.length > 0) {
+        setSelectedChannel(channelsWithVids[0].channelCode)
+      } else {
+        setLoading(false)
+      }
+
+      // Load audio files and settings
+      loadAudioFiles()
+      loadSettings()
+    } catch (error) {
+      console.error("Error loading initial data:", error)
+      setLoading(false)
+    }
+  }
+
   async function loadVideos(pageNum: number, append: boolean = false) {
+    if (!selectedChannel) return
+
     if (pageNum === 1) {
       setLoading(true)
     } else {
@@ -78,7 +123,7 @@ export default function HomePage() {
     }
 
     try {
-      const res = await fetch(`/api/videos?page=${pageNum}&limit=100`)
+      const res = await fetch(`/api/videos?page=${pageNum}&limit=100&channel=${selectedChannel}`)
       const data = await res.json()
 
       if (data.videos) {
@@ -138,7 +183,7 @@ export default function HomePage() {
       await fetch("/api/videos/skip", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoId })
+        body: JSON.stringify({ videoId, channelCode: selectedChannel })
       })
       // Remove from list
       setVideos(prev => prev.filter(v => v.videoId !== videoId))
@@ -155,7 +200,7 @@ export default function HomePage() {
       await fetch("/api/videos", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoId, action: "complete" })
+        body: JSON.stringify({ videoId, action: "complete", channelCode: selectedChannel })
       })
       // Remove from list
       setVideos(prev => prev.filter(v => v.videoId !== videoId))
@@ -337,14 +382,31 @@ export default function HomePage() {
 
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <Youtube className="w-6 h-6 text-red-500" />
-            <h1 className="text-xl sm:text-2xl md:text-3xl font-bold">{channelName || "Videos"}</h1>
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <Youtube className="w-6 h-6 text-red-500" />
+              <h1 className="text-xl sm:text-2xl md:text-3xl font-bold">{channelName || "Videos"}</h1>
+            </div>
+            <p className="text-muted-foreground text-sm mt-1">
+              {total} videos available
+            </p>
           </div>
-          <p className="text-muted-foreground text-sm mt-1">
-            {total} videos available
-          </p>
+          {/* Channel Dropdown */}
+          {channelsWithVideos.length > 0 && (
+            <Select value={selectedChannel} onValueChange={setSelectedChannel}>
+              <SelectTrigger className="w-[200px] border-red-500/30">
+                <SelectValue placeholder="Select channel" />
+              </SelectTrigger>
+              <SelectContent>
+                {channelsWithVideos.map(ch => (
+                  <SelectItem key={ch.channelCode} value={ch.channelCode}>
+                    {ch.channelName} ({ch.totalVideos})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
         </div>
         <Button
           variant="outline"

@@ -1,17 +1,26 @@
 import { NextRequest, NextResponse } from "next/server"
+import { cookies } from "next/headers"
 import fs from "fs"
 import path from "path"
 
 const DATA_DIR = process.env.DATA_DIR || "/root/tts/data"
-const VIDEOS_DIR = path.join(DATA_DIR, "videos")
+
+async function getUser() {
+  const cookieStore = await cookies()
+  return cookieStore.get("user")?.value || "default"
+}
+
+function getUserVideosDir(username: string) {
+  return path.join(DATA_DIR, "users", username, "videos")
+}
 
 interface ProcessedVideos {
   skipped: string[]
   completed: string[]
 }
 
-function getProcessedVideos(): ProcessedVideos {
-  const processedPath = path.join(VIDEOS_DIR, "processed.json")
+function getProcessedVideos(videosDir: string, channelCode: string): ProcessedVideos {
+  const processedPath = path.join(videosDir, channelCode, "processed.json")
   if (!fs.existsSync(processedPath)) {
     return { skipped: [], completed: [] }
   }
@@ -25,23 +34,31 @@ function getProcessedVideos(): ProcessedVideos {
 // POST - Skip a video
 export async function POST(request: NextRequest) {
   try {
+    const username = await getUser()
+    const videosDir = getUserVideosDir(username)
+
     const body = await request.json()
-    const { videoId } = body
+    const { videoId, channelCode } = body
 
     if (!videoId) {
       return NextResponse.json({ error: "videoId required" }, { status: 400 })
     }
 
-    const processedPath = path.join(VIDEOS_DIR, "processed.json")
-    const processed = getProcessedVideos()
+    if (!channelCode) {
+      return NextResponse.json({ error: "channelCode required" }, { status: 400 })
+    }
+
+    const processedDir = path.join(videosDir, channelCode)
+    const processedPath = path.join(processedDir, "processed.json")
+    const processed = getProcessedVideos(videosDir, channelCode)
 
     if (!processed.skipped.includes(videoId)) {
       processed.skipped.push(videoId)
     }
 
     // Ensure directory exists
-    if (!fs.existsSync(VIDEOS_DIR)) {
-      fs.mkdirSync(VIDEOS_DIR, { recursive: true })
+    if (!fs.existsSync(processedDir)) {
+      fs.mkdirSync(processedDir, { recursive: true })
     }
 
     fs.writeFileSync(processedPath, JSON.stringify(processed, null, 2))
@@ -61,15 +78,24 @@ export async function POST(request: NextRequest) {
 // DELETE - Unskip a video (restore it)
 export async function DELETE(request: NextRequest) {
   try {
+    const username = await getUser()
+    const videosDir = getUserVideosDir(username)
+
     const { searchParams } = new URL(request.url)
     const videoId = searchParams.get("videoId")
+    const channelCode = searchParams.get("channel")
 
     if (!videoId) {
       return NextResponse.json({ error: "videoId required" }, { status: 400 })
     }
 
-    const processedPath = path.join(VIDEOS_DIR, "processed.json")
-    const processed = getProcessedVideos()
+    if (!channelCode) {
+      return NextResponse.json({ error: "channelCode required" }, { status: 400 })
+    }
+
+    const processedDir = path.join(videosDir, channelCode)
+    const processedPath = path.join(processedDir, "processed.json")
+    const processed = getProcessedVideos(videosDir, channelCode)
 
     // Remove from both skipped and completed
     processed.skipped = processed.skipped.filter(id => id !== videoId)

@@ -91,9 +91,19 @@ async function getQueueStats(): Promise<{ pending: number; processing: number; c
   }
 }
 
-// Get next sequential video number from counter file
-function getNextSequentialVideoNumber(): number {
-  const counterPath = path.join(DATA_DIR, "video_counter.json")
+// Get user-specific data directory
+function getUserDataDir(username?: string): string {
+  return path.join(DATA_DIR, "users", username || "default")
+}
+
+// Get next sequential video number from counter file (user-specific)
+function getNextSequentialVideoNumber(username?: string): number {
+  const userDir = getUserDataDir(username)
+  if (!fs.existsSync(userDir)) {
+    fs.mkdirSync(userDir, { recursive: true })
+  }
+
+  const counterPath = path.join(userDir, "video_counter.json")
   let counter = { next: 1 }
 
   if (fs.existsSync(counterPath)) {
@@ -111,9 +121,9 @@ function getNextSequentialVideoNumber(): number {
   return nextNum
 }
 
-// Save files to simplified organized folder structure
-function saveToSimplifiedOrganized(videoNumber: number, transcript: string, script: string): string {
-  const organizedDir = path.join(DATA_DIR, "organized")
+// Save files to simplified organized folder structure (user-specific)
+function saveToSimplifiedOrganized(username: string | undefined, videoNumber: number, transcript: string, script: string): string {
+  const organizedDir = path.join(getUserDataDir(username), "organized")
   const folderName = `video_${videoNumber}`
   const folderPath = path.join(organizedDir, folderName)
 
@@ -154,12 +164,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No reference audio specified. Set default voice in Settings." }, { status: 400 })
     }
 
-    // Get next sequential video number
-    const videoNumber = getNextSequentialVideoNumber()
+    // Get next sequential video number (user-specific)
+    const videoNumber = getNextSequentialVideoNumber(username)
     const folderName = `video_${videoNumber}`
 
-    // Save files
-    saveToSimplifiedOrganized(videoNumber, transcript || "", script)
+    // Save files (user-specific)
+    saveToSimplifiedOrganized(username, videoNumber, transcript || "", script)
 
     // Get audio counter
     const audioCounter = await getNextAudioCounter()

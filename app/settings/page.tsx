@@ -29,17 +29,6 @@ import {
 } from "lucide-react"
 import { ThumbnailEditor } from "@/components/thumbnail-editor"
 
-interface SourceChannel {
-  channel_code: string
-  channel_name: string
-  youtube_channel_url: string
-  min_duration_seconds: number
-  max_duration_seconds: number
-  max_videos: number
-  is_active: boolean
-}
-
-
 interface Settings {
   prompts: {
     youtube: string
@@ -90,7 +79,6 @@ interface ThumbnailTemplate {
 }
 
 export default function SettingsPage() {
-  const [sourceChannels, setSourceChannels] = useState<SourceChannel[]>([])
   const [settings, setSettings] = useState<Settings | null>(null)
   const [imageFolders, setImageFolders] = useState<ImageFolder[]>([])
   const [audioFiles, setAudioFiles] = useState<AudioFile[]>([])
@@ -105,13 +93,6 @@ export default function SettingsPage() {
   const [generatingPreview, setGeneratingPreview] = useState(false)
   const [savingTemplate, setSavingTemplate] = useState(false)
   const overlayInputRef = useRef<HTMLInputElement>(null)
-
-  // New channel forms
-  const [newSource, setNewSource] = useState({
-    channel_code: "",
-    channel_name: "",
-    youtube_channel_url: ""
-  })
 
   // Image folder states
   const [newFolderName, setNewFolderName] = useState("")
@@ -130,15 +111,21 @@ export default function SettingsPage() {
   const [showResetConfirm, setShowResetConfirm] = useState(false)
 
   // Video grid settings
-  const [sourceChannelUrl, setSourceChannelUrl] = useState("")
   const [defaultReferenceAudio, setDefaultReferenceAudio] = useState("")
-  const [fetchingVideos, setFetchingVideos] = useState(false)
-  const [videoFetchStatus, setVideoFetchStatus] = useState<{
-    hasFetched: boolean
-    channelName?: string
-    totalVideos?: number
-    fetchedAt?: string
-  } | null>(null)
+  const [channelVideoStatus, setChannelVideoStatus] = useState<{
+    [channelCode: string]: {
+      channelName: string
+      channelUrl: string
+      totalVideos: number
+      fetchedAt: string
+    }
+  }>({})
+
+  // Channel management
+  const [newChannelCode, setNewChannelCode] = useState("")
+  const [newChannelUrl, setNewChannelUrl] = useState("")
+  const [fetchingChannel, setFetchingChannel] = useState<string | null>(null)
+  const [deletingChannel, setDeletingChannel] = useState<string | null>(null)
 
   useEffect(() => {
     loadAll()
@@ -147,8 +134,7 @@ export default function SettingsPage() {
   async function loadAll() {
     setLoading(true)
     try {
-      const [sourceRes, settingsRes, foldersRes, audioRes, templatesRes, overlaysRes, videoFetchRes] = await Promise.all([
-        fetch("/api/source-channels"),
+      const [settingsRes, foldersRes, audioRes, templatesRes, overlaysRes, videoFetchRes] = await Promise.all([
         fetch("/api/settings"),
         fetch("/api/images/folders"),
         fetch("/api/reference-audio"),
@@ -157,7 +143,6 @@ export default function SettingsPage() {
         fetch("/api/videos/fetch")
       ])
 
-      const sourceData = await sourceRes.json()
       const settingsData = await settingsRes.json()
       const foldersData = await foldersRes.json()
       const audioData = await audioRes.json()
@@ -165,16 +150,27 @@ export default function SettingsPage() {
       const overlaysData = await overlaysRes.json()
       const videoFetchData = await videoFetchRes.json()
 
-      setSourceChannels(sourceData.channels || [])
       setSettings(settingsData)
       setImageFolders(foldersData.folders || [])
       setAudioFiles(audioData.files || [])
       setTemplates(templatesData.templates || [])
       setOverlayImages(overlaysData.overlays || [])
-      setVideoFetchStatus(videoFetchData)
 
-      // Load source channel URL and default audio from settings
-      setSourceChannelUrl(settingsData.sourceChannelUrl || "")
+      // Build channel video status map
+      const statusMap: { [key: string]: { channelName: string; channelUrl: string; totalVideos: number; fetchedAt: string } } = {}
+      if (videoFetchData.channels) {
+        for (const ch of videoFetchData.channels) {
+          statusMap[ch.channelCode] = {
+            channelName: ch.channelName,
+            channelUrl: ch.channelUrl || "",
+            totalVideos: ch.totalVideos,
+            fetchedAt: ch.fetchedAt
+          }
+        }
+      }
+      setChannelVideoStatus(statusMap)
+
+      // Set default audio from settings
       setDefaultReferenceAudio(settingsData.defaultReferenceAudio || "")
     } catch (error) {
       console.error("Error loading settings:", error)
@@ -203,55 +199,6 @@ export default function SettingsPage() {
       toast.error("Failed to save settings")
     } finally {
       setSaving(false)
-    }
-  }
-
-  async function addSourceChannel() {
-    if (!newSource.channel_code || !newSource.channel_name || !newSource.youtube_channel_url) {
-      toast.error("All fields required")
-      return
-    }
-
-    try {
-      const res = await fetch("/api/source-channels", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...newSource,
-          min_duration_seconds: 600,
-          max_duration_seconds: 7200,
-          max_videos: 1000,
-          is_active: true
-        })
-      })
-
-      if (res.ok) {
-        toast.success("Source channel added")
-        setNewSource({ channel_code: "", channel_name: "", youtube_channel_url: "" })
-        loadAll()
-      } else {
-        const data = await res.json()
-        toast.error(data.error || "Failed to add channel")
-      }
-    } catch (error) {
-      toast.error("Failed to add channel")
-    }
-  }
-
-  async function deleteSourceChannel(code: string) {
-    try {
-      const res = await fetch(`/api/source-channels?code=${code}`, {
-        method: "DELETE"
-      })
-
-      if (res.ok) {
-        toast.success("Channel deleted")
-        loadAll()
-      } else {
-        toast.error("Failed to delete channel")
-      }
-    } catch (error) {
-      toast.error("Failed to delete channel")
     }
   }
 
@@ -546,7 +493,6 @@ export default function SettingsPage() {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sourceChannelUrl,
           defaultReferenceAudio
         })
       })
@@ -563,22 +509,29 @@ export default function SettingsPage() {
     }
   }
 
-  async function fetchVideosFromChannel() {
-    if (!sourceChannelUrl) {
-      toast.error("Please enter a channel URL")
+  // Channel management functions
+  async function addAndFetchChannel() {
+    if (!newChannelCode.trim()) {
+      toast.error("Channel code required")
+      return
+    }
+    if (!newChannelUrl.trim()) {
+      toast.error("YouTube URL required")
       return
     }
 
-    setFetchingVideos(true)
-    toast.info("Fetching videos... This may take a minute.")
+    const channelCode = newChannelCode.trim().toLowerCase().replace(/[^a-z0-9-_]/g, "-")
+    setFetchingChannel(channelCode)
+    toast.info(`Fetching videos from channel...`)
 
     try {
       const res = await fetch("/api/videos/fetch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          channelUrl: sourceChannelUrl,
-          minDuration: 1800, // 30 minutes
+          channelUrl: newChannelUrl.trim(),
+          channelCode,
+          minDuration: 1800,
           maxResults: 1000
         })
       })
@@ -586,19 +539,74 @@ export default function SettingsPage() {
       const data = await res.json()
       if (res.ok) {
         toast.success(`Fetched ${data.totalFetched} videos from ${data.channelName}`)
-        // Reload status
-        const statusRes = await fetch("/api/videos/fetch")
-        const statusData = await statusRes.json()
-        setVideoFetchStatus(statusData)
-        // Save the channel URL
-        await saveVideoGridSettings()
+        setNewChannelCode("")
+        setNewChannelUrl("")
+        loadAll()
       } else {
         toast.error(data.error || "Failed to fetch videos")
       }
     } catch (error) {
       toast.error("Failed to fetch videos")
     } finally {
-      setFetchingVideos(false)
+      setFetchingChannel(null)
+    }
+  }
+
+  async function refetchChannel(channelCode: string, channelUrl?: string) {
+    if (!channelUrl) {
+      toast.error("Channel URL not available for refetch")
+      return
+    }
+
+    setFetchingChannel(channelCode)
+    toast.info(`Refetching videos...`)
+
+    try {
+      const res = await fetch("/api/videos/fetch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          channelUrl,
+          channelCode,
+          minDuration: 1800,
+          maxResults: 1000
+        })
+      })
+
+      const data = await res.json()
+      if (res.ok) {
+        toast.success(`Fetched ${data.totalFetched} videos`)
+        loadAll()
+      } else {
+        toast.error(data.error || "Failed to fetch videos")
+      }
+    } catch (error) {
+      toast.error("Failed to fetch videos")
+    } finally {
+      setFetchingChannel(null)
+    }
+  }
+
+  async function deleteChannel(channelCode: string) {
+    if (!confirm(`Delete channel "${channelCode}" and all its video data?`)) return
+
+    setDeletingChannel(channelCode)
+    try {
+      const res = await fetch(`/api/videos/fetch?channel=${channelCode}`, {
+        method: "DELETE"
+      })
+
+      if (res.ok) {
+        toast.success("Channel deleted")
+        loadAll()
+      } else {
+        const data = await res.json()
+        toast.error(data.error || "Failed to delete channel")
+      }
+    } catch (error) {
+      toast.error("Failed to delete channel")
+    } finally {
+      setDeletingChannel(null)
     }
   }
 
@@ -646,7 +654,6 @@ export default function SettingsPage() {
           <TabsTrigger value="videos" className="text-xs sm:text-sm">Video Grid</TabsTrigger>
           <TabsTrigger value="images" className="text-xs sm:text-sm">Images</TabsTrigger>
           <TabsTrigger value="thumbnails" className="text-xs sm:text-sm">Thumbnails</TabsTrigger>
-          <TabsTrigger value="source" className="text-xs sm:text-sm">Source</TabsTrigger>
           <TabsTrigger value="prompts" className="text-xs sm:text-sm">Prompts</TabsTrigger>
           <TabsTrigger value="ai" className="text-xs sm:text-sm">AI</TabsTrigger>
           <TabsTrigger value="danger" className="text-xs sm:text-sm text-red-400">Reset</TabsTrigger>
@@ -658,52 +665,98 @@ export default function SettingsPage() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-red-500" />
-                YouTube Source Channel
+                YouTube Channels
               </CardTitle>
-              <CardDescription>Configure source channel for video grid on homepage</CardDescription>
+              <CardDescription>Add YouTube channels and fetch their videos for homepage grid</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* Current status */}
-              {videoFetchStatus?.hasFetched && (
-                <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-lg">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Youtube className="w-5 h-5 text-red-500" />
-                    <span className="font-medium text-emerald-400">{videoFetchStatus.channelName}</span>
-                  </div>
-                  <div className="text-sm text-muted-foreground">
-                    <p>{videoFetchStatus.totalVideos} videos saved</p>
-                    <p className="text-xs">Last fetched: {new Date(videoFetchStatus.fetchedAt || "").toLocaleString()}</p>
-                  </div>
+              {/* Add New Channel */}
+              <div className="p-4 border border-dashed border-border rounded-lg space-y-3">
+                <Label className="text-sm font-medium">Add New Channel</Label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <Input
+                    placeholder="Channel code (e.g. motivation)"
+                    value={newChannelCode}
+                    onChange={e => setNewChannelCode(e.target.value)}
+                  />
+                  <Input
+                    placeholder="YouTube channel URL"
+                    value={newChannelUrl}
+                    onChange={e => setNewChannelUrl(e.target.value)}
+                  />
+                </div>
+                <Button
+                  onClick={addAndFetchChannel}
+                  disabled={fetchingChannel !== null || !newChannelCode.trim() || !newChannelUrl.trim()}
+                  className="bg-gradient-to-r from-red-600 to-pink-600 hover:from-red-500 hover:to-pink-500"
+                >
+                  {fetchingChannel ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Fetching...
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="w-4 h-4 mr-2" />
+                      Add & Fetch Videos
+                    </>
+                  )}
+                </Button>
+              </div>
+
+              {/* Channel List */}
+              {Object.keys(channelVideoStatus).length > 0 ? (
+                <div className="space-y-3">
+                  <Label className="text-sm font-medium">Your Channels</Label>
+                  {Object.entries(channelVideoStatus).map(([code, status]) => (
+                    <div key={code} className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-lg">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 rounded-lg bg-red-500/10">
+                          <Youtube className="w-5 h-5 text-red-500" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-emerald-400">{status.channelName}</div>
+                          <div className="text-xs text-muted-foreground truncate">
+                            Code: {code} • {status.totalVideos} videos • {new Date(status.fetchedAt).toLocaleDateString()}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => refetchChannel(code, status.channelUrl)}
+                            disabled={fetchingChannel === code}
+                            className="border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10"
+                          >
+                            {fetchingChannel === code ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <RefreshCw className="w-4 h-4" />
+                            )}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => deleteChannel(code)}
+                            disabled={deletingChannel === code}
+                          >
+                            {deletingChannel === code ? (
+                              <Loader2 className="w-4 h-4 animate-spin text-red-500" />
+                            ) : (
+                              <Trash2 className="w-4 h-4 text-red-500" />
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Youtube className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                  <p>No channels added yet. Add a YouTube channel above.</p>
                 </div>
               )}
-
-              {/* Source Channel URL */}
-              <div className="space-y-2">
-                <Label>YouTube Channel URL</Label>
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="https://youtube.com/@channelname"
-                    value={sourceChannelUrl}
-                    onChange={e => setSourceChannelUrl(e.target.value)}
-                    className="flex-1"
-                  />
-                  <Button
-                    onClick={fetchVideosFromChannel}
-                    disabled={fetchingVideos || !sourceChannelUrl}
-                    className="bg-red-600 hover:bg-red-500"
-                  >
-                    {fetchingVideos ? (
-                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                    ) : (
-                      <RefreshCw className="w-4 h-4 mr-2" />
-                    )}
-                    {videoFetchStatus?.hasFetched ? "Refresh" : "Fetch Videos"}
-                  </Button>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Fetches top 1000 videos (30+ minutes) sorted by view count
-                </p>
-              </div>
 
               {/* Default Reference Audio */}
               <div className="space-y-2 pt-4 border-t border-border">
@@ -916,73 +969,6 @@ export default function SettingsPage() {
               </CardContent>
             </Card>
           )}
-        </TabsContent>
-
-        {/* Source Channels Tab */}
-        <TabsContent value="source" className="space-y-4">
-          <Card className="glass border-white/10">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-cyan-400" />
-                Source Channels
-              </CardTitle>
-              <CardDescription>YouTube channels to fetch transcripts from</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {/* Existing channels */}
-              <div className="space-y-2">
-                {sourceChannels.map(channel => (
-                  <div key={channel.channel_code} className="flex flex-col sm:flex-row sm:items-center justify-between p-3 border border-border rounded gap-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="font-medium text-foreground">{channel.channel_name}</div>
-                      <div className="text-sm text-muted-foreground truncate">{channel.channel_code} - {channel.youtube_channel_url}</div>
-                    </div>
-                    <div className="flex items-center gap-2 self-end sm:self-auto">
-                      <Badge variant={channel.is_active ? "success" : "secondary"}>
-                        {channel.is_active ? "Active" : "Inactive"}
-                      </Badge>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => deleteSourceChannel(channel.channel_code)}
-                      >
-                        <Trash2 className="w-4 h-4 text-red-500" />
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Add new */}
-              <div className="border-t border-border pt-4">
-                <h4 className="font-medium mb-2 text-foreground">Add New Source Channel</h4>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <Input
-                    placeholder="Code (e.g., MRBEAST)"
-                    value={newSource.channel_code}
-                    onChange={e => setNewSource(s => ({ ...s, channel_code: e.target.value.toUpperCase() }))}
-                  />
-                  <Input
-                    placeholder="Name (e.g., MrBeast)"
-                    value={newSource.channel_name}
-                    onChange={e => setNewSource(s => ({ ...s, channel_name: e.target.value }))}
-                  />
-                  <Input
-                    placeholder="YouTube URL"
-                    value={newSource.youtube_channel_url}
-                    onChange={e => setNewSource(s => ({ ...s, youtube_channel_url: e.target.value }))}
-                  />
-                </div>
-                <Button
-                  className="mt-2 bg-gradient-to-r from-violet-600 to-cyan-500 hover:from-violet-500 hover:to-cyan-400 border-0 text-white"
-                  onClick={addSourceChannel}
-                >
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add Channel
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
         </TabsContent>
 
         {/* Prompts Tab */}

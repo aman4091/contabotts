@@ -1,27 +1,36 @@
 import { NextRequest, NextResponse } from "next/server"
+import { cookies } from "next/headers"
 import fs from "fs"
 import path from "path"
 
 const DATA_DIR = process.env.DATA_DIR || "/root/tts/data"
+
+async function getUser() {
+  const cookieStore = await cookies()
+  return cookieStore.get("user")?.value || "default"
+}
+
+function getUserOrganizedDir(username: string) {
+  return path.join(DATA_DIR, "users", username, "organized")
+}
 
 export async function GET(
   request: NextRequest,
   { params }: { params: { slot: string } }
 ) {
   try {
-    const { slot } = params
-    const scriptPath = path.join(DATA_DIR, "organized", slot, "script.txt")
+    const username = await getUser()
+    const { slot } = await params
+    const scriptPath = path.join(getUserOrganizedDir(username), slot, "script.txt")
 
     if (!fs.existsSync(scriptPath)) {
-      return new NextResponse("Script not found", { status: 404 })
+      return NextResponse.json({ script: "" })
     }
 
     const content = fs.readFileSync(scriptPath, "utf-8")
-    return new NextResponse(content, {
-      headers: { "Content-Type": "text/plain" }
-    })
+    return NextResponse.json({ script: content })
   } catch (error) {
     console.error("Error reading script:", error)
-    return new NextResponse("Error reading script", { status: 500 })
+    return NextResponse.json({ error: "Error reading script" }, { status: 500 })
   }
 }

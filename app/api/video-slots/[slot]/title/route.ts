@@ -1,16 +1,27 @@
 import { NextRequest, NextResponse } from "next/server"
+import { cookies } from "next/headers"
 import fs from "fs"
 import path from "path"
 
 const DATA_DIR = process.env.DATA_DIR || "/root/tts/data"
+
+async function getUser() {
+  const cookieStore = await cookies()
+  return cookieStore.get("user")?.value || "default"
+}
+
+function getUserOrganizedDir(username: string) {
+  return path.join(DATA_DIR, "users", username, "organized")
+}
 
 export async function GET(
   request: NextRequest,
   { params }: { params: { slot: string } }
 ) {
   try {
-    const { slot } = params
-    const titlePath = path.join(DATA_DIR, "organized", slot, "title.txt")
+    const username = await getUser()
+    const { slot } = await params
+    const titlePath = path.join(getUserOrganizedDir(username), slot, "title.txt")
 
     if (!fs.existsSync(titlePath)) {
       return NextResponse.json({ title: null })
@@ -29,7 +40,8 @@ export async function PUT(
   { params }: { params: { slot: string } }
 ) {
   try {
-    const { slot } = params
+    const username = await getUser()
+    const { slot } = await params
     const body = await request.json()
     const { title } = body
 
@@ -37,7 +49,7 @@ export async function PUT(
       return NextResponse.json({ error: "Title required" }, { status: 400 })
     }
 
-    const slotDir = path.join(DATA_DIR, "organized", slot)
+    const slotDir = path.join(getUserOrganizedDir(username), slot)
     if (!fs.existsSync(slotDir)) {
       return NextResponse.json({ error: "Slot not found" }, { status: 404 })
     }

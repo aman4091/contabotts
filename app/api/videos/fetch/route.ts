@@ -1,20 +1,31 @@
 import { NextRequest, NextResponse } from "next/server"
+import { cookies } from "next/headers"
 import fs from "fs"
 import path from "path"
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY
 const DATA_DIR = process.env.DATA_DIR || "/root/tts/data"
-const VIDEOS_DIR = path.join(DATA_DIR, "videos")
 
-// Ensure videos directory exists
-if (!fs.existsSync(VIDEOS_DIR)) {
-  fs.mkdirSync(VIDEOS_DIR, { recursive: true })
+async function getUser() {
+  const cookieStore = await cookies()
+  return cookieStore.get("user")?.value || "default"
+}
+
+function getUserVideosDir(username: string) {
+  const dir = path.join(DATA_DIR, "users", username, "videos")
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true })
+  }
+  return dir
 }
 
 export async function POST(request: NextRequest) {
   try {
+    const username = await getUser()
+    const videosDir = getUserVideosDir(username)
+
     const body = await request.json()
-    const { channelUrl, minDuration = 1800, maxResults = 1000 } = body
+    const { channelUrl, channelCode, minDuration = 1800, maxResults = 1000 } = body
 
     if (!YOUTUBE_API_KEY) {
       return NextResponse.json({ error: "YouTube API key not configured" }, { status: 500 })
@@ -22,6 +33,10 @@ export async function POST(request: NextRequest) {
 
     if (!channelUrl) {
       return NextResponse.json({ error: "Channel URL required" }, { status: 400 })
+    }
+
+    if (!channelCode) {
+      return NextResponse.json({ error: "Channel code required" }, { status: 400 })
     }
 
     // Extract channel ID from URL
@@ -58,10 +73,17 @@ export async function POST(request: NextRequest) {
     // Take top N
     const topVideos = filteredVideos.slice(0, maxResults)
 
-    // Save to metadata.json
+    // Create channel-specific directory for this user
+    const channelDir = path.join(videosDir, channelCode)
+    if (!fs.existsSync(channelDir)) {
+      fs.mkdirSync(channelDir, { recursive: true })
+    }
+
+    // Save to channel-specific metadata.json
     const metadata = {
       channelUrl,
       channelId,
+      channelCode,
       channelName: channelInfo?.title || "Unknown",
       fetchedAt: new Date().toISOString(),
       totalVideos: topVideos.length,
@@ -75,11 +97,11 @@ export async function POST(request: NextRequest) {
       }))
     }
 
-    const metadataPath = path.join(VIDEOS_DIR, "metadata.json")
+    const metadataPath = path.join(channelDir, "metadata.json")
     fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2))
 
     // Initialize processed.json if it doesn't exist
-    const processedPath = path.join(VIDEOS_DIR, "processed.json")
+    const processedPath = path.join(channelDir, "processed.json")
     if (!fs.existsSync(processedPath)) {
       fs.writeFileSync(processedPath, JSON.stringify({ skipped: [], completed: [] }, null, 2))
     }
@@ -97,10 +119,43 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// GET - Return current fetch status
-export async function GET() {
+// GET - Return current fetch status for a channel
+export async function GET(request: NextRequest) {
   try {
-    const metadataPath = path.join(VIDEOS_DIR, "metadata.json")
+    const username = await getUser()
+    const videosDir = getUserVideosDir(username)
+
+    const { searchParams } = new URL(request.url)
+    const channelCode = searchParams.get("channel")
+
+    // If no channel specified, return all channels status
+    if (!channelCode) {
+      const channels: any[] = []
+      if (fs.existsSync(videosDir)) {
+        // Check channel subdirectories
+        const dirs = fs.readdirSync(videosDir, { withFileTypes: true })
+        for (const dir of dirs) {
+          if (dir.isDirectory()) {
+            const metadataPath = path.join(videosDir, dir.name, "metadata.json")
+            if (fs.existsSync(metadataPath)) {
+              try {
+                const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf-8"))
+                channels.push({
+                  channelCode: dir.name,
+                  channelName: metadata.channelName,
+                  channelUrl: metadata.channelUrl,
+                  fetchedAt: metadata.fetchedAt,
+                  totalVideos: metadata.totalVideos
+                })
+              } catch {}
+            }
+          }
+        }
+      }
+      return NextResponse.json({ channels })
+    }
+
+    const metadataPath = path.join(videosDir, channelCode, "metadata.json")
 
     if (!fs.existsSync(metadataPath)) {
       return NextResponse.json({
@@ -113,6 +168,7 @@ export async function GET() {
 
     return NextResponse.json({
       hasFetched: true,
+      channelCode: metadata.channelCode,
       channelUrl: metadata.channelUrl,
       channelName: metadata.channelName,
       fetchedAt: metadata.fetchedAt,
@@ -121,6 +177,38 @@ export async function GET() {
   } catch (error) {
     console.error("Error getting fetch status:", error)
     return NextResponse.json({ error: "Failed to get status" }, { status: 500 })
+  }
+}
+
+// DELETE - Delete a channel and its data
+export async function DELETE(request: NextRequest) {
+  try {
+    const username = await getUser()
+    const videosDir = getUserVideosDir(username)
+
+    const { searchParams } = new URL(request.url)
+    const channelCode = searchParams.get("channel")
+
+    if (!channelCode) {
+      return NextResponse.json({ error: "Channel code required" }, { status: 400 })
+    }
+
+    const channelDir = path.join(videosDir, channelCode)
+
+    if (!fs.existsSync(channelDir)) {
+      return NextResponse.json({ error: "Channel not found" }, { status: 404 })
+    }
+
+    // Delete the channel directory recursively
+    fs.rmSync(channelDir, { recursive: true, force: true })
+
+    return NextResponse.json({
+      success: true,
+      message: `Channel ${channelCode} deleted`
+    })
+  } catch (error) {
+    console.error("Error deleting channel:", error)
+    return NextResponse.json({ error: "Failed to delete channel" }, { status: 500 })
   }
 }
 

@@ -1,9 +1,18 @@
 import { NextRequest, NextResponse } from "next/server"
+import { cookies } from "next/headers"
 import fs from "fs"
 import path from "path"
 
 const DATA_DIR = process.env.DATA_DIR || "/root/tts/data"
-const VIDEOS_DIR = path.join(DATA_DIR, "videos")
+
+async function getUser() {
+  const cookieStore = await cookies()
+  return cookieStore.get("user")?.value || "default"
+}
+
+function getUserVideosDir(username: string) {
+  return path.join(DATA_DIR, "users", username, "videos")
+}
 
 interface VideoMetadata {
   channelUrl: string
@@ -26,8 +35,9 @@ interface ProcessedVideos {
   completed: string[]
 }
 
-function getMetadata(): VideoMetadata | null {
-  const metadataPath = path.join(VIDEOS_DIR, "metadata.json")
+function getMetadata(videosDir: string, channelCode: string): VideoMetadata | null {
+  const metadataPath = path.join(videosDir, channelCode, "metadata.json")
+
   if (!fs.existsSync(metadataPath)) {
     return null
   }
@@ -38,8 +48,9 @@ function getMetadata(): VideoMetadata | null {
   }
 }
 
-function getProcessedVideos(): ProcessedVideos {
-  const processedPath = path.join(VIDEOS_DIR, "processed.json")
+function getProcessedVideos(videosDir: string, channelCode: string): ProcessedVideos {
+  const processedPath = path.join(videosDir, channelCode, "processed.json")
+
   if (!fs.existsSync(processedPath)) {
     return { skipped: [], completed: [] }
   }
@@ -52,12 +63,28 @@ function getProcessedVideos(): ProcessedVideos {
 
 export async function GET(request: NextRequest) {
   try {
+    const username = await getUser()
+    const videosDir = getUserVideosDir(username)
+
     const { searchParams } = new URL(request.url)
     const page = parseInt(searchParams.get("page") || "1")
     const limit = parseInt(searchParams.get("limit") || "100")
     const showAll = searchParams.get("showAll") === "true"
+    const channelCode = searchParams.get("channel")
 
-    const metadata = getMetadata()
+    if (!channelCode) {
+      return NextResponse.json({
+        videos: [],
+        hasMore: false,
+        total: 0,
+        remaining: 0,
+        channelName: null,
+        channelCode: null,
+        message: "No channel specified"
+      })
+    }
+
+    const metadata = getMetadata(videosDir, channelCode)
     if (!metadata) {
       return NextResponse.json({
         videos: [],
@@ -65,11 +92,12 @@ export async function GET(request: NextRequest) {
         total: 0,
         remaining: 0,
         channelName: null,
-        message: "No videos fetched yet. Go to Settings to fetch videos."
+        channelCode: channelCode,
+        message: `No videos fetched for channel ${channelCode}. Go to Settings to fetch videos.`
       })
     }
 
-    const processed = getProcessedVideos()
+    const processed = getProcessedVideos(videosDir, channelCode)
     const processedIds = new Set([...processed.skipped, ...processed.completed])
 
     // Filter out processed videos unless showAll is true
@@ -104,19 +132,27 @@ export async function GET(request: NextRequest) {
 // POST - Mark video as completed (after adding to queue)
 export async function POST(request: NextRequest) {
   try {
+    const username = await getUser()
+    const videosDir = getUserVideosDir(username)
+
     const body = await request.json()
-    const { videoId, action } = body
+    const { videoId, action, channelCode } = body
 
     if (!videoId) {
       return NextResponse.json({ error: "videoId required" }, { status: 400 })
+    }
+
+    if (!channelCode) {
+      return NextResponse.json({ error: "channelCode required" }, { status: 400 })
     }
 
     if (!action || !["complete", "skip"].includes(action)) {
       return NextResponse.json({ error: "action must be 'complete' or 'skip'" }, { status: 400 })
     }
 
-    const processedPath = path.join(VIDEOS_DIR, "processed.json")
-    const processed = getProcessedVideos()
+    const processedDir = path.join(videosDir, channelCode)
+    const processedPath = path.join(processedDir, "processed.json")
+    const processed = getProcessedVideos(videosDir, channelCode)
 
     if (action === "complete") {
       if (!processed.completed.includes(videoId)) {
@@ -129,8 +165,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Ensure directory exists
-    if (!fs.existsSync(VIDEOS_DIR)) {
-      fs.mkdirSync(VIDEOS_DIR, { recursive: true })
+    if (!fs.existsSync(processedDir)) {
+      fs.mkdirSync(processedDir, { recursive: true })
     }
 
     fs.writeFileSync(processedPath, JSON.stringify(processed, null, 2))
