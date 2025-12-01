@@ -112,11 +112,11 @@ except Exception as e:
     print(f"❌ Failed to load models: {e}")
     sys.exit(1)
 
-# Video Settings (4K ULTRA HD - EXACT from l.py)
-TARGET_W = 3840
-TARGET_H = 2160
-FONT_SIZE = 110      # Bada Font for 4K
-TEXT_Y_POS = 1080    # Dead Center (2160 / 2)
+# Video Settings (Landscape 1920x1080)
+TARGET_W = 1920
+TARGET_H = 1080
+FONT_SIZE = 70
+TEXT_Y_POS = 540  # Dead Center
 
 # ============================================================================
 # FILE SERVER QUEUE (Merged Audio + Video)
@@ -321,33 +321,40 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
             final_text = "\\N".join(lines)
 
-            # --- BOX CALCULATION (EXACT FROM l.py - 4K) ---
-            char_width = FONT_SIZE * 0.55
+            # --- BOX CALCULATION (EXACT FROM l.py, scaled for 1080p) ---
+            char_width = FONT_SIZE * 0.55  # From l.py
             longest_line = max(len(l) for l in lines)
             text_w = longest_line * char_width
             text_h = len(lines) * (FONT_SIZE * 1.4)
 
-            # Padding (EXACT from l.py)
-            padding_x = 60
-            padding_y = 40
+            # Padding scaled from l.py (4K: 60/40 -> 1080p: 30/20)
+            padding_x = 30
+            padding_y = 20
 
             box_w = text_w + padding_x
             box_h = text_h + padding_y
 
-            # Center Position (1920, 1080 for 4K)
-            cx, cy = 1920, TEXT_Y_POS
+            # Center Position
+            cx, cy = 960, TEXT_Y_POS
 
             x1 = int(cx - (box_w / 2))
             x2 = int(cx + (box_w / 2))
             y1 = int(cy - (box_h / 2))
             y2 = int(cy + (box_h / 2))
-            r = 60  # Rounded Radius for 4K (EXACT from l.py)
+            r = 30  # Radius scaled from l.py (4K: 60 -> 1080p: 30)
 
-            # --- DRAW BOX (from l.py) ---
-            draw = (f"m {x1+r} {y1} l {x2-r} {y1} b {x2} {y1} {x2} {y1+r} "
-                    f"l {x2} {y2-r} b {x2} {y2} {x2-r} {y2} "
-                    f"l {x1+r} {y2} b {x1} {y2} {x1} {y2-r} "
-                    f"l {x1} {y1+r} b {x1} {y1} {x1+r} {y1}")
+            # --- THE ROUNDED CORNER DRAWING COMMAND (RESTORED) ---
+            draw = (
+                f"m {x1+r} {y1} "          # Move to top-left (after curve)
+                f"l {x2-r} {y1} "          # Line to top-right
+                f"b {x2} {y1} {x2} {y1} {x2} {y1+r} " # Curve Top-Right
+                f"l {x2} {y2-r} "          # Line down
+                f"b {x2} {y2} {x2} {y2} {x2-r} {y2} " # Curve Bottom-Right
+                f"l {x1+r} {y2} "          # Line left
+                f"b {x1} {y2} {x1} {y2} {x1} {y2-r} " # Curve Bottom-Left
+                f"l {x1} {y1+r} "          # Line up
+                f"b {x1} {y1} {x1} {y1} {x1+r} {y1}"  # Curve Top-Left (Close)
+            )
 
             # Layer 0: Box
             events.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{{\\p1\\an7\\pos(0,0)\\1c&H000000&\\1a&H00&\\bord0\\shad0}}{draw}{{\\p0}}")
@@ -415,9 +422,9 @@ def run_ffmpeg_with_progress(cmd: list, total_duration: float) -> bool:
         return False
 
 def render_video(image_path: str, audio_path: str, ass_path: str, output_path: str) -> bool:
-    """Render video with subtitles using FFmpeg - 4K ULTRA HD (EXACT from l.py)"""
+    """Render video with subtitles using FFmpeg - HIGH QUALITY (from l.py)"""
     try:
-        print("🎬 Rendering 4K Video (60 Mbps)...")
+        print("🎬 Rendering Video (High Quality)...")
 
         # Get total duration for progress
         total_duration = get_audio_duration(audio_path)
@@ -426,22 +433,22 @@ def render_video(image_path: str, audio_path: str, ass_path: str, output_path: s
         safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
         vf = f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,subtitles='{safe_ass}'"
 
-        # --- 4K GPU SETTINGS (BALANCED SPEED/QUALITY from l.py) ---
+        # --- HIGH QUALITY SETTINGS FROM l.py (scaled for 1080p) ---
         cmd_gpu = [
             "ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path,
             "-vf", vf,
             "-c:v", "h264_nvenc",
-            "-preset", "p5",        # P5 = Slow (Good Quality), faster than P7
+            "-preset", "p5",        # P5 = Good Quality + Speed
             "-tune", "hq",
-            "-rc", "cbr",           # Constant Bitrate
-            "-b:v", "60M",          # 60 Mbps
-            "-maxrate", "60M",
-            "-bufsize", "120M",
+            "-rc", "cbr",
+            "-b:v", "15M",          # 15 Mbps (scaled for 1080p)
+            "-maxrate", "15M",
+            "-bufsize", "30M",
             "-c:a", "aac", "-b:a", "320k",
             "-shortest", output_path
         ]
 
-        # CPU fallback (from l.py)
+        # CPU fallback
         cmd_cpu = [
             "ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path,
             "-vf", vf,
