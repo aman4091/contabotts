@@ -242,7 +242,12 @@ export function TranscriptPopup({
             </label>
             <Textarea
               value={script}
-              onChange={e => setScript(e.target.value)}
+              onChange={e => {
+                // Clean script: remove asterisks, quotes, and special symbols
+                const cleaned = e.target.value
+                  .replace(/[*""\u201C\u201D\u2018\u2019`#@&^~]/g, '')
+                setScript(cleaned)
+              }}
               className="h-48 font-mono text-sm resize-none"
               placeholder="Paste your processed script here..."
             />
