@@ -186,19 +186,28 @@ class FileServerQueue:
             return True
         return False
 
-    def get_random_image(self, image_folder: str = "nature") -> Optional[str]:
+    def get_random_image(self, image_folder: str = "nature") -> tuple:
+        """Returns (local_path, server_path) or (None, None)"""
         try:
             r = requests.get(f"{self.base_url}/images/{image_folder}", headers={"x-api-key": self.api_key}, timeout=30)
-            if r.status_code != 200: return None
+            if r.status_code != 200: return None, None
             images = r.json().get("images", [])
-            if not images: return None
-            
+            if not images: return None, None
+
             selected = random.choice(images)
+            server_path = f"images/{image_folder}/{selected}"
             local_image = os.path.join(TEMP_DIR, "temp_image.jpg")
-            if self.download_file(f"images/{image_folder}/{selected}", local_image):
-                return local_image
-            return None
-        except: return None
+            if self.download_file(server_path, local_image):
+                return local_image, server_path
+            return None, None
+        except: return None, None
+
+    def delete_file(self, remote_path: str) -> bool:
+        """Delete file from server"""
+        try:
+            r = requests.delete(f"{self.base_url}/files/{remote_path}", headers=self.file_headers, timeout=30)
+            return r.status_code == 200
+        except: return False
 
     # --- HEARTBEAT ---
     def send_heartbeat(self, worker_id: str, status: str = "online", gpu_model: str = None, current_job: str = None) -> bool:
@@ -545,7 +554,7 @@ async def process_job(job: Dict) -> bool:
 
         # Get Image
         image_folder = job.get('image_folder', 'nature')
-        local_image = queue.get_random_image(image_folder)
+        local_image, server_image_path = queue.get_random_image(image_folder)
         if not local_image: raise Exception("Image fetch failed")
 
         # Generate Subtitles using Whisper (Landscape style)
@@ -569,6 +578,13 @@ async def process_job(job: Dict) -> bool:
             raise Exception("Video Gofile upload failed")
 
         print(f"✅ Video uploaded: {video_gofile}")
+
+        # Delete used image from server (so it won't repeat)
+        if server_image_path:
+            if queue.delete_file(server_image_path):
+                print(f"🗑️ Image deleted from server: {server_image_path}")
+            else:
+                print(f"⚠️ Failed to delete image: {server_image_path}")
 
         # ========== STEP 3: COMPLETE JOB ==========
         # Complete with video gofile link (primary output)
