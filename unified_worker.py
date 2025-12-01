@@ -45,9 +45,14 @@ if not FILE_SERVER_URL or not FILE_SERVER_API_KEY:
 
 # Telegram Config
 def get_user_telegram_config(username: str) -> tuple:
-    if not username: return os.getenv("BOT_TOKEN"), os.getenv("CHAT_ID")
+    if not username:
+        return os.getenv("BOT_TOKEN"), os.getenv("CHAT_ID")
     user_upper = username.upper()
-    return (os.getenv(f"{user_upper}_BOT_TOKEN"), os.getenv(f"{user_upper}_CHAT_ID")) or (os.getenv("BOT_TOKEN"), os.getenv("CHAT_ID"))
+    user_token = os.getenv(f"{user_upper}_BOT_TOKEN")
+    user_chat = os.getenv(f"{user_upper}_CHAT_ID")
+    if user_token and user_chat:
+        return user_token, user_chat
+    return os.getenv("BOT_TOKEN"), os.getenv("CHAT_ID")
 
 def send_telegram(message: str, username: str = None):
     bot_token, chat_id = get_user_telegram_config(username)
