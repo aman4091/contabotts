@@ -1,14 +1,19 @@
 import { NextRequest, NextResponse } from "next/server"
 import { cookies } from "next/headers"
 import { randomUUID } from "crypto"
+import fs from "fs"
+import path from "path"
 import {
   saveToOrganized,
   getNextVideoNumber,
   completeTranscript,
   getTranscript,
-  getTargetChannels
+  getTargetChannels,
+  getSettings
 } from "@/lib/file-storage"
 import { getTomorrowDate, addDays } from "@/lib/utils"
+
+const DATA_DIR = process.env.DATA_DIR || "/root/tts/data"
 
 // Required: Set FILE_SERVER_URL and FILE_SERVER_API_KEY in environment
 const FILE_SERVER_URL = process.env.FILE_SERVER_URL || ""
@@ -93,6 +98,44 @@ async function getQueueStats(): Promise<{ pending: number; processing: number; c
   }
 }
 
+// Get next sequential video number from counter file
+function getNextSequentialVideoNumber(): number {
+  const counterPath = path.join(DATA_DIR, "video_counter.json")
+  let counter = { next: 1 }
+
+  if (fs.existsSync(counterPath)) {
+    try {
+      counter = JSON.parse(fs.readFileSync(counterPath, "utf-8"))
+    } catch {
+      counter = { next: 1 }
+    }
+  }
+
+  const nextNum = counter.next
+  counter.next = nextNum + 1
+  fs.writeFileSync(counterPath, JSON.stringify(counter, null, 2))
+
+  return nextNum
+}
+
+// Save files to simplified organized folder structure
+function saveToSimplifiedOrganized(videoNumber: number, transcript: string, script: string): string {
+  const organizedDir = path.join(DATA_DIR, "organized")
+  const folderName = `video_${videoNumber}`
+  const folderPath = path.join(organizedDir, folderName)
+
+  // Create folder
+  if (!fs.existsSync(folderPath)) {
+    fs.mkdirSync(folderPath, { recursive: true })
+  }
+
+  // Save transcript and script
+  fs.writeFileSync(path.join(folderPath, "transcript.txt"), transcript)
+  fs.writeFileSync(path.join(folderPath, "script.txt"), script)
+
+  return folderPath
+}
+
 export async function POST(request: NextRequest) {
   try {
     const username = await getUser()
@@ -106,11 +149,83 @@ export async function POST(request: NextRequest) {
       date: customDate,
       slot: customSlot,
       priority: customPriority,
-      audioEnabled = true  // Default to true for backward compatibility
+      audioEnabled = true,  // Default to true for backward compatibility
+      // New simplified system params
+      videoTitle,
+      videoId,
+      referenceAudio: customReferenceAudio
     } = body
 
-    if (!script || !targetChannel) {
+    // New simplified system: no target channel required
+    const isSimplifiedMode = videoTitle && videoId && !targetChannel
+
+    if (!script) {
+      return NextResponse.json({ error: "Script required" }, { status: 400 })
+    }
+
+    if (!isSimplifiedMode && !targetChannel) {
       return NextResponse.json({ error: "Script and target channel required" }, { status: 400 })
+    }
+
+    // Simplified mode: sequential video numbering
+    if (isSimplifiedMode) {
+      const settings = getSettings(username)
+      const referenceAudio = customReferenceAudio || settings.defaultReferenceAudio
+
+      if (!referenceAudio) {
+        return NextResponse.json({ error: "No reference audio specified. Set default voice in Settings." }, { status: 400 })
+      }
+
+      // Get next sequential video number
+      const videoNumber = getNextSequentialVideoNumber()
+      const folderName = `video_${videoNumber}`
+
+      // Save files
+      saveToSimplifiedOrganized(videoNumber, transcript || "", script)
+
+      // Get audio counter
+      const audioCounter = await getNextAudioCounter()
+
+      // If audio is disabled, skip creating job
+      if (!audioEnabled) {
+        return NextResponse.json({
+          success: true,
+          jobId: null,
+          folderName,
+          videoNumber,
+          audioCounter,
+          organizedPath: `/organized/${folderName}`,
+          audioSkipped: true
+        })
+      }
+
+      // Create audio job
+      const jobId = randomUUID()
+      const result = await createAudioJob({
+        job_id: jobId,
+        script_text: script,
+        channel_code: "VIDEO",  // Generic channel code for simplified system
+        video_number: videoNumber,
+        date: getTomorrowDate(),
+        audio_counter: audioCounter,
+        organized_path: `/organized/${folderName}`,
+        priority: 5,
+        username,
+        reference_audio: referenceAudio
+      })
+
+      if (!result.success) {
+        return NextResponse.json({ error: "Failed to create audio job" }, { status: 500 })
+      }
+
+      return NextResponse.json({
+        success: true,
+        jobId: result.job_id,
+        folderName,
+        videoNumber,
+        audioCounter,
+        organizedPath: `/organized/${folderName}`
+      })
     }
 
     // Priority mode: use exact date and slot (for replacing deleted slots)

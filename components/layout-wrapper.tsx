@@ -15,7 +15,8 @@ import {
   User,
   Calendar,
   Zap,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Youtube
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -33,7 +34,8 @@ const LayoutContext = createContext<{
 })
 
 const navItems = [
-  { title: "Process", href: "/", icon: LayoutDashboard },
+  { title: "Videos", href: "/", icon: Youtube },
+  { title: "Process", href: "/process", icon: LayoutDashboard },
   { title: "Calendar", href: "/calendar", icon: Calendar },
   { title: "Queue", href: "/audio-files", icon: FileAudio },
   { title: "Auto", href: "/auto-processing", icon: Zap },

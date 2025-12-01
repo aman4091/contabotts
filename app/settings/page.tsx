@@ -23,7 +23,9 @@ import {
   Music,
   Check,
   AlertTriangle,
-  RotateCcw
+  RotateCcw,
+  Youtube,
+  RefreshCw
 } from "lucide-react"
 import { ThumbnailEditor } from "@/components/thumbnail-editor"
 
@@ -57,6 +59,8 @@ interface Settings {
     max_chunk_size: number
     temperature: number
   }
+  sourceChannelUrl?: string
+  defaultReferenceAudio?: string
 }
 
 interface ImageFolder {
@@ -144,6 +148,17 @@ export default function SettingsPage() {
   const [resetting, setResetting] = useState(false)
   const [showResetConfirm, setShowResetConfirm] = useState(false)
 
+  // Video grid settings
+  const [sourceChannelUrl, setSourceChannelUrl] = useState("")
+  const [defaultReferenceAudio, setDefaultReferenceAudio] = useState("")
+  const [fetchingVideos, setFetchingVideos] = useState(false)
+  const [videoFetchStatus, setVideoFetchStatus] = useState<{
+    hasFetched: boolean
+    channelName?: string
+    totalVideos?: number
+    fetchedAt?: string
+  } | null>(null)
+
   useEffect(() => {
     loadAll()
   }, [])
@@ -151,14 +166,15 @@ export default function SettingsPage() {
   async function loadAll() {
     setLoading(true)
     try {
-      const [sourceRes, targetRes, settingsRes, foldersRes, audioRes, templatesRes, overlaysRes] = await Promise.all([
+      const [sourceRes, targetRes, settingsRes, foldersRes, audioRes, templatesRes, overlaysRes, videoFetchRes] = await Promise.all([
         fetch("/api/source-channels"),
         fetch("/api/target-channels"),
         fetch("/api/settings"),
         fetch("/api/images/folders"),
         fetch("/api/reference-audio"),
         fetch("/api/thumbnail-templates"),
-        fetch("/api/images?type=overlays")
+        fetch("/api/images?type=overlays"),
+        fetch("/api/videos/fetch")
       ])
 
       const sourceData = await sourceRes.json()
@@ -168,6 +184,7 @@ export default function SettingsPage() {
       const audioData = await audioRes.json()
       const templatesData = await templatesRes.json()
       const overlaysData = await overlaysRes.json()
+      const videoFetchData = await videoFetchRes.json()
 
       setSourceChannels(sourceData.channels || [])
       setTargetChannels(targetData.channels || [])
@@ -176,6 +193,11 @@ export default function SettingsPage() {
       setAudioFiles(audioData.files || [])
       setTemplates(templatesData.templates || [])
       setOverlayImages(overlaysData.overlays || [])
+      setVideoFetchStatus(videoFetchData)
+
+      // Load source channel URL and default audio from settings
+      setSourceChannelUrl(settingsData.sourceChannelUrl || "")
+      setDefaultReferenceAudio(settingsData.defaultReferenceAudio || "")
     } catch (error) {
       console.error("Error loading settings:", error)
       toast.error("Failed to load settings")
@@ -611,6 +633,70 @@ export default function SettingsPage() {
     }
   }
 
+  // Video grid functions
+  async function saveVideoGridSettings() {
+    setSaving(true)
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sourceChannelUrl,
+          defaultReferenceAudio
+        })
+      })
+
+      if (res.ok) {
+        toast.success("Video grid settings saved")
+      } else {
+        toast.error("Failed to save settings")
+      }
+    } catch (error) {
+      toast.error("Failed to save settings")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function fetchVideosFromChannel() {
+    if (!sourceChannelUrl) {
+      toast.error("Please enter a channel URL")
+      return
+    }
+
+    setFetchingVideos(true)
+    toast.info("Fetching videos... This may take a minute.")
+
+    try {
+      const res = await fetch("/api/videos/fetch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          channelUrl: sourceChannelUrl,
+          minDuration: 1800, // 30 minutes
+          maxResults: 1000
+        })
+      })
+
+      const data = await res.json()
+      if (res.ok) {
+        toast.success(`Fetched ${data.totalFetched} videos from ${data.channelName}`)
+        // Reload status
+        const statusRes = await fetch("/api/videos/fetch")
+        const statusData = await statusRes.json()
+        setVideoFetchStatus(statusData)
+        // Save the channel URL
+        await saveVideoGridSettings()
+      } else {
+        toast.error(data.error || "Failed to fetch videos")
+      }
+    } catch (error) {
+      toast.error("Failed to fetch videos")
+    } finally {
+      setFetchingVideos(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
@@ -650,8 +736,9 @@ export default function SettingsPage() {
         onChange={handleOverlayUpload}
       />
 
-      <Tabs defaultValue="target" className="space-y-4">
+      <Tabs defaultValue="videos" className="space-y-4">
         <TabsList className="flex flex-wrap h-auto gap-1">
+          <TabsTrigger value="videos" className="text-xs sm:text-sm">Video Grid</TabsTrigger>
           <TabsTrigger value="target" className="text-xs sm:text-sm">Target</TabsTrigger>
           <TabsTrigger value="images" className="text-xs sm:text-sm">Images</TabsTrigger>
           <TabsTrigger value="thumbnails" className="text-xs sm:text-sm">Thumbnails</TabsTrigger>
@@ -660,6 +747,95 @@ export default function SettingsPage() {
           <TabsTrigger value="ai" className="text-xs sm:text-sm">AI</TabsTrigger>
           <TabsTrigger value="danger" className="text-xs sm:text-sm text-red-400">Reset</TabsTrigger>
         </TabsList>
+
+        {/* Video Grid Tab */}
+        <TabsContent value="videos" className="space-y-4">
+          <Card className="glass border-white/10">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-red-500" />
+                YouTube Source Channel
+              </CardTitle>
+              <CardDescription>Configure source channel for video grid on homepage</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Current status */}
+              {videoFetchStatus?.hasFetched && (
+                <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-lg">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Youtube className="w-5 h-5 text-red-500" />
+                    <span className="font-medium text-emerald-400">{videoFetchStatus.channelName}</span>
+                  </div>
+                  <div className="text-sm text-muted-foreground">
+                    <p>{videoFetchStatus.totalVideos} videos saved</p>
+                    <p className="text-xs">Last fetched: {new Date(videoFetchStatus.fetchedAt || "").toLocaleString()}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Source Channel URL */}
+              <div className="space-y-2">
+                <Label>YouTube Channel URL</Label>
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="https://youtube.com/@channelname"
+                    value={sourceChannelUrl}
+                    onChange={e => setSourceChannelUrl(e.target.value)}
+                    className="flex-1"
+                  />
+                  <Button
+                    onClick={fetchVideosFromChannel}
+                    disabled={fetchingVideos || !sourceChannelUrl}
+                    className="bg-red-600 hover:bg-red-500"
+                  >
+                    {fetchingVideos ? (
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    ) : (
+                      <RefreshCw className="w-4 h-4 mr-2" />
+                    )}
+                    {videoFetchStatus?.hasFetched ? "Refresh" : "Fetch Videos"}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Fetches top 1000 videos (30+ minutes) sorted by view count
+                </p>
+              </div>
+
+              {/* Default Reference Audio */}
+              <div className="space-y-2 pt-4 border-t border-border">
+                <Label>Default Reference Audio</Label>
+                <p className="text-xs text-muted-foreground mb-2">
+                  Voice used when adding videos to queue from homepage
+                </p>
+                <Select
+                  value={defaultReferenceAudio}
+                  onValueChange={v => setDefaultReferenceAudio(v)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select default voice" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {audioFiles.map(audio => (
+                      <SelectItem key={audio.name} value={audio.name}>
+                        {audio.name} ({audio.sizeFormatted})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Save Button */}
+              <Button
+                onClick={saveVideoGridSettings}
+                disabled={saving}
+                className="bg-gradient-to-r from-violet-600 to-cyan-500 hover:from-violet-500 hover:to-cyan-400 border-0 text-white"
+              >
+                {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+                Save Settings
+              </Button>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         {/* Target Channels Tab */}
         <TabsContent value="target" className="space-y-4">

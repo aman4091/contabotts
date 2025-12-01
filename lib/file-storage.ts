@@ -51,6 +51,9 @@ export interface Settings {
     default_image_folder: string
     subtitle_style: string
   }
+  // New settings for video grid system
+  sourceChannelUrl?: string
+  defaultReferenceAudio?: string
 }
 
 export interface TranscriptFile {
@@ -133,7 +136,9 @@ export function getSettings(username?: string): Settings {
       prompts: { ...defaults.prompts, ...loaded.prompts },
       ai: { ...defaults.ai, ...loaded.ai },
       audio: { ...defaults.audio, ...loaded.audio },
-      video: { ...defaults.video, ...loaded.video }
+      video: { ...defaults.video, ...loaded.video },
+      sourceChannelUrl: loaded.sourceChannelUrl || '',
+      defaultReferenceAudio: loaded.defaultReferenceAudio || ''
     }
   } catch {
     return defaults

@@ -7,12 +7,10 @@ const DATA_DIR = process.env.DATA_DIR || "/root/tts/data"
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
-    const date = searchParams.get("date")
-    const channel = searchParams.get("channel")
-    const slot = searchParams.get("slot")
-    const file = searchParams.get("file") // transcript, script, audio, video
+    const videoId = searchParams.get("videoId")
+    const file = searchParams.get("file") // transcript, script, thumbnail
 
-    if (!date || !channel || !slot || !file) {
+    if (!videoId || !file) {
       return NextResponse.json({ error: "Missing parameters" }, { status: 400 })
     }
 
@@ -20,8 +18,7 @@ export async function GET(request: NextRequest) {
     const fileMap: Record<string, string> = {
       transcript: "transcript.txt",
       script: "script.txt",
-      audio: "audio.wav",
-      video: "video.mp4"
+      thumbnail: "thumbnail.png"
     }
 
     const filename = fileMap[file]
@@ -29,7 +26,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Invalid file type" }, { status: 400 })
     }
 
-    const filePath = path.join(DATA_DIR, "organized", date, channel, `video_${slot}`, filename)
+    const filePath = path.join(DATA_DIR, "organized", videoId, filename)
 
     if (!fs.existsSync(filePath)) {
       return NextResponse.json({ error: "File not found" }, { status: 404 })
@@ -42,14 +39,13 @@ export async function GET(request: NextRequest) {
     const contentTypes: Record<string, string> = {
       transcript: "text/plain",
       script: "text/plain",
-      audio: "audio/wav",
-      video: "video/mp4"
+      thumbnail: "image/png"
     }
 
     const headers = new Headers()
     headers.set("Content-Type", contentTypes[file])
     headers.set("Content-Length", stat.size.toString())
-    headers.set("Content-Disposition", `attachment; filename="${channel}_${date}_slot${slot}_${file}${path.extname(filename)}"`)
+    headers.set("Content-Disposition", `attachment; filename="${videoId}_${file}${path.extname(filename)}"`)
 
     return new NextResponse(fileBuffer, { headers })
   } catch (error) {

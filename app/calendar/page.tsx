@@ -3,240 +3,131 @@
 import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { toast } from "sonner"
 import {
-  ChevronLeft,
-  ChevronRight,
   Download,
   FileText,
   FileAudio,
   Video,
   Check,
-  Calendar as CalendarIcon,
   Loader2,
   Trash2,
   ExternalLink,
   Image as ImageIcon,
-  Type
+  FolderOpen,
+  RefreshCw
 } from "lucide-react"
-import { useRouter } from "next/navigation"
 
-interface Slot {
-  slotNumber: number
-  date: string
-  channelCode: string
+interface VideoItem {
+  id: string
+  videoNumber: number
   hasTranscript: boolean
   hasScript: boolean
   hasAudio: boolean
   hasVideo: boolean
-  hasTitle?: boolean
-  hasThumbnail?: boolean
+  hasThumbnail: boolean
   isCompleted: boolean
   path: string
   gofileLink?: string | null
 }
 
-interface TargetChannel {
-  channel_code: string
-  channel_name: string
-  is_active: boolean
-}
-
 export default function CalendarPage() {
-  const router = useRouter()
-  const [currentDate, setCurrentDate] = useState(new Date())
-  const [selectedDate, setSelectedDate] = useState<string | null>(null)
-  const [selectedChannel, setSelectedChannel] = useState<string>("")
-  const [targetChannels, setTargetChannels] = useState<TargetChannel[]>([])
-  const [slots, setSlots] = useState<Slot[]>([])
-  const [todaySlots, setTodaySlots] = useState<Slot[]>([])
-  const [todayChannel, setTodayChannel] = useState<string>("")
-  const [loading, setLoading] = useState(false)
-  const [datesWithData, setDatesWithData] = useState<string[]>([])
+  const [videos, setVideos] = useState<VideoItem[]>([])
+  const [loading, setLoading] = useState(true)
   const [deleting, setDeleting] = useState<string | null>(null)
 
-  const today = new Date().toISOString().split("T")[0]
-
   useEffect(() => {
-    loadTargetChannels()
-    loadDatesWithData()
+    loadVideos()
   }, [])
 
-  useEffect(() => {
-    if (targetChannels.length > 0 && !todayChannel) {
-      setTodayChannel(targetChannels[0].channel_code)
-    }
-  }, [targetChannels])
-
-  useEffect(() => {
-    if (todayChannel) {
-      loadTodaySlots()
-    }
-  }, [todayChannel])
-
-  useEffect(() => {
-    if (selectedDate && selectedChannel) {
-      loadSlots(selectedDate, selectedChannel)
-    }
-  }, [selectedDate, selectedChannel])
-
-  async function loadTargetChannels() {
-    try {
-      const res = await fetch("/api/target-channels")
-      const data = await res.json()
-      setTargetChannels(data.channels || [])
-    } catch (error) {
-      console.error("Error loading channels:", error)
-    }
-  }
-
-  async function loadDatesWithData() {
-    try {
-      const res = await fetch("/api/calendar", { method: "OPTIONS" })
-      const data = await res.json()
-      setDatesWithData(data.dates || [])
-    } catch (error) {
-      console.error("Error loading dates:", error)
-    }
-  }
-
-  async function loadTodaySlots() {
-    try {
-      const res = await fetch(`/api/calendar?date=${today}&channel=${todayChannel}`)
-      const data = await res.json()
-      setTodaySlots(data.slots || [])
-    } catch (error) {
-      console.error("Error loading today slots:", error)
-    }
-  }
-
-  async function loadSlots(date: string, channel: string) {
+  async function loadVideos() {
     setLoading(true)
     try {
-      const res = await fetch(`/api/calendar?date=${date}&channel=${channel}`)
+      const res = await fetch("/api/calendar")
       const data = await res.json()
-      setSlots(data.slots || [])
+      setVideos(data.videos || [])
     } catch (error) {
-      console.error("Error loading slots:", error)
-      toast.error("Failed to load slots")
+      console.error("Error loading videos:", error)
+      toast.error("Failed to load videos")
     } finally {
       setLoading(false)
     }
   }
 
-  async function toggleComplete(slot: Slot, isToday: boolean = false) {
+  async function toggleComplete(video: VideoItem) {
     try {
       const res = await fetch("/api/calendar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          date: slot.date,
-          channelCode: slot.channelCode,
-          slotNumber: slot.slotNumber,
-          completed: !slot.isCompleted
+          videoId: video.id,
+          completed: !video.isCompleted
         })
       })
 
       if (res.ok) {
-        if (isToday) {
-          loadTodaySlots()
-        } else {
-          loadSlots(slot.date, slot.channelCode)
-        }
-        toast.success(slot.isCompleted ? "Unmarked" : "Marked as completed")
+        loadVideos()
+        toast.success(video.isCompleted ? "Unmarked" : "Marked as uploaded")
       }
     } catch (error) {
       toast.error("Failed to update")
     }
   }
 
-  function downloadFile(slot: Slot, fileType: string) {
-    // For audio and video, use gofile link if available
-    if ((fileType === "audio" || fileType === "video") && slot.gofileLink) {
-      window.open(slot.gofileLink, "_blank")
+  function downloadFile(video: VideoItem, fileType: string) {
+    if ((fileType === "audio" || fileType === "video") && video.gofileLink) {
+      window.open(video.gofileLink, "_blank")
       return
     }
-    // For transcript and script, use local download
-    const url = `/api/calendar/download?date=${slot.date}&channel=${slot.channelCode}&slot=${slot.slotNumber}&file=${fileType}`
+    const url = `/api/calendar/download?videoId=${video.id}&file=${fileType}`
     window.open(url, "_blank")
   }
 
-  async function deleteSlot(slot: Slot) {
-    if (!confirm(`Delete Slot ${slot.slotNumber} for ${slot.channelCode} on ${slot.date}?\n\nThis will delete all files (transcript, script, audio, video).`)) {
+  async function deleteVideo(video: VideoItem) {
+    if (!confirm(`Delete ${video.id}?\n\nThis will delete all files.`)) {
       return
     }
 
-    const slotKey = `${slot.date}_${slot.channelCode}_${slot.slotNumber}`
-    setDeleting(slotKey)
-
+    setDeleting(video.id)
     try {
-      const res = await fetch(
-        `/api/calendar?date=${slot.date}&channel=${slot.channelCode}&slot=${slot.slotNumber}`,
-        { method: "DELETE" }
-      )
+      const res = await fetch(`/api/calendar?videoId=${video.id}`, { method: "DELETE" })
 
       if (res.ok) {
-        toast.success("Slot deleted! Redirecting to Process page...")
-        // Redirect to process page with channel pre-selected and priority flag
-        router.push(`/?channel=${slot.channelCode}&priority=true&date=${slot.date}&slot=${slot.slotNumber}`)
+        toast.success("Video deleted")
+        loadVideos()
       } else {
         const data = await res.json()
-        toast.error(data.error || "Failed to delete slot")
+        toast.error(data.error || "Failed to delete")
       }
     } catch (error) {
-      toast.error("Failed to delete slot")
+      toast.error("Failed to delete")
     } finally {
       setDeleting(null)
     }
   }
 
-  // Calendar generation
-  const year = currentDate.getFullYear()
-  const month = currentDate.getMonth()
-  const firstDay = new Date(year, month, 1)
-  const lastDay = new Date(year, month + 1, 0)
-  const startPadding = firstDay.getDay()
-  const totalDays = lastDay.getDate()
+  const pendingVideos = videos.filter(v => !v.isCompleted)
+  const completedVideos = videos.filter(v => v.isCompleted)
 
-  const monthNames = ["January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December"]
-
-  const days = []
-  for (let i = 0; i < startPadding; i++) {
-    days.push(null)
-  }
-  for (let i = 1; i <= totalDays; i++) {
-    days.push(i)
-  }
-
-  function getDateString(day: number): string {
-    return `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`
-  }
-
-  function hasDataForDate(day: number): boolean {
-    return datesWithData.includes(getDateString(day))
-  }
-
-  function SlotCard({ slot, isToday = false }: { slot: Slot; isToday?: boolean }) {
-    const hasAnyFile = slot.hasTranscript || slot.hasScript || slot.hasAudio || slot.hasVideo || slot.hasThumbnail
+  function VideoCard({ video }: { video: VideoItem }) {
+    const hasAnyFile = video.hasTranscript || video.hasScript || video.hasAudio || video.hasVideo || video.hasThumbnail
 
     return (
       <div
         className={`p-4 rounded-lg border transition-all ${
-          slot.isCompleted
+          video.isCompleted
             ? "bg-zinc-900/80 border-zinc-700 opacity-60"
             : "bg-zinc-800/50 border-zinc-700 hover:border-zinc-600"
         }`}
       >
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <Badge variant={slot.isCompleted ? "secondary" : "default"} className="text-xs">
-              Slot {slot.slotNumber}
+            <Badge variant={video.isCompleted ? "secondary" : "default"} className="text-sm font-bold">
+              Video {video.videoNumber}
             </Badge>
-            {slot.isCompleted && (
-              <Badge variant="success" className="text-xs">
+            {video.isCompleted && (
+              <Badge variant="outline" className="text-xs text-green-400 border-green-500/30">
                 <Check className="w-3 h-3 mr-1" />
                 Uploaded
               </Badge>
@@ -245,22 +136,22 @@ export default function CalendarPage() {
           <div className="flex items-center gap-1">
             <Button
               size="sm"
-              variant={slot.isCompleted ? "secondary" : "outline"}
-              onClick={() => toggleComplete(slot, isToday)}
-              className={slot.isCompleted ? "bg-green-600/20 text-green-400 hover:bg-green-600/30" : ""}
+              variant={video.isCompleted ? "secondary" : "outline"}
+              onClick={() => toggleComplete(video)}
+              className={video.isCompleted ? "bg-green-600/20 text-green-400 hover:bg-green-600/30" : ""}
             >
               <Check className="w-4 h-4 mr-1" />
-              {slot.isCompleted ? "Done" : "Mark"}
+              {video.isCompleted ? "Done" : "Mark"}
             </Button>
-            {hasAnyFile && !slot.isCompleted && (
+            {hasAnyFile && !video.isCompleted && (
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={() => deleteSlot(slot)}
-                disabled={deleting === `${slot.date}_${slot.channelCode}_${slot.slotNumber}`}
+                onClick={() => deleteVideo(video)}
+                disabled={deleting === video.id}
                 className="text-red-400 hover:text-red-300 hover:bg-red-900/20"
               >
-                {deleting === `${slot.date}_${slot.channelCode}_${slot.slotNumber}` ? (
+                {deleting === video.id ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
                 ) : (
                   <Trash2 className="w-4 h-4" />
@@ -271,219 +162,147 @@ export default function CalendarPage() {
         </div>
 
         <div className="grid grid-cols-2 gap-2">
-          {/* Transcript */}
           <Button
             size="sm"
             variant="ghost"
-            disabled={!slot.hasTranscript || slot.isCompleted}
-            onClick={() => downloadFile(slot, "transcript")}
+            disabled={!video.hasTranscript}
+            onClick={() => downloadFile(video, "transcript")}
             className="justify-start text-xs h-9"
           >
             <FileText className="w-4 h-4 mr-2 text-blue-400" />
             Transcript
-            {slot.hasTranscript && <Download className="w-3 h-3 ml-auto" />}
+            {video.hasTranscript && <Download className="w-3 h-3 ml-auto" />}
           </Button>
 
-          {/* Script */}
           <Button
             size="sm"
             variant="ghost"
-            disabled={!slot.hasScript || slot.isCompleted}
-            onClick={() => downloadFile(slot, "script")}
+            disabled={!video.hasScript}
+            onClick={() => downloadFile(video, "script")}
             className="justify-start text-xs h-9"
           >
             <FileText className="w-4 h-4 mr-2 text-purple-400" />
             Script
-            {slot.hasScript && <Download className="w-3 h-3 ml-auto" />}
+            {video.hasScript && <Download className="w-3 h-3 ml-auto" />}
           </Button>
 
-          {/* Audio */}
           <Button
             size="sm"
             variant="ghost"
-            disabled={!slot.hasAudio || slot.isCompleted}
-            onClick={() => downloadFile(slot, "audio")}
+            disabled={!video.hasAudio}
+            onClick={() => downloadFile(video, "audio")}
             className="justify-start text-xs h-9"
           >
             <FileAudio className="w-4 h-4 mr-2 text-green-400" />
             Audio
-            {slot.hasAudio && (slot.gofileLink ? <ExternalLink className="w-3 h-3 ml-auto" /> : <Download className="w-3 h-3 ml-auto" />)}
+            {video.hasAudio && <ExternalLink className="w-3 h-3 ml-auto" />}
           </Button>
 
-          {/* Video */}
           <Button
             size="sm"
             variant="ghost"
-            disabled={!slot.hasVideo || slot.isCompleted}
-            onClick={() => downloadFile(slot, "video")}
+            disabled={!video.hasVideo}
+            onClick={() => downloadFile(video, "video")}
             className="justify-start text-xs h-9"
           >
             <Video className="w-4 h-4 mr-2 text-red-400" />
             Video
-            {slot.hasVideo && (slot.gofileLink ? <ExternalLink className="w-3 h-3 ml-auto" /> : <Download className="w-3 h-3 ml-auto" />)}
+            {video.hasVideo && <ExternalLink className="w-3 h-3 ml-auto" />}
           </Button>
 
-          {/* Thumbnail */}
           <Button
             size="sm"
             variant="ghost"
-            disabled={!slot.hasThumbnail || slot.isCompleted}
-            onClick={() => {
-              const url = `/api/slots/thumbnail?date=${slot.date}&channel=${slot.channelCode}&slot=${slot.slotNumber}`
-              window.open(url, "_blank")
-            }}
-            className="justify-start text-xs h-9"
+            disabled={!video.hasThumbnail}
+            onClick={() => downloadFile(video, "thumbnail")}
+            className="justify-start text-xs h-9 col-span-2"
           >
             <ImageIcon className="w-4 h-4 mr-2 text-pink-400" />
             Thumbnail
-            {slot.hasThumbnail && <Download className="w-3 h-3 ml-auto" />}
+            {video.hasThumbnail && <Download className="w-3 h-3 ml-auto" />}
           </Button>
         </div>
 
-        {!hasAnyFile && !slot.isCompleted && (
-          <p className="text-xs text-muted-foreground mt-2 text-center">No files yet</p>
+        {!hasAnyFile && (
+          <p className="text-xs text-muted-foreground mt-2 text-center">Processing...</p>
         )}
+      </div>
+    )
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="w-8 h-8 animate-spin" />
       </div>
     )
   }
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-xl sm:text-2xl md:text-3xl font-bold gradient-text">Calendar</h1>
-        <p className="text-muted-foreground text-sm mt-1">View and download organized content by date</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl sm:text-2xl md:text-3xl font-bold gradient-text">Organized Videos</h1>
+          <p className="text-muted-foreground text-sm mt-1">
+            {videos.length} videos total - {pendingVideos.length} pending, {completedVideos.length} uploaded
+          </p>
+        </div>
+        <Button variant="outline" size="sm" onClick={loadVideos}>
+          <RefreshCw className="w-4 h-4 mr-2" />
+          Refresh
+        </Button>
       </div>
 
-      {/* Today's Slots */}
-      <Card className="glass border-white/10">
-        <CardHeader className="pb-3">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <CardTitle className="flex items-center gap-2 text-lg">
-              <CalendarIcon className="w-5 h-5 text-cyan-400" />
-              Today - {today}
-            </CardTitle>
-            <Select value={todayChannel} onValueChange={setTodayChannel}>
-              <SelectTrigger className="w-full sm:w-48">
-                <SelectValue placeholder="Select channel" />
-              </SelectTrigger>
-              <SelectContent>
-                {targetChannels.map(ch => (
-                  <SelectItem key={ch.channel_code} value={ch.channel_code}>
-                    {ch.channel_name} ({ch.channel_code})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {todaySlots.map(slot => (
-              <SlotCard key={slot.slotNumber} slot={slot} isToday />
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Calendar */}
-      <Card className="glass border-white/10">
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <Button variant="ghost" size="icon" onClick={() => setCurrentDate(new Date(year, month - 1))}>
-              <ChevronLeft className="w-5 h-5" />
-            </Button>
-            <CardTitle className="text-lg">
-              {monthNames[month]} {year}
-            </CardTitle>
-            <Button variant="ghost" size="icon" onClick={() => setCurrentDate(new Date(year, month + 1))}>
-              <ChevronRight className="w-5 h-5" />
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {/* Day headers */}
-          <div className="grid grid-cols-7 gap-1 mb-2">
-            {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(day => (
-              <div key={day} className="text-center text-xs text-muted-foreground py-2">
-                {day}
-              </div>
-            ))}
-          </div>
-
-          {/* Calendar grid */}
-          <div className="grid grid-cols-7 gap-1">
-            {days.map((day, idx) => {
-              if (day === null) {
-                return <div key={idx} className="aspect-square" />
-              }
-
-              const dateStr = getDateString(day)
-              const isToday = dateStr === today
-              const isSelected = dateStr === selectedDate
-              const hasData = hasDataForDate(day)
-
-              return (
-                <button
-                  key={idx}
-                  onClick={() => {
-                    setSelectedDate(dateStr)
-                    if (targetChannels.length > 0) {
-                      setSelectedChannel(targetChannels[0].channel_code)
-                    }
-                  }}
-                  className={`
-                    aspect-square rounded-lg text-sm font-medium transition-all
-                    flex flex-col items-center justify-center gap-1
-                    ${isToday ? "ring-2 ring-cyan-500" : ""}
-                    ${isSelected ? "bg-violet-600 text-white" : "hover:bg-zinc-800"}
-                    ${hasData && !isSelected ? "bg-zinc-800/50" : ""}
-                  `}
-                >
-                  {day}
-                  {hasData && (
-                    <div className={`w-1.5 h-1.5 rounded-full ${isSelected ? "bg-white" : "bg-cyan-400"}`} />
-                  )}
-                </button>
-              )
-            })}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Selected Date Slots */}
-      {selectedDate && (
+      {videos.length === 0 ? (
         <Card className="glass border-white/10">
-          <CardHeader className="pb-3">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <CardTitle className="text-lg">{selectedDate}</CardTitle>
-              <Select value={selectedChannel} onValueChange={setSelectedChannel}>
-                <SelectTrigger className="w-full sm:w-48">
-                  <SelectValue placeholder="Select channel" />
-                </SelectTrigger>
-                <SelectContent>
-                  {targetChannels.map(ch => (
-                    <SelectItem key={ch.channel_code} value={ch.channel_code}>
-                      {ch.channel_name} ({ch.channel_code})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {loading ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="w-6 h-6 animate-spin" />
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                {slots.map(slot => (
-                  <SlotCard key={slot.slotNumber} slot={slot} />
-                ))}
-              </div>
-            )}
+          <CardContent className="py-12 text-center">
+            <FolderOpen className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+            <p className="text-muted-foreground">No videos yet</p>
+            <p className="text-sm text-muted-foreground mt-1">
+              Process videos from the Videos page to see them here
+            </p>
           </CardContent>
         </Card>
+      ) : (
+        <>
+          {/* Pending Videos */}
+          {pendingVideos.length > 0 && (
+            <Card className="glass border-white/10">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-amber-500" />
+                  Pending ({pendingVideos.length})
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                  {pendingVideos.map(video => (
+                    <VideoCard key={video.id} video={video} />
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Completed Videos */}
+          {completedVideos.length > 0 && (
+            <Card className="glass border-white/10">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-green-500" />
+                  Uploaded ({completedVideos.length})
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                  {completedVideos.map(video => (
+                    <VideoCard key={video.id} video={video} />
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </>
       )}
     </div>
   )
