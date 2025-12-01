@@ -24,7 +24,6 @@ interface ImageFolder {
 
 interface ThumbnailTemplate {
   id: string
-  channelCode: string
   name: string
   backgroundImageFolder: string
   overlayImage: string
@@ -70,7 +69,6 @@ export function ThumbnailEditor({
 
   // Template state
   const [name, setName] = useState(template?.name || "New Template")
-  const [channelCode, setChannelCode] = useState(template?.channelCode || "default")
   const [bgFolder, setBgFolder] = useState(template?.backgroundImageFolder || imageFolders[0]?.name || "nature")
   const [overlayImg, setOverlayImg] = useState(template?.overlayImage || "")
   const [overlays, setOverlays] = useState<string[]>(overlayImages)
@@ -422,7 +420,6 @@ export function ThumbnailEditor({
     setSaving(true)
     const templateData: ThumbnailTemplate = {
       id: template?.id || `template_${Date.now()}`,
-      channelCode,
       name,
       backgroundImageFolder: bgFolder,
       overlayImage: overlayImg,

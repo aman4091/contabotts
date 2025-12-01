@@ -69,7 +69,6 @@ interface AudioFile {
 
 interface ThumbnailTemplate {
   id: string
-  channelCode: string
   name: string
   backgroundImageFolder: string
   overlayImage: string
@@ -386,7 +385,6 @@ export default function SettingsPage() {
   function createNewTemplate() {
     setEditingTemplate({
       id: `template_${Date.now()}`,
-      channelCode: "default",
       name: "New Template",
       backgroundImageFolder: imageFolders[0]?.name || "nature",
       overlayImage: "",
@@ -891,7 +889,7 @@ export default function SettingsPage() {
                         <div>
                           <div className="font-medium text-foreground">{template.name}</div>
                           <div className="text-sm text-muted-foreground">
-                            {template.channelCode} | BG: {template.backgroundImageFolder} | Font: {template.textBox.fontFamily}
+                            BG: {template.backgroundImageFolder} | Font: {template.textBox.fontFamily}
                           </div>
                         </div>
                       </div>
