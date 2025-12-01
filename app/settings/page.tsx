@@ -39,13 +39,6 @@ interface SourceChannel {
   is_active: boolean
 }
 
-interface TargetChannel {
-  channel_code: string
-  channel_name: string
-  reference_audio: string
-  image_folder?: string
-  is_active: boolean
-}
 
 interface Settings {
   prompts: {
@@ -99,7 +92,6 @@ interface ThumbnailTemplate {
 
 export default function SettingsPage() {
   const [sourceChannels, setSourceChannels] = useState<SourceChannel[]>([])
-  const [targetChannels, setTargetChannels] = useState<TargetChannel[]>([])
   const [settings, setSettings] = useState<Settings | null>(null)
   const [imageFolders, setImageFolders] = useState<ImageFolder[]>([])
   const [audioFiles, setAudioFiles] = useState<AudioFile[]>([])
@@ -121,16 +113,6 @@ export default function SettingsPage() {
     channel_name: "",
     youtube_channel_url: ""
   })
-  const [newTarget, setNewTarget] = useState({
-    channel_code: "",
-    channel_name: "",
-    reference_audio: "",
-    image_folder: ""
-  })
-
-  // Edit target channel
-  const [editingChannel, setEditingChannel] = useState<TargetChannel | null>(null)
-  const [savingEdit, setSavingEdit] = useState(false)
 
   // Image folder states
   const [newFolderName, setNewFolderName] = useState("")
@@ -166,9 +148,8 @@ export default function SettingsPage() {
   async function loadAll() {
     setLoading(true)
     try {
-      const [sourceRes, targetRes, settingsRes, foldersRes, audioRes, templatesRes, overlaysRes, videoFetchRes] = await Promise.all([
+      const [sourceRes, settingsRes, foldersRes, audioRes, templatesRes, overlaysRes, videoFetchRes] = await Promise.all([
         fetch("/api/source-channels"),
-        fetch("/api/target-channels"),
         fetch("/api/settings"),
         fetch("/api/images/folders"),
         fetch("/api/reference-audio"),
@@ -178,7 +159,6 @@ export default function SettingsPage() {
       ])
 
       const sourceData = await sourceRes.json()
-      const targetData = await targetRes.json()
       const settingsData = await settingsRes.json()
       const foldersData = await foldersRes.json()
       const audioData = await audioRes.json()
@@ -187,7 +167,6 @@ export default function SettingsPage() {
       const videoFetchData = await videoFetchRes.json()
 
       setSourceChannels(sourceData.channels || [])
-      setTargetChannels(targetData.channels || [])
       setSettings(settingsData)
       setImageFolders(foldersData.folders || [])
       setAudioFiles(audioData.files || [])
@@ -263,78 +242,6 @@ export default function SettingsPage() {
   async function deleteSourceChannel(code: string) {
     try {
       const res = await fetch(`/api/source-channels?code=${code}`, {
-        method: "DELETE"
-      })
-
-      if (res.ok) {
-        toast.success("Channel deleted")
-        loadAll()
-      } else {
-        toast.error("Failed to delete channel")
-      }
-    } catch (error) {
-      toast.error("Failed to delete channel")
-    }
-  }
-
-  async function addTargetChannel() {
-    if (!newTarget.channel_code || !newTarget.channel_name || !newTarget.reference_audio) {
-      toast.error("Code, Name and Reference Audio required")
-      return
-    }
-
-    try {
-      const res = await fetch("/api/target-channels", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...newTarget,
-          is_active: true
-        })
-      })
-
-      if (res.ok) {
-        toast.success("Target channel added")
-        setNewTarget({ channel_code: "", channel_name: "", reference_audio: "", image_folder: "" })
-        loadAll()
-      } else {
-        const data = await res.json()
-        toast.error(data.error || "Failed to add channel")
-      }
-    } catch (error) {
-      toast.error("Failed to add channel")
-    }
-  }
-
-  async function updateTargetChannel() {
-    if (!editingChannel) return
-
-    setSavingEdit(true)
-    try {
-      const res = await fetch("/api/target-channels", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(editingChannel)
-      })
-
-      if (res.ok) {
-        toast.success("Channel updated")
-        setEditingChannel(null)
-        loadAll()
-      } else {
-        const data = await res.json()
-        toast.error(data.error || "Failed to update channel")
-      }
-    } catch (error) {
-      toast.error("Failed to update channel")
-    } finally {
-      setSavingEdit(false)
-    }
-  }
-
-  async function deleteTargetChannel(code: string) {
-    try {
-      const res = await fetch(`/api/target-channels?code=${code}`, {
         method: "DELETE"
       })
 
@@ -479,7 +386,7 @@ export default function SettingsPage() {
   function createNewTemplate() {
     setEditingTemplate({
       id: `template_${Date.now()}`,
-      channelCode: targetChannels[0]?.channel_code || "",
+      channelCode: "default",
       name: "New Template",
       backgroundImageFolder: imageFolders[0]?.name || "nature",
       overlayImage: "",
@@ -739,7 +646,6 @@ export default function SettingsPage() {
       <Tabs defaultValue="videos" className="space-y-4">
         <TabsList className="flex flex-wrap h-auto gap-1">
           <TabsTrigger value="videos" className="text-xs sm:text-sm">Video Grid</TabsTrigger>
-          <TabsTrigger value="target" className="text-xs sm:text-sm">Target</TabsTrigger>
           <TabsTrigger value="images" className="text-xs sm:text-sm">Images</TabsTrigger>
           <TabsTrigger value="thumbnails" className="text-xs sm:text-sm">Thumbnails</TabsTrigger>
           <TabsTrigger value="source" className="text-xs sm:text-sm">Source</TabsTrigger>
@@ -837,213 +743,6 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
-        {/* Target Channels Tab */}
-        <TabsContent value="target" className="space-y-4">
-          <Card className="glass border-white/10">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-emerald-400" />
-                Target Channels
-              </CardTitle>
-              <CardDescription>Output channels for generated audio/video</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {/* Existing channels */}
-              <div className="space-y-2">
-                {targetChannels.map(channel => (
-                  <div key={channel.channel_code}>
-                    {editingChannel?.channel_code === channel.channel_code ? (
-                      // Edit mode
-                      <div className="p-4 border border-emerald-500/50 rounded-lg bg-emerald-500/5 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <span className="font-medium text-emerald-400">Editing: {channel.channel_code}</span>
-                          <Button variant="ghost" size="sm" onClick={() => setEditingChannel(null)}>
-                            <X className="w-4 h-4" />
-                          </Button>
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div>
-                            <Label className="text-xs text-muted-foreground">Reference Audio</Label>
-                            <Select
-                              value={editingChannel.reference_audio}
-                              onValueChange={v => setEditingChannel({ ...editingChannel, reference_audio: v })}
-                            >
-                              <SelectTrigger className="mt-1">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {audioFiles.map(audio => (
-                                  <SelectItem key={audio.name} value={audio.name}>
-                                    {audio.name} ({audio.sizeFormatted})
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div>
-                            <Label className="text-xs text-muted-foreground">Image Folder</Label>
-                            <Select
-                              value={editingChannel.image_folder || ""}
-                              onValueChange={v => setEditingChannel({ ...editingChannel, image_folder: v })}
-                            >
-                              <SelectTrigger className="mt-1">
-                                <SelectValue placeholder="Select folder" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {imageFolders.map(folder => (
-                                  <SelectItem key={folder.name} value={folder.name}>
-                                    {folder.name} ({folder.imageCount} images)
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        </div>
-                        <Button
-                          size="sm"
-                          onClick={updateTargetChannel}
-                          disabled={savingEdit}
-                          className="bg-emerald-600 hover:bg-emerald-500"
-                        >
-                          {savingEdit ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Check className="w-4 h-4 mr-1" />}
-                          Save Changes
-                        </Button>
-                      </div>
-                    ) : (
-                      // View mode
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3 border border-border rounded gap-2 hover:border-emerald-500/30 transition-colors">
-                        <div className="min-w-0 flex-1">
-                          <div className="font-medium text-foreground">{channel.channel_name}</div>
-                          <div className="text-sm text-muted-foreground truncate">
-                            {channel.channel_code} | Audio: {channel.reference_audio} | Images: {channel.image_folder || "nature"}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 self-end sm:self-auto">
-                          <Badge variant={channel.is_active ? "success" : "secondary"}>
-                            {channel.is_active ? "Active" : "Inactive"}
-                          </Badge>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setEditingChannel({ ...channel })}
-                            className="border-blue-500/30 text-blue-400 hover:bg-blue-500/10"
-                          >
-                            <Edit2 className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => deleteTargetChannel(channel.channel_code)}
-                          >
-                            <Trash2 className="w-4 h-4 text-red-500" />
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-
-              {/* Add new */}
-              <div className="border-t border-border pt-4">
-                <h4 className="font-medium mb-3 text-foreground">Add New Target Channel</h4>
-
-                {/* Upload Audio Section */}
-                {showAudioUpload ? (
-                  <div className="mb-4 p-3 rounded-lg border border-cyan-500/30 bg-cyan-500/5">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Music className="w-4 h-4 text-cyan-400" />
-                      <span className="text-sm font-medium">Upload Reference Audio</span>
-                    </div>
-                    <div className="flex gap-2">
-                      <Input
-                        placeholder="Audio name (optional)"
-                        value={newAudioName}
-                        onChange={e => setNewAudioName(e.target.value)}
-                        className="flex-1"
-                      />
-                      <Button
-                        onClick={triggerAudioUpload}
-                        disabled={uploadingAudio}
-                        className="bg-cyan-600 hover:bg-cyan-500"
-                      >
-                        {uploadingAudio ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-                        <span className="ml-1">Select File</span>
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => setShowAudioUpload(false)}>
-                        <X className="w-4 h-4" />
-                      </Button>
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-1">Supports .wav and .mp3</p>
-                  </div>
-                ) : null}
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <Input
-                    placeholder="Code (e.g., BI)"
-                    value={newTarget.channel_code}
-                    onChange={e => setNewTarget(s => ({ ...s, channel_code: e.target.value.toUpperCase() }))}
-                  />
-                  <Input
-                    placeholder="Name"
-                    value={newTarget.channel_name}
-                    onChange={e => setNewTarget(s => ({ ...s, channel_name: e.target.value }))}
-                  />
-                  <div className="flex gap-2">
-                    <Select
-                      value={newTarget.reference_audio}
-                      onValueChange={v => setNewTarget(s => ({ ...s, reference_audio: v }))}
-                    >
-                      <SelectTrigger className="flex-1">
-                        <SelectValue placeholder="Select Reference Audio" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {audioFiles.map(audio => (
-                          <SelectItem key={audio.name} value={audio.name}>
-                            {audio.name} ({audio.sizeFormatted})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      onClick={() => setShowAudioUpload(true)}
-                      className="border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10"
-                      title="Upload new audio"
-                    >
-                      <Plus className="w-4 h-4" />
-                    </Button>
-                  </div>
-                  <Select
-                    value={newTarget.image_folder}
-                    onValueChange={v => setNewTarget(s => ({ ...s, image_folder: v }))}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select Image Folder" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {imageFolders.map(folder => (
-                        <SelectItem key={folder.name} value={folder.name}>
-                          {folder.name} ({folder.imageCount} images)
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <Button
-                  className="mt-2 bg-gradient-to-r from-violet-600 to-cyan-500 hover:from-violet-500 hover:to-cyan-400 border-0 text-white"
-                  onClick={addTargetChannel}
-                >
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add Channel
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
         {/* Images Tab */}
         <TabsContent value="images" className="space-y-4">
           <Card className="glass border-white/10">
@@ -1131,7 +830,6 @@ export default function SettingsPage() {
                 <ThumbnailEditor
                   template={editingTemplate}
                   imageFolders={imageFolders}
-                  targetChannels={targetChannels}
                   overlayImages={overlayImages}
                   onSave={async (template) => {
                     try {

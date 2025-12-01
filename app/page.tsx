@@ -3,9 +3,11 @@
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
 import { toast } from "sonner"
-import { Loader2, RefreshCw, Settings, Youtube } from "lucide-react"
+import { Loader2, RefreshCw, Settings, Youtube, Search, X } from "lucide-react"
 import { VideoPopup } from "@/components/video-popup"
+import { TranscriptPopup } from "@/components/transcript-popup"
 import Link from "next/link"
 
 interface Video {
@@ -54,6 +56,13 @@ export default function HomePage() {
   const [audioFiles, setAudioFiles] = useState<AudioFile[]>([])
   const [defaultReferenceAudio, setDefaultReferenceAudio] = useState("")
   const [prompt, setPrompt] = useState("")
+
+  // YouTube URL input state
+  const [youtubeUrl, setYoutubeUrl] = useState("")
+  const [fetchingTranscript, setFetchingTranscript] = useState(false)
+  const [showTranscriptPopup, setShowTranscriptPopup] = useState(false)
+  const [urlTranscript, setUrlTranscript] = useState("")
+  const [urlVideoId, setUrlVideoId] = useState("")
 
   useEffect(() => {
     loadVideos(1)
@@ -160,6 +169,57 @@ export default function HomePage() {
     loadVideos(1)
   }
 
+  // Extract videoId from YouTube URL
+  function extractVideoId(url: string): string | null {
+    const patterns = [
+      /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\s?]+)/,
+      /^([a-zA-Z0-9_-]{11})$/
+    ]
+    for (const pattern of patterns) {
+      const match = url.match(pattern)
+      if (match) return match[1]
+    }
+    return null
+  }
+
+  async function handleProcessUrl() {
+    if (!youtubeUrl.trim()) {
+      toast.error("Enter YouTube URL")
+      return
+    }
+
+    const videoId = extractVideoId(youtubeUrl.trim())
+    if (!videoId) {
+      toast.error("Invalid YouTube URL")
+      return
+    }
+
+    setFetchingTranscript(true)
+    try {
+      const res = await fetch(`/api/videos/transcript?videoId=${videoId}`)
+      const data = await res.json()
+
+      if (res.ok && data.transcript) {
+        setUrlTranscript(data.transcript)
+        setUrlVideoId(videoId)
+        setShowTranscriptPopup(true)
+      } else {
+        toast.error(data.error || "Failed to fetch transcript")
+      }
+    } catch (error) {
+      toast.error("Failed to fetch transcript")
+    } finally {
+      setFetchingTranscript(false)
+    }
+  }
+
+  function handleCloseTranscriptPopup() {
+    setShowTranscriptPopup(false)
+    setUrlTranscript("")
+    setUrlVideoId("")
+    setYoutubeUrl("")
+  }
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-20">
@@ -169,29 +229,112 @@ export default function HomePage() {
     )
   }
 
-  // No videos fetched yet - show setup message
+  // No videos fetched yet - show setup message with URL input
   if (videos.length === 0 && !channelName) {
     return (
-      <div className="flex flex-col items-center justify-center py-20">
-        <div className="w-16 h-16 rounded-full bg-red-500/10 flex items-center justify-center mb-4">
-          <Youtube className="w-8 h-8 text-red-500" />
-        </div>
-        <h2 className="text-xl font-semibold mb-2">No Videos Yet</h2>
-        <p className="text-muted-foreground text-center mb-6 max-w-md">
-          Set up your source channel in Settings to fetch videos from YouTube.
-        </p>
-        <Link href="/settings">
-          <Button className="bg-gradient-to-r from-violet-600 to-cyan-500 hover:from-violet-500 hover:to-cyan-400">
-            <Settings className="w-4 h-4 mr-2" />
-            Go to Settings
+      <div className="space-y-6">
+        {/* YouTube URL Input */}
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <Youtube className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-red-500" />
+            <Input
+              value={youtubeUrl}
+              onChange={e => setYoutubeUrl(e.target.value)}
+              placeholder="Paste YouTube video URL..."
+              className="pl-10 pr-10"
+              onKeyDown={e => e.key === "Enter" && handleProcessUrl()}
+            />
+            {youtubeUrl && (
+              <button
+                onClick={() => setYoutubeUrl("")}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+          <Button
+            onClick={handleProcessUrl}
+            disabled={fetchingTranscript || !youtubeUrl.trim()}
+            className="bg-gradient-to-r from-violet-600 to-cyan-500 hover:from-violet-500 hover:to-cyan-400"
+          >
+            {fetchingTranscript ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Search className="w-4 h-4" />
+            )}
+            <span className="ml-2 hidden sm:inline">Process</span>
           </Button>
-        </Link>
+        </div>
+
+        {/* Setup Message */}
+        <div className="flex flex-col items-center justify-center py-12">
+          <div className="w-16 h-16 rounded-full bg-red-500/10 flex items-center justify-center mb-4">
+            <Youtube className="w-8 h-8 text-red-500" />
+          </div>
+          <h2 className="text-xl font-semibold mb-2">No Videos Yet</h2>
+          <p className="text-muted-foreground text-center mb-6 max-w-md">
+            Paste a YouTube URL above or set up your source channel in Settings.
+          </p>
+          <Link href="/settings">
+            <Button className="bg-gradient-to-r from-violet-600 to-cyan-500 hover:from-violet-500 hover:to-cyan-400">
+              <Settings className="w-4 h-4 mr-2" />
+              Go to Settings
+            </Button>
+          </Link>
+        </div>
+
+        {/* Transcript Popup for URL */}
+        {showTranscriptPopup && (
+          <TranscriptPopup
+            transcript={urlTranscript}
+            videoId={urlVideoId}
+            audioFiles={audioFiles}
+            defaultReferenceAudio={defaultReferenceAudio}
+            prompt={prompt}
+            onClose={handleCloseTranscriptPopup}
+          />
+        )}
       </div>
     )
   }
 
   return (
     <div className="space-y-6">
+      {/* YouTube URL Input */}
+      <div className="flex gap-2">
+        <div className="relative flex-1">
+          <Youtube className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-red-500" />
+          <Input
+            value={youtubeUrl}
+            onChange={e => setYoutubeUrl(e.target.value)}
+            placeholder="Paste YouTube video URL..."
+            className="pl-10 pr-10"
+            onKeyDown={e => e.key === "Enter" && handleProcessUrl()}
+          />
+          {youtubeUrl && (
+            <button
+              onClick={() => setYoutubeUrl("")}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+        <Button
+          onClick={handleProcessUrl}
+          disabled={fetchingTranscript || !youtubeUrl.trim()}
+          className="bg-gradient-to-r from-violet-600 to-cyan-500 hover:from-violet-500 hover:to-cyan-400"
+        >
+          {fetchingTranscript ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Search className="w-4 h-4" />
+          )}
+          <span className="ml-2 hidden sm:inline">Process</span>
+        </Button>
+      </div>
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
@@ -289,6 +432,18 @@ export default function HomePage() {
           onClose={() => setSelectedVideo(null)}
           onSkip={handleSkip}
           onAddToQueue={handleAddToQueue}
+        />
+      )}
+
+      {/* Transcript Popup for URL */}
+      {showTranscriptPopup && (
+        <TranscriptPopup
+          transcript={urlTranscript}
+          videoId={urlVideoId}
+          audioFiles={audioFiles}
+          defaultReferenceAudio={defaultReferenceAudio}
+          prompt={prompt}
+          onClose={handleCloseTranscriptPopup}
         />
       )}
     </div>

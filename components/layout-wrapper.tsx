@@ -4,19 +4,17 @@ import { useState, useEffect, createContext, useContext, ReactNode } from "react
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import {
-  LayoutDashboard,
   FileAudio,
   Settings,
-  Mic2,
   Menu,
   X,
   Subtitles,
   LogOut,
   User,
   Calendar,
-  Zap,
-  Image as ImageIcon,
-  Youtube
+  Youtube,
+  Mic2,
+  ImageIcon
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -35,11 +33,9 @@ const LayoutContext = createContext<{
 
 const navItems = [
   { title: "Videos", href: "/", icon: Youtube },
-  { title: "Process", href: "/process", icon: LayoutDashboard },
   { title: "Calendar", href: "/calendar", icon: Calendar },
+  { title: "Thumbnails", href: "/titles-thumbnails", icon: ImageIcon },
   { title: "Queue", href: "/audio-files", icon: FileAudio },
-  { title: "Auto", href: "/auto-processing", icon: Zap },
-  { title: "Titles", href: "/titles-thumbnails", icon: ImageIcon },
   { title: "Subtitles", href: "/subtitle-settings", icon: Subtitles },
   { title: "Settings", href: "/settings", icon: Settings }
 ]

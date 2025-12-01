@@ -22,14 +22,6 @@ export interface SourceChannel {
   is_active: boolean
 }
 
-export interface TargetChannel {
-  channel_code: string
-  channel_name: string
-  reference_audio: string
-  image_folder?: string
-  is_active: boolean
-}
-
 export interface Settings {
   prompts: {
     youtube: string
@@ -89,27 +81,6 @@ export function saveSourceChannels(channels: SourceChannel[], username?: string)
   const dataDir = getUserDataDir(username)
   ensureDir(dataDir)
   const filePath = path.join(dataDir, 'source-channels.json')
-  fs.writeFileSync(filePath, JSON.stringify({ channels }, null, 2))
-}
-
-// Target Channels
-export function getTargetChannels(username?: string): TargetChannel[] {
-  const dataDir = getUserDataDir(username)
-  const filePath = path.join(dataDir, 'target-channels.json')
-  if (!fs.existsSync(filePath)) return []
-  try {
-    const content = fs.readFileSync(filePath, 'utf-8')
-    const data = JSON.parse(content)
-    return data.channels || data || []
-  } catch {
-    return []
-  }
-}
-
-export function saveTargetChannels(channels: TargetChannel[], username?: string): void {
-  const dataDir = getUserDataDir(username)
-  ensureDir(dataDir)
-  const filePath = path.join(dataDir, 'target-channels.json')
   fs.writeFileSync(filePath, JSON.stringify({ channels }, null, 2))
 }
 

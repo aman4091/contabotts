@@ -22,11 +22,6 @@ interface ImageFolder {
   imageCount: number
 }
 
-interface TargetChannel {
-  channel_code: string
-  channel_name: string
-}
-
 interface ThumbnailTemplate {
   id: string
   channelCode: string
@@ -53,7 +48,6 @@ interface ThumbnailTemplate {
 interface Props {
   template?: ThumbnailTemplate | null
   imageFolders: ImageFolder[]
-  targetChannels: TargetChannel[]
   overlayImages: string[]
   onSave: (template: ThumbnailTemplate) => void
   onClose: () => void
@@ -66,7 +60,6 @@ const SCALE = 0.5 // Display at 50% size
 export function ThumbnailEditor({
   template,
   imageFolders,
-  targetChannels,
   overlayImages,
   onSave,
   onClose
@@ -77,7 +70,7 @@ export function ThumbnailEditor({
 
   // Template state
   const [name, setName] = useState(template?.name || "New Template")
-  const [channelCode, setChannelCode] = useState(template?.channelCode || targetChannels[0]?.channel_code || "")
+  const [channelCode, setChannelCode] = useState(template?.channelCode || "default")
   const [bgFolder, setBgFolder] = useState(template?.backgroundImageFolder || imageFolders[0]?.name || "nature")
   const [overlayImg, setOverlayImg] = useState(template?.overlayImage || "")
   const [overlays, setOverlays] = useState<string[]>(overlayImages)
@@ -479,21 +472,9 @@ export function ThumbnailEditor({
           <Input
             value={name}
             onChange={e => setName(e.target.value)}
-            className="w-48 font-medium"
+            className="w-64 font-medium"
             placeholder="Template name"
           />
-          <Select value={channelCode} onValueChange={setChannelCode}>
-            <SelectTrigger className="w-32">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {targetChannels.map(ch => (
-                <SelectItem key={ch.channel_code} value={ch.channel_code}>
-                  {ch.channel_code}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={handleDownload}>

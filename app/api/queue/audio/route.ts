@@ -4,14 +4,9 @@ import { randomUUID } from "crypto"
 import fs from "fs"
 import path from "path"
 import {
-  saveToOrganized,
-  getNextVideoNumber,
-  completeTranscript,
-  getTranscript,
-  getTargetChannels,
   getSettings
 } from "@/lib/file-storage"
-import { getTomorrowDate, addDays } from "@/lib/utils"
+import { getTomorrowDate } from "@/lib/utils"
 
 const DATA_DIR = process.env.DATA_DIR || "/root/tts/data"
 
@@ -23,8 +18,6 @@ async function getUser() {
   const cookieStore = await cookies()
   return cookieStore.get("user")?.value
 }
-
-const MAX_VIDEOS_PER_DAY = 4
 
 async function getNextAudioCounter(): Promise<number> {
   try {
@@ -143,190 +136,73 @@ export async function POST(request: NextRequest) {
     const {
       script,
       transcript,
-      targetChannel,
-      sourceChannel,
-      transcriptIndex,
-      date: customDate,
-      slot: customSlot,
-      priority: customPriority,
-      audioEnabled = true,  // Default to true for backward compatibility
-      // New simplified system params
       videoTitle,
       videoId,
+      audioEnabled = true,
       referenceAudio: customReferenceAudio
     } = body
-
-    // New simplified system: no target channel required
-    const isSimplifiedMode = videoTitle && videoId && !targetChannel
 
     if (!script) {
       return NextResponse.json({ error: "Script required" }, { status: 400 })
     }
 
-    if (!isSimplifiedMode && !targetChannel) {
-      return NextResponse.json({ error: "Script and target channel required" }, { status: 400 })
+    // Get settings for reference audio
+    const settings = getSettings(username)
+    const referenceAudio = customReferenceAudio || settings.defaultReferenceAudio
+
+    if (!referenceAudio) {
+      return NextResponse.json({ error: "No reference audio specified. Set default voice in Settings." }, { status: 400 })
     }
 
-    // Simplified mode: sequential video numbering
-    if (isSimplifiedMode) {
-      const settings = getSettings(username)
-      const referenceAudio = customReferenceAudio || settings.defaultReferenceAudio
+    // Get next sequential video number
+    const videoNumber = getNextSequentialVideoNumber()
+    const folderName = `video_${videoNumber}`
 
-      if (!referenceAudio) {
-        return NextResponse.json({ error: "No reference audio specified. Set default voice in Settings." }, { status: 400 })
-      }
+    // Save files
+    saveToSimplifiedOrganized(videoNumber, transcript || "", script)
 
-      // Get next sequential video number
-      const videoNumber = getNextSequentialVideoNumber()
-      const folderName = `video_${videoNumber}`
-
-      // Save files
-      saveToSimplifiedOrganized(videoNumber, transcript || "", script)
-
-      // Get audio counter
-      const audioCounter = await getNextAudioCounter()
-
-      // If audio is disabled, skip creating job
-      if (!audioEnabled) {
-        return NextResponse.json({
-          success: true,
-          jobId: null,
-          folderName,
-          videoNumber,
-          audioCounter,
-          organizedPath: `/organized/${folderName}`,
-          audioSkipped: true
-        })
-      }
-
-      // Create audio job
-      const jobId = randomUUID()
-      const result = await createAudioJob({
-        job_id: jobId,
-        script_text: script,
-        channel_code: "VIDEO",  // Generic channel code for simplified system
-        video_number: videoNumber,
-        date: getTomorrowDate(),
-        audio_counter: audioCounter,
-        organized_path: `/organized/${folderName}`,
-        priority: 5,
-        username,
-        reference_audio: referenceAudio
-      })
-
-      if (!result.success) {
-        return NextResponse.json({ error: "Failed to create audio job" }, { status: 500 })
-      }
-
-      return NextResponse.json({
-        success: true,
-        jobId: result.job_id,
-        folderName,
-        videoNumber,
-        audioCounter,
-        organizedPath: `/organized/${folderName}`
-      })
-    }
-
-    // Priority mode: use exact date and slot (for replacing deleted slots)
-    let date: string
-    let videoNumber: number
-
-    if (customDate && customSlot) {
-      // Use exact date and slot specified (priority replacement)
-      date = customDate
-      videoNumber = parseInt(customSlot)
-    } else {
-      // Find next available slot (max 4 videos per day per channel)
-      date = customDate || getTomorrowDate()
-      videoNumber = getNextVideoNumber(date, targetChannel)
-      let daysChecked = 0
-      const maxDaysAhead = 30
-
-      while (videoNumber > MAX_VIDEOS_PER_DAY && daysChecked < maxDaysAhead) {
-        daysChecked++
-        date = addDays(getTomorrowDate(), daysChecked)
-        videoNumber = getNextVideoNumber(date, targetChannel)
-      }
-
-      if (videoNumber > MAX_VIDEOS_PER_DAY) {
-        return NextResponse.json({ error: `No available slots for ${targetChannel} in next ${maxDaysAhead} days` }, { status: 400 })
-      }
-    }
-
-    // Get audio counter from file server
+    // Get audio counter
     const audioCounter = await getNextAudioCounter()
 
-    // Create organized folder and save files
-    const organizedPath = `/organized/${date}/${targetChannel}/video_${videoNumber}`
-
-    // Get full transcript content if not provided
-    let fullTranscript = transcript
-    if (!fullTranscript && sourceChannel && transcriptIndex) {
-      fullTranscript = getTranscript(sourceChannel, transcriptIndex, username) || ""
-    }
-
-    // Save to organized folder
-    saveToOrganized(date, targetChannel, videoNumber, fullTranscript, script)
-
-    // Move transcript to completed folder
-    if (sourceChannel && transcriptIndex) {
-      completeTranscript(sourceChannel, transcriptIndex, username)
-    }
-
-    // If audio is disabled, skip creating audio job - only save files
+    // If audio is disabled, skip creating job
     if (!audioEnabled) {
       return NextResponse.json({
         success: true,
         jobId: null,
-        channelCode: targetChannel,
-        videoNumber: videoNumber,
-        date: date,
-        audioCounter: audioCounter,
-        organizedPath: organizedPath,
+        folderName,
+        videoNumber,
+        audioCounter,
+        organizedPath: `/organized/${folderName}`,
         audioSkipped: true
       })
     }
 
-    // Priority: 10 for replacement jobs, 5 for manual jobs, 1 for auto-processing
-    // Manual dashboard jobs get priority 5 (higher than auto-processing which uses 1)
-    const jobPriority = customPriority ? parseInt(customPriority) : (customSlot ? 10 : 5)
-
-    // Get target channel's config (image folder + reference audio)
-    const targetChannels = getTargetChannels(username)
-    const targetChannelConfig = targetChannels.find(c => c.channel_code === targetChannel)
-    const imageFolder = targetChannelConfig?.image_folder || undefined
-    const referenceAudio = targetChannelConfig?.reference_audio || `${targetChannel}.wav`
-
-    // Create job via File Server (not Supabase!)
+    // Create audio job
     const jobId = randomUUID()
     const result = await createAudioJob({
       job_id: jobId,
       script_text: script,
-      channel_code: targetChannel,
+      channel_code: "VIDEO",
       video_number: videoNumber,
-      date: date,
+      date: getTomorrowDate(),
       audio_counter: audioCounter,
-      organized_path: organizedPath,
-      priority: jobPriority,
-      username: username,
-      image_folder: imageFolder,
+      organized_path: `/organized/${folderName}`,
+      priority: 5,
+      username,
       reference_audio: referenceAudio
     })
 
     if (!result.success) {
-      console.error("Job creation error:", result.error)
-      return NextResponse.json({ error: "Failed to create job" }, { status: 500 })
+      return NextResponse.json({ error: "Failed to create audio job" }, { status: 500 })
     }
 
     return NextResponse.json({
       success: true,
       jobId: result.job_id,
-      channelCode: targetChannel,
-      videoNumber: videoNumber,
-      date: date,
-      audioCounter: audioCounter,
-      organizedPath: organizedPath
+      folderName,
+      videoNumber,
+      audioCounter,
+      organizedPath: `/organized/${folderName}`
     })
   } catch (error) {
     console.error("Error adding to queue:", error)
