@@ -448,7 +448,16 @@ async def process_job(job: Dict) -> bool:
         if not audio_gofile:
             raise Exception("Audio Gofile upload failed")
 
-        print(f"✅ Audio uploaded: {audio_gofile}")
+        print(f"✅ Audio uploaded to Gofile: {audio_gofile}")
+
+        # Upload Audio to Contabo (for calendar download)
+        print("📤 Uploading audio to Contabo...")
+        username = job.get("username", "default")
+        audio_remote_path = f"users/{username}/organized/video_{job['video_number']}/audio.wav"
+        if queue.upload_file(local_audio_out, audio_remote_path):
+            print(f"✅ Audio uploaded to Contabo: {audio_remote_path}")
+        else:
+            print("⚠️ Contabo audio upload failed (non-critical)")
 
         # Send Audio Notification with script as .txt file
         script_filename = f"{channel}_V{job['video_number']}_{job.get('date', 'unknown')}_script.txt"

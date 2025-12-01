@@ -29,7 +29,8 @@ export async function GET(request: NextRequest) {
     const fileMap: Record<string, string> = {
       transcript: "transcript.txt",
       script: "script.txt",
-      thumbnail: "thumbnail.png"
+      thumbnail: "thumbnail.png",
+      audio: "audio.wav"
     }
 
     const filename = fileMap[file]
@@ -50,7 +51,8 @@ export async function GET(request: NextRequest) {
     const contentTypes: Record<string, string> = {
       transcript: "text/plain",
       script: "text/plain",
-      thumbnail: "image/png"
+      thumbnail: "image/png",
+      audio: "audio/wav"
     }
 
     const headers = new Headers()

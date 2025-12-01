@@ -88,7 +88,7 @@ export async function GET(request: NextRequest) {
             videoNumber: videoNum,
             hasTranscript: fs.existsSync(path.join(videoPath, "transcript.txt")),
             hasScript: fs.existsSync(path.join(videoPath, "script.txt")),
-            hasAudio: !!gofileLink,
+            hasAudio: fs.existsSync(path.join(videoPath, "audio.wav")),
             hasVideo: !!gofileLink,
             hasThumbnail: fs.existsSync(path.join(videoPath, "thumbnail.png")),
             isCompleted: completedVideos.includes(dir),
