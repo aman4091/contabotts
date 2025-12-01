@@ -75,6 +75,49 @@ export async function POST(request: NextRequest) {
   }
 }
 
+// GET - Get all processed videos (skipped + completed)
+export async function GET(request: NextRequest) {
+  try {
+    const username = await getUser()
+    const videosDir = getUserVideosDir(username)
+
+    const { searchParams } = new URL(request.url)
+    const channelCode = searchParams.get("channel")
+
+    if (!channelCode) {
+      return NextResponse.json({ error: "channelCode required" }, { status: 400 })
+    }
+
+    // Get processed videos list
+    const processed = getProcessedVideos(videosDir, channelCode)
+
+    // Load video metadata to get full details
+    const metadataPath = path.join(videosDir, channelCode, "metadata.json")
+    let allVideos: Array<{videoId: string, title: string, thumbnail: string, duration: number, viewCount: number}> = []
+
+    if (fs.existsSync(metadataPath)) {
+      try {
+        const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf-8"))
+        allVideos = metadata.videos || []
+      } catch {}
+    }
+
+    // Filter to get only processed videos with their details
+    const skippedVideos = allVideos.filter(v => processed.skipped.includes(v.videoId))
+    const completedVideos = allVideos.filter(v => processed.completed.includes(v.videoId))
+
+    return NextResponse.json({
+      skipped: skippedVideos,
+      completed: completedVideos,
+      skippedCount: processed.skipped.length,
+      completedCount: processed.completed.length
+    })
+  } catch (error) {
+    console.error("Error getting processed videos:", error)
+    return NextResponse.json({ error: "Failed to get processed videos" }, { status: 500 })
+  }
+}
+
 // DELETE - Unskip a video (restore it)
 export async function DELETE(request: NextRequest) {
   try {

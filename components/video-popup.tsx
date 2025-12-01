@@ -321,7 +321,7 @@ export function VideoPopup({
           {/* Script Box */}
           <div>
             <label className="text-sm font-medium text-muted-foreground mb-2 block">
-              Script (paste or generate with AI)
+              Script (paste or generate with AI) - {script.length.toLocaleString()} chars
             </label>
             <Textarea
               value={script}
