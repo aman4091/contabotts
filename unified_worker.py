@@ -248,21 +248,29 @@ def generate_audio_f5tts(script_text: str, ref_audio: str, out_path: str, chunk_
             else: curr += s + ". "
         if curr: chunks.append(curr)
 
+        total_chunks = len(chunks)
+        print(f"   Total Chunks: {total_chunks}")
+
         all_audio = []
         rate = 24000
         for i, chk in enumerate(chunks):
-            print(f"   Chunk {i+1}/{len(chunks)}...")
+            # Calculate and show progress percentage
+            percent = int(((i + 1) / total_chunks) * 100)
+            print(f"\r   🎙️ Audio Progress: {percent}% (Chunk {i+1}/{total_chunks})", end="", flush=True)
+
             if torch.cuda.is_available(): torch.cuda.empty_cache()
             with torch.inference_mode():
                 res = f5_model.infer(ref_file=ref_audio, ref_text="", gen_text=chk, remove_silence=True, speed=1.0)
             audio_data = res[0] if isinstance(res, tuple) else res
             all_audio.append(audio_data)
 
+        print(f"\r   🎙️ Audio Progress: 100%                    ")  # Final with clear
+
         if not all_audio: return False
         sf.write(out_path, np.concatenate(all_audio), rate)
         return os.path.exists(out_path)
     except Exception as e:
-        print(f"❌ TTS Error: {e}")
+        print(f"\n❌ TTS Error: {e}")
         traceback.print_exc()
         return False
 
@@ -363,10 +371,65 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         traceback.print_exc()
         return None
 
+def get_audio_duration(audio_path: str) -> float:
+    """Get audio duration in seconds using ffprobe"""
+    try:
+        result = subprocess.run([
+            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", audio_path
+        ], capture_output=True, text=True)
+        return float(result.stdout.strip())
+    except:
+        return 0
+
+def run_ffmpeg_with_progress(cmd: list, total_duration: float) -> bool:
+    """Run FFmpeg with real-time progress output (1%, 2%, etc.)"""
+    try:
+        # Add progress pipe
+        cmd_with_progress = cmd[:-1] + ["-progress", "pipe:1", cmd[-1]]
+
+        process = subprocess.Popen(
+            cmd_with_progress,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True
+        )
+
+        last_percent = -1
+
+        while True:
+            line = process.stdout.readline()
+            if not line and process.poll() is not None:
+                break
+
+            if line.startswith("out_time_ms="):
+                try:
+                    time_ms = int(line.split("=")[1].strip())
+                    time_sec = time_ms / 1000000
+                    if total_duration > 0:
+                        percent = int((time_sec / total_duration) * 100)
+                        percent = min(percent, 100)
+                        if percent != last_percent:
+                            print(f"\r   🎬 Video Progress: {percent}%", end="", flush=True)
+                            last_percent = percent
+                except:
+                    pass
+
+        print(f"\r   🎬 Video Progress: 100%")  # Final
+        return process.returncode == 0
+    except Exception as e:
+        print(f"\n❌ FFmpeg Error: {e}")
+        return False
+
 def render_video(image_path: str, audio_path: str, ass_path: str, output_path: str) -> bool:
     """Render video with subtitles using FFmpeg - 4K ULTRA HD (EXACT from l.py)"""
     try:
         print("🎬 Rendering 4K Video (60 Mbps)...")
+
+        # Get total duration for progress
+        total_duration = get_audio_duration(audio_path)
+        print(f"   Audio Duration: {total_duration:.1f}s")
+
         safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
         vf = f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,subtitles='{safe_ass}'"
 
@@ -395,17 +458,15 @@ def render_video(image_path: str, audio_path: str, ass_path: str, output_path: s
         ]
 
         print("   Attempting NVENC (GPU)...")
-        try:
-            subprocess.run(cmd_gpu, check=True, capture_output=True)
+        if run_ffmpeg_with_progress(cmd_gpu, total_duration):
             return os.path.exists(output_path)
-        except:
-            print("⚠️ GPU Failed. Switching to CPU...")
-            try:
-                subprocess.run(cmd_cpu, check=True, capture_output=True)
-                return os.path.exists(output_path)
-            except Exception as e:
-                print(f"❌ FFmpeg Failed: {e}")
-                return False
+
+        print("\n⚠️ GPU Failed. Switching to CPU...")
+        if run_ffmpeg_with_progress(cmd_cpu, total_duration):
+            return os.path.exists(output_path)
+
+        print("❌ FFmpeg Failed")
+        return False
     except Exception as e:
         print(f"❌ Render Error: {e}")
         traceback.print_exc()
