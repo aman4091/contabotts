@@ -343,18 +343,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             y2 = int(cy + (box_h / 2))
             r = 60  # Rounded Radius for 4K (EXACT from l.py)
 
-            # --- THE ROUNDED CORNER DRAWING COMMAND (RESTORED) ---
-            draw = (
-                f"m {x1+r} {y1} "          # Move to top-left (after curve)
-                f"l {x2-r} {y1} "          # Line to top-right
-                f"b {x2} {y1} {x2} {y1} {x2} {y1+r} " # Curve Top-Right
-                f"l {x2} {y2-r} "          # Line down
-                f"b {x2} {y2} {x2} {y2} {x2-r} {y2} " # Curve Bottom-Right
-                f"l {x1+r} {y2} "          # Line left
-                f"b {x1} {y2} {x1} {y2} {x1} {y2-r} " # Curve Bottom-Left
-                f"l {x1} {y1+r} "          # Line up
-                f"b {x1} {y1} {x1} {y1} {x1+r} {y1}"  # Curve Top-Left (Close)
-            )
+            # --- DRAW BOX (from l.py) ---
+            draw = (f"m {x1+r} {y1} l {x2-r} {y1} b {x2} {y1} {x2} {y1+r} "
+                    f"l {x2} {y2-r} b {x2} {y2} {x2-r} {y2} "
+                    f"l {x1+r} {y2} b {x1} {y2} {x1} {y2-r} "
+                    f"l {x1} {y1+r} b {x1} {y1} {x1+r} {y1}")
 
             # Layer 0: Box
             events.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{{\\p1\\an7\\pos(0,0)\\1c&H000000&\\1a&H00&\\bord0\\shad0}}{draw}{{\\p0}}")
@@ -433,26 +426,26 @@ def render_video(image_path: str, audio_path: str, ass_path: str, output_path: s
         safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
         vf = f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,subtitles='{safe_ass}'"
 
-        # --- 4K HIGH BITRATE SETTINGS (EXACT from l.py) ---
+        # --- 4K GPU SETTINGS (BALANCED SPEED/QUALITY from l.py) ---
         cmd_gpu = [
             "ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path,
             "-vf", vf,
             "-c:v", "h264_nvenc",
-            "-preset", "p7",        # Best Quality
-            "-tune", "hq",          # High Quality
-            "-rc", "cbr",           # Constant Bitrate (Force size)
-            "-b:v", "60M",          # 60 Mbps Target
-            "-maxrate", "60M",      # 60 Mbps Max
-            "-bufsize", "120M",     # Buffer
-            "-c:a", "aac", "-b:a", "320k",  # High Quality Audio
+            "-preset", "p5",        # P5 = Slow (Good Quality), faster than P7
+            "-tune", "hq",
+            "-rc", "cbr",           # Constant Bitrate
+            "-b:v", "60M",          # 60 Mbps
+            "-maxrate", "60M",
+            "-bufsize", "120M",
+            "-c:a", "aac", "-b:a", "320k",
             "-shortest", output_path
         ]
 
-        # CPU fallback (EXACT from l.py)
+        # CPU fallback (from l.py)
         cmd_cpu = [
             "ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path,
             "-vf", vf,
-            "-c:v", "libx264", "-preset", "slow", "-crf", "16",
+            "-c:v", "libx264", "-preset", "faster", "-crf", "18",
             "-c:a", "aac", "-b:a", "320k",
             "-shortest", output_path
         ]
