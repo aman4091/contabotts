@@ -164,7 +164,6 @@ export default function ChannelsPage() {
     }
 
     setProcessing(true)
-    toast.info(`Processing ${numVideos} videos...`)
 
     try {
       const res = await fetch("/api/channels/process", {
@@ -180,8 +179,7 @@ export default function ChannelsPage() {
       const data = await res.json()
 
       if (data.success) {
-        toast.success(`Processed ${data.processed}/${data.total} videos!`)
-        loadCompletedVideos()
+        toast.success(`${data.queued} videos queued! Processing in background...`)
       } else {
         toast.error(data.error || "Processing failed")
       }

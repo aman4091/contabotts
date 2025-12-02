@@ -17,7 +17,7 @@ async function getUser() {
   return cookieStore.get("user")?.value
 }
 
-// POST - Auto Create: Process N videos from a channel
+// POST - Auto Create: Process N videos from a channel (Background)
 export async function POST(request: NextRequest) {
   try {
     const username = await getUser()
@@ -81,106 +81,127 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No eligible videos found" }, { status: 400 })
     }
 
-    console.log(`Processing ${eligibleVideos.length} videos from channel ${videosData.channelName}`)
+    // Start background processing (don't await)
+    processVideosInBackground(
+      eligibleVideos,
+      username,
+      channelId,
+      channelPrompt,
+      referenceAudio,
+      processedPath,
+      processedIds,
+      settings.ai?.max_chunk_size || 7000
+    )
 
-    const results: { videoId: string; title: string; success: boolean; error?: string }[] = []
-
-    for (const video of eligibleVideos) {
-      console.log(`Processing: ${video.title}`)
-
-      try {
-        // 1. Fetch transcript
-        console.log(`  Fetching transcript...`)
-        const transcript = await fetchTranscript(video.videoId)
-        if (!transcript) {
-          results.push({ videoId: video.videoId, title: video.title, success: false, error: "No transcript" })
-          continue
-        }
-
-        // 2. Process with Gemini (chunked if needed)
-        console.log(`  Processing with Gemini (${transcript.length} chars)...`)
-        const script = await processWithGemini(transcript, channelPrompt, settings.ai?.max_chunk_size || 7000)
-        if (!script) {
-          results.push({ videoId: video.videoId, title: video.title, success: false, error: "Gemini failed" })
-          continue
-        }
-
-        // 3. Get next video number and save
-        const videoNumber = getNextVideoNumber(username)
-        const folderName = `video_${videoNumber}`
-        saveToOrganized(username, videoNumber, transcript, script, video.title)
-
-        // 4. Queue for audio/video generation
-        console.log(`  Queueing as ${folderName}...`)
-        const audioCounter = await getNextAudioCounter()
-        const jobId = randomUUID()
-
-        const jobResult = await createAudioJob({
-          job_id: jobId,
-          script_text: script,
-          channel_code: "AUTO",
-          video_number: videoNumber,
-          date: getTomorrowDate(),
-          audio_counter: audioCounter,
-          organized_path: `/organized/${folderName}`,
-          priority: 5,
-          username,
-          reference_audio: referenceAudio,
-          source_channel: channelId,
-          source_video_id: video.videoId
-        })
-
-        if (!jobResult.success) {
-          results.push({ videoId: video.videoId, title: video.title, success: false, error: "Queue failed" })
-          continue
-        }
-
-        // 5. Mark as processed
-        processedIds.push(video.videoId)
-        results.push({ videoId: video.videoId, title: video.title, success: true })
-
-        // Save completed info
-        const completedDir = path.join(DATA_DIR, "users", username, "channel-automation", channelId, "completed")
-        if (!fs.existsSync(completedDir)) {
-          fs.mkdirSync(completedDir, { recursive: true })
-        }
-        fs.writeFileSync(
-          path.join(completedDir, `${video.videoId}.json`),
-          JSON.stringify({
-            videoId: video.videoId,
-            title: video.title,
-            videoNumber,
-            folderName,
-            jobId,
-            processedAt: new Date().toISOString()
-          }, null, 2)
-        )
-
-        console.log(`  Done!`)
-
-        // Small delay between videos
-        await new Promise(r => setTimeout(r, 1000))
-      } catch (error) {
-        console.error(`  Error processing ${video.title}:`, error)
-        results.push({ videoId: video.videoId, title: video.title, success: false, error: String(error) })
-      }
-    }
-
-    // Save updated processed list
-    fs.writeFileSync(processedPath, JSON.stringify({ processed: processedIds }, null, 2))
-
-    const successCount = results.filter(r => r.success).length
-
+    // Return immediately
     return NextResponse.json({
       success: true,
-      processed: successCount,
-      total: eligibleVideos.length,
-      results
+      message: `Started processing ${eligibleVideos.length} videos in background`,
+      queued: eligibleVideos.length,
+      videos: eligibleVideos.map((v: any) => ({ videoId: v.videoId, title: v.title }))
     })
   } catch (error) {
     console.error("Error in auto create:", error)
     return NextResponse.json({ error: "Auto create failed" }, { status: 500 })
   }
+}
+
+// Background processing function
+async function processVideosInBackground(
+  videos: any[],
+  username: string,
+  channelId: string,
+  channelPrompt: string,
+  referenceAudio: string,
+  processedPath: string,
+  processedIds: string[],
+  maxChunkSize: number
+) {
+  console.log(`[BG] Starting background processing of ${videos.length} videos`)
+
+  for (const video of videos) {
+    console.log(`[BG] Processing: ${video.title}`)
+
+    try {
+      // 1. Fetch transcript
+      console.log(`[BG]   Fetching transcript...`)
+      const transcript = await fetchTranscript(video.videoId)
+      if (!transcript) {
+        console.log(`[BG]   No transcript found, skipping`)
+        continue
+      }
+
+      // 2. Process with Gemini (chunked if needed)
+      console.log(`[BG]   Processing with Gemini (${transcript.length} chars)...`)
+      const script = await processWithGemini(transcript, channelPrompt, maxChunkSize)
+      if (!script) {
+        console.log(`[BG]   Gemini failed, skipping`)
+        continue
+      }
+
+      // 3. Get next video number and save
+      const videoNumber = getNextVideoNumber(username)
+      const folderName = `video_${videoNumber}`
+      saveToOrganized(username, videoNumber, transcript, script, video.title)
+
+      // 4. Queue for audio/video generation
+      console.log(`[BG]   Queueing as ${folderName}...`)
+      const audioCounter = await getNextAudioCounter()
+      const jobId = randomUUID()
+
+      const jobResult = await createAudioJob({
+        job_id: jobId,
+        script_text: script,
+        channel_code: "AUTO",
+        video_number: videoNumber,
+        date: getTomorrowDate(),
+        audio_counter: audioCounter,
+        organized_path: `/organized/${folderName}`,
+        priority: 5,
+        username,
+        reference_audio: referenceAudio,
+        source_channel: channelId,
+        source_video_id: video.videoId
+      })
+
+      if (!jobResult.success) {
+        console.log(`[BG]   Queue failed, skipping`)
+        continue
+      }
+
+      // 5. Mark as processed
+      processedIds.push(video.videoId)
+
+      // Save completed info
+      const completedDir = path.join(DATA_DIR, "users", username, "channel-automation", channelId, "completed")
+      if (!fs.existsSync(completedDir)) {
+        fs.mkdirSync(completedDir, { recursive: true })
+      }
+      fs.writeFileSync(
+        path.join(completedDir, `${video.videoId}.json`),
+        JSON.stringify({
+          videoId: video.videoId,
+          title: video.title,
+          videoNumber,
+          folderName,
+          jobId,
+          processedAt: new Date().toISOString()
+        }, null, 2)
+      )
+
+      // Save updated processed list
+      fs.writeFileSync(processedPath, JSON.stringify({ processed: processedIds }, null, 2))
+
+      console.log(`[BG]   Done!`)
+
+      // Small delay between videos
+      await new Promise(r => setTimeout(r, 1000))
+    } catch (error) {
+      console.error(`[BG]   Error processing ${video.title}:`, error)
+    }
+  }
+
+  console.log(`[BG] Background processing complete`)
 }
 
 // Helper functions
