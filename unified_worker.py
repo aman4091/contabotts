@@ -30,8 +30,7 @@ import numpy as np
 import soundfile as sf
 from f5_tts.api import F5TTS
 
-# Add aivi folder to path for l.py import
-sys.path.insert(0, "/root/tts/aivi")
+# Import from l.py (same directory)
 from l import LandscapeGenerator, enhance_audio
 
 # ============================================================================
