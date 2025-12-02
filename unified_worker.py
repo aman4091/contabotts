@@ -6,7 +6,7 @@ Runs on Vast.ai - Generates Audio then Video in one go
 Flow:
 1. Claim Audio Job
 2. Generate Audio -> Upload to Gofile
-3. Generate Video (using local audio) -> Upload to Gofile
+3. Generate Video (using l.py) -> Upload to Gofile
 4. Send Telegram notifications
 5. Loop back
 """
@@ -29,7 +29,10 @@ import torch
 import numpy as np
 import soundfile as sf
 from f5_tts.api import F5TTS
-import whisper
+
+# Add aivi folder to path for l.py import
+sys.path.insert(0, "/root/tts/aivi")
+from l import LandscapeGenerator, enhance_audio
 
 # ============================================================================
 # CONFIGURATION
@@ -66,12 +69,10 @@ def send_telegram_document(script_text: str, caption: str, filename: str, userna
     bot_token, chat_id = get_user_telegram_config(username)
     if not bot_token or not chat_id: return
     try:
-        # Create temp file
         temp_file = os.path.join(TEMP_DIR, filename)
         with open(temp_file, 'w', encoding='utf-8') as f:
             f.write(script_text)
 
-        # Send document
         with open(temp_file, 'rb') as f:
             requests.post(
                 f"https://api.telegram.org/bot{bot_token}/sendDocument",
@@ -80,7 +81,6 @@ def send_telegram_document(script_text: str, caption: str, filename: str, userna
                 timeout=30
             )
 
-        # Cleanup
         if os.path.exists(temp_file):
             os.remove(temp_file)
     except Exception as e:
@@ -99,24 +99,18 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # Load Models Globally
 print("🔄 Loading Models...")
 f5_model = None
-whisper_model = None
+landscape_gen = None
 
 try:
     f5_model = F5TTS()
     print("✅ F5-TTS model loaded")
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"🔄 Loading Whisper on {device.upper()}...")
-    whisper_model = whisper.load_model("base", device=device)
-    print("✅ Whisper model loaded")
+
+    # Load LandscapeGenerator from l.py (includes Whisper)
+    landscape_gen = LandscapeGenerator()
+    print("✅ LandscapeGenerator loaded (with Whisper)")
 except Exception as e:
     print(f"❌ Failed to load models: {e}")
     sys.exit(1)
-
-# Video Settings (Landscape 1920x1080) - Updated from l.py
-TARGET_W = 1920
-TARGET_H = 1080
-FONT_SIZE = 80       # Updated from l.py (was 70)
-TEXT_Y_POS = 540     # Dead Center
 
 # Shorts Settings (Vertical 1080x1920) - from s.py
 SHORTS_W = 1080
@@ -127,10 +121,10 @@ SHORTS_MAX_CHARS = 22
 SHORTS_PADDING_X = 90
 SHORTS_PADDING_Y = 90
 SHORTS_CORNER_RADIUS = 40
-SHORTS_BOX_OPACITY = "00"  # Solid black
+SHORTS_BOX_OPACITY = "00"
 
 # ============================================================================
-# FILE SERVER QUEUE (Merged Audio + Video)
+# FILE SERVER QUEUE
 # ============================================================================
 
 class FileServerQueue:
@@ -140,7 +134,6 @@ class FileServerQueue:
         self.file_headers = {"x-api-key": api_key}
         self.api_key = api_key
 
-    # --- AUDIO METHODS ---
     def claim_audio_job(self, worker_id: str) -> Optional[Dict]:
         try:
             r = requests.post(f"{self.base_url}/queue/audio/claim", json={"worker_id": worker_id}, headers=self.headers, timeout=30)
@@ -159,7 +152,6 @@ class FileServerQueue:
             return r.status_code == 200
         except: return False
 
-    # --- COMMON FILE OPS ---
     def download_file(self, remote_path: str, local_path: str) -> bool:
         try:
             r = requests.get(f"{self.base_url}/files/{remote_path}", headers=self.file_headers, stream=True, timeout=300)
@@ -185,11 +177,8 @@ class FileServerQueue:
         except: return None
 
     def get_reference_audio(self, reference_audio: str, local_path: str) -> bool:
-        """Download reference audio by filename"""
-        # Download the exact file specified
         if self.download_file(f"reference-audio/{reference_audio}", local_path):
             return True
-        # Fallback: try without extension variations
         base_name = reference_audio.rsplit('.', 1)[0] if '.' in reference_audio else reference_audio
         if self.download_file(f"reference-audio/{base_name}.wav", local_path):
             return True
@@ -198,7 +187,6 @@ class FileServerQueue:
         return False
 
     def get_random_image(self, image_folder: str = "nature") -> tuple:
-        """Returns (local_path, server_path) or (None, None)"""
         try:
             r = requests.get(f"{self.base_url}/images/{image_folder}", headers={"x-api-key": self.api_key}, timeout=30)
             if r.status_code != 200: return None, None
@@ -214,16 +202,13 @@ class FileServerQueue:
         except: return None, None
 
     def delete_file(self, remote_path: str) -> bool:
-        """Delete file from server"""
         try:
             r = requests.delete(f"{self.base_url}/files/{remote_path}", headers=self.file_headers, timeout=30)
             return r.status_code == 200
         except: return False
 
-    # --- HEARTBEAT ---
     def send_heartbeat(self, worker_id: str, status: str = "online", gpu_model: str = None, current_job: str = None) -> bool:
         try:
-            # Identifies as Unified Worker
             r = requests.post(f"{self.base_url}/workers/audio/heartbeat", json={
                 "worker_id": worker_id, "status": status, "hostname": socket.gethostname(), "gpu_model": gpu_model, "current_job": current_job
             }, headers=self.headers, timeout=10)
@@ -274,7 +259,6 @@ def generate_audio_f5tts(script_text: str, ref_audio: str, out_path: str, chunk_
         all_audio = []
         rate = 24000
         for i, chk in enumerate(chunks):
-            # Calculate and show progress percentage
             percent = int(((i + 1) / total_chunks) * 100)
             print(f"\r   🎙️ Audio Progress: {percent}% (Chunk {i+1}/{total_chunks})", end="", flush=True)
 
@@ -284,7 +268,7 @@ def generate_audio_f5tts(script_text: str, ref_audio: str, out_path: str, chunk_
             audio_data = res[0] if isinstance(res, tuple) else res
             all_audio.append(audio_data)
 
-        print(f"\r   🎙️ Audio Progress: 100%                    ")  # Final with clear
+        print(f"\r   🎙️ Audio Progress: 100%                    ")
 
         if not all_audio: return False
         sf.write(out_path, np.concatenate(all_audio), rate)
@@ -294,127 +278,24 @@ def generate_audio_f5tts(script_text: str, ref_audio: str, out_path: str, chunk_
         traceback.print_exc()
         return False
 
+# ============================================================================
+# SHORTS VIDEO GENERATION (kept inline for shorts)
+# ============================================================================
+
 def format_ass_time(seconds):
-    """Convert seconds to ASS time format"""
     h = int(seconds // 3600)
     m = int((seconds % 3600) // 60)
     s = int(seconds % 60)
     cs = int((seconds % 1) * 100)
     return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
-def generate_subtitles(audio_path: str) -> Optional[str]:
-    """Generate ASS subtitles using Whisper - Landscape style with rounded box (EXACT COPY from landscape_worker.py)"""
-    try:
-        print(f"📝 Transcribing audio...")
-        if whisper_model is None: return None
-
-        result = whisper_model.transcribe(audio_path, word_timestamps=False)
-        ass_path = os.path.splitext(audio_path)[0] + ".ass"
-
-        header = f"""[Script Info]
-ScriptType: v4.00+
-PlayResX: {TARGET_W}
-PlayResY: {TARGET_H}
-
-[V4+ Styles]
-Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
-Style: Default,Arial,{FONT_SIZE},&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,1,0,2,20,20,50,1
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-"""
-        events = []
-
-        for segment in result['segments']:
-            start = format_ass_time(segment['start'])
-            end = format_ass_time(segment['end'])
-            text = segment['text'].strip()
-
-            # --- LANDSCAPE LOGIC ---
-            max_chars = 35
-            words = text.split()
-            lines = []; curr = []
-            for w in words:
-                if len(" ".join(curr + [w])) <= max_chars: curr.append(w)
-                else: lines.append(" ".join(curr)); curr = [w]
-            lines.append(" ".join(curr))
-
-            final_text = "\\N".join(lines)
-
-            # --- BOX CALCULATION (EXACT FROM l.py) ---
-            char_width = FONT_SIZE * 0.55  # From l.py
-            longest_line = max(len(l) for l in lines)
-            text_w = longest_line * char_width
-            text_h = len(lines) * (FONT_SIZE * 1.4)
-
-            # Tight Padding for 1080p (from l.py)
-            padding_x = 40
-            padding_y = 60  # Enough for 1080p ascenders
-
-            box_w = text_w + padding_x
-            box_h = text_h + padding_y
-
-            # Center Position
-            cx, cy = 960, TEXT_Y_POS
-
-            x1 = int(cx - (box_w / 2))
-            x2 = int(cx + (box_w / 2))
-
-            # Safety Check (from l.py)
-            if x2 > TARGET_W - 20:
-                diff = x2 - (TARGET_W - 20)
-                x1 -= diff
-                x2 -= diff
-                cx -= diff
-            if x1 < 20:
-                diff = 20 - x1
-                x1 += diff
-                x2 += diff
-                cx += diff
-
-            y1 = int(cy - (box_h / 2))
-            y2 = int(cy + (box_h / 2))
-
-            # Smart Radius (from l.py)
-            r = 40
-            if r > (box_w // 2):
-                r = int(box_w // 2)
-
-            # --- THE ROUNDED CORNER DRAWING COMMAND (RESTORED) ---
-            draw = (
-                f"m {x1+r} {y1} "          # Move to top-left (after curve)
-                f"l {x2-r} {y1} "          # Line to top-right
-                f"b {x2} {y1} {x2} {y1} {x2} {y1+r} " # Curve Top-Right
-                f"l {x2} {y2-r} "          # Line down
-                f"b {x2} {y2} {x2} {y2} {x2-r} {y2} " # Curve Bottom-Right
-                f"l {x1+r} {y2} "          # Line left
-                f"b {x1} {y2} {x1} {y2} {x1} {y2-r} " # Curve Bottom-Left
-                f"l {x1} {y1+r} "          # Line up
-                f"b {x1} {y1} {x1} {y1} {x1+r} {y1}"  # Curve Top-Left (Close)
-            )
-
-            # Layer 0: Box
-            events.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{{\\p1\\an7\\pos(0,0)\\1c&H000000&\\1a&H00&\\bord0\\shad0}}{draw}{{\\p0}}")
-            # Layer 1: Text
-            events.append(f"Dialogue: 1,{start},{end},Default,,0,0,0,,{{\\pos({cx},{cy})\\an5}}{final_text}")
-
-        with open(ass_path, "w", encoding="utf-8") as f:
-            f.write(header + "\n".join(events))
-
-        print(f"✅ Subtitles generated: {len(result['segments'])} segments")
-        return ass_path
-    except Exception as e:
-        print(f"❌ Subtitle Error: {e}")
-        traceback.print_exc()
-        return None
-
 def generate_subtitles_shorts(audio_path: str) -> Optional[str]:
     """Generate ASS subtitles for Shorts (1080x1920) - EXACT s.py style"""
     try:
         print(f"📝 Transcribing audio for Shorts...")
-        if whisper_model is None: return None
+        if landscape_gen is None or landscape_gen.model is None: return None
 
-        result = whisper_model.transcribe(audio_path, word_timestamps=False)
+        result = landscape_gen.model.transcribe(audio_path, word_timestamps=False)
         ass_path = os.path.splitext(audio_path)[0] + "_shorts.ass"
 
         header = f"""[Script Info]
@@ -436,7 +317,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             end = format_ass_time(segment['end'])
             text = segment['text'].strip()
 
-            # Wrap text (max 22 chars per line - from s.py)
             words = text.split()
             lines = []
             curr = []
@@ -455,11 +335,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
             final_text = "\\N".join(lines)
 
-            # Position (center X, Y=1150 from s.py)
             cx = SHORTS_W // 2
             cy = SHORTS_TEXT_Y
 
-            # Box size calculation (from s.py)
             longest_line = max(len(l) for l in lines) if lines else 1
             char_width = SHORTS_FONT_SIZE * 0.5
             text_w = longest_line * char_width
@@ -474,7 +352,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             y2 = int(cy + (box_h / 2))
             r = SHORTS_CORNER_RADIUS
 
-            # Rounded box drawing (from s.py)
             draw = (
                 f"m {x1+r} {y1} l {x2-r} {y1} "
                 f"b {x2} {y1} {x2} {y1} {x2} {y1+r} "
@@ -486,9 +363,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 f"b {x1} {y1} {x1} {y1} {x1+r} {y1}"
             )
 
-            # Layer 0: Box (Solid Black - opacity 00)
             events.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{{\\p1\\an7\\pos(0,0)\\1c&H000000&\\1a&H{SHORTS_BOX_OPACITY}&\\bord0\\shad0}}{draw}{{\\p0}}")
-            # Layer 1: Text
             events.append(f"Dialogue: 1,{start},{end},Default,,0,0,0,,{{\\pos({cx},{cy})\\an5}}{final_text}")
 
         with open(ass_path, "w", encoding="utf-8") as f:
@@ -502,7 +377,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         return None
 
 def get_audio_duration(audio_path: str) -> float:
-    """Get audio duration in seconds using ffprobe"""
     try:
         result = subprocess.run([
             "ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -513,9 +387,7 @@ def get_audio_duration(audio_path: str) -> float:
         return 0
 
 def run_ffmpeg_with_progress(cmd: list, total_duration: float) -> bool:
-    """Run FFmpeg with real-time progress output (1%, 2%, etc.)"""
     try:
-        # Add progress pipe
         cmd_with_progress = cmd[:-1] + ["-progress", "pipe:1", cmd[-1]]
 
         process = subprocess.Popen(
@@ -545,65 +417,14 @@ def run_ffmpeg_with_progress(cmd: list, total_duration: float) -> bool:
                 except:
                     pass
 
-        print(f"\r   🎬 Video Progress: 100%")  # Final
+        print(f"\r   🎬 Video Progress: 100%")
         return process.returncode == 0
     except Exception as e:
         print(f"\n❌ FFmpeg Error: {e}")
         return False
 
-def render_video(image_path: str, audio_path: str, ass_path: str, output_path: str) -> bool:
-    """Render video with subtitles using FFmpeg - HIGH QUALITY (from l.py)"""
-    try:
-        print("🎬 Rendering Video (High Quality)...")
-
-        # Get total duration for progress
-        total_duration = get_audio_duration(audio_path)
-        print(f"   Audio Duration: {total_duration:.1f}s")
-
-        safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
-        vf = f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,subtitles='{safe_ass}'"
-
-        # --- 1080p FAST & CRISP SETTINGS (from l.py) ---
-        cmd_gpu = [
-            "ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path,
-            "-vf", vf,
-            "-c:v", "h264_nvenc",
-            "-preset", "p5",        # P5 = High Quality (Faster than P7)
-            "-tune", "hq",
-            "-rc", "cbr",
-            "-b:v", "20M",          # 20 Mbps (YouTube Standard is 8-10, we give 20)
-            "-maxrate", "20M",
-            "-bufsize", "40M",
-            "-c:a", "aac", "-b:a", "192k",
-            "-shortest", output_path
-        ]
-
-        # CPU fallback
-        cmd_cpu = [
-            "ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path,
-            "-vf", vf,
-            "-c:v", "libx264", "-preset", "faster", "-crf", "18",
-            "-c:a", "aac", "-b:a", "192k",
-            "-shortest", output_path
-        ]
-
-        print("   Attempting NVENC (GPU)...")
-        if run_ffmpeg_with_progress(cmd_gpu, total_duration):
-            return os.path.exists(output_path)
-
-        print("\n⚠️ GPU Failed. Switching to CPU...")
-        if run_ffmpeg_with_progress(cmd_cpu, total_duration):
-            return os.path.exists(output_path)
-
-        print("❌ FFmpeg Failed")
-        return False
-    except Exception as e:
-        print(f"❌ Render Error: {e}")
-        traceback.print_exc()
-        return False
-
 def render_video_shorts(image_path: str, audio_path: str, ass_path: str, output_path: str) -> bool:
-    """Render Shorts video (1080x1920) with subtitles - EXACT s.py style"""
+    """Render Shorts video (1080x1920) with subtitles"""
     try:
         print("🎬 Rendering Shorts Video (1080x1920)...")
 
@@ -611,10 +432,8 @@ def render_video_shorts(image_path: str, audio_path: str, ass_path: str, output_
         print(f"   Audio Duration: {total_duration:.1f}s")
 
         safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
-        # Use scale + crop for vertical (from s.py)
         vf = f"scale={SHORTS_W}:{SHORTS_H}:force_original_aspect_ratio=increase,crop={SHORTS_W}:{SHORTS_H},format=yuv420p,subtitles='{safe_ass}'"
 
-        # GPU command (from s.py)
         cmd_gpu = [
             "ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path,
             "-vf", vf,
@@ -625,7 +444,6 @@ def render_video_shorts(image_path: str, audio_path: str, ass_path: str, output_
             "-shortest", output_path
         ]
 
-        # CPU fallback
         cmd_cpu = [
             "ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path,
             "-vf", vf,
@@ -650,22 +468,20 @@ def render_video_shorts(image_path: str, audio_path: str, ass_path: str, output_
         return False
 
 # ============================================================================
-# JOB PROCESSOR (Audio + Video Combined)
+# JOB PROCESSOR
 # ============================================================================
 
 async def process_job(job: Dict) -> bool:
-    """Process Audio + Video in single job - all local, upload to Gofile"""
+    """Process Audio + Video in single job"""
     job_id = job["job_id"]
     channel = job["channel_code"]
     org_path = job["organized_path"]
-    # Get reference_audio from job, fallback to channel_code.wav
     ref_audio_file = job.get("reference_audio") or f"{channel}.wav"
 
     print(f"\n🎯 Processing Job: {job_id[:8]} ({channel} #{job['video_number']})")
     print(f"   Reference Audio: {ref_audio_file}")
     queue.send_heartbeat(WORKER_ID, status="busy", current_job=job_id)
 
-    # Local Paths
     local_ref_audio = os.path.join(TEMP_DIR, f"{channel}_ref.wav")
     local_audio_out = os.path.join(OUTPUT_DIR, f"audio_{job_id}.wav")
     local_video_out = os.path.join(OUTPUT_DIR, f"video_{job_id}.mp4")
@@ -677,16 +493,13 @@ async def process_job(job: Dict) -> bool:
         print("🎧 STEP 1: Audio Generation")
         print("="*50)
 
-        # Get Script & Ref Audio (use script_text from job first, fallback to file)
         script = job.get('script_text') or queue.get_script(org_path)
         if not script: raise Exception("Script fetch failed")
         if not queue.get_reference_audio(ref_audio_file, local_ref_audio): raise Exception(f"Ref audio failed: {ref_audio_file}")
 
-        # Generate Audio
         if not generate_audio_f5tts(script, local_ref_audio, local_audio_out):
             raise Exception("TTS failed")
 
-        # Upload Audio to Gofile
         print("📤 Uploading audio to Gofile...")
         audio_gofile = await upload_to_gofile(local_audio_out)
         if not audio_gofile:
@@ -694,7 +507,6 @@ async def process_job(job: Dict) -> bool:
 
         print(f"✅ Audio uploaded to Gofile: {audio_gofile}")
 
-        # Upload Audio to Contabo (for calendar download)
         print("📤 Uploading audio to Contabo...")
         username = job.get("username", "default")
         audio_remote_path = f"users/{username}/organized/video_{job['video_number']}/audio.wav"
@@ -703,7 +515,6 @@ async def process_job(job: Dict) -> bool:
         else:
             print("⚠️ Contabo audio upload failed (non-critical)")
 
-        # Send Audio Notification with script as .txt file
         script_filename = f"{channel}_V{job['video_number']}_{job.get('date', 'unknown')}_script.txt"
         send_telegram_document(
             script_text=script,
@@ -721,10 +532,9 @@ async def process_job(job: Dict) -> bool:
         if is_short:
             print("🎬 STEP 2: SHORTS Video Generation (1080x1920)")
         else:
-            print("🎬 STEP 2: Video Generation (1920x1080)")
+            print("🎬 STEP 2: Video Generation (1920x1080) using l.py")
         print("="*50)
 
-        # Get Image (use 'shorts' folder for shorts, otherwise use specified or 'nature')
         if is_short:
             image_folder = 'shorts'
         else:
@@ -733,36 +543,42 @@ async def process_job(job: Dict) -> bool:
         local_image, server_image_path = queue.get_random_image(image_folder)
         if not local_image: raise Exception(f"Image fetch failed from {image_folder}")
 
-        # Generate Subtitles using Whisper
         print("🎥 Generating Video with subtitles...")
-        if is_short:
-            ass_path = generate_subtitles_shorts(local_audio_out)
-        else:
-            ass_path = generate_subtitles(local_audio_out)
-        if not ass_path: raise Exception("Subtitle generation failed")
 
-        # Render Video with FFmpeg
         if is_short:
+            # Shorts: use inline functions
+            ass_path = generate_subtitles_shorts(local_audio_out)
+            if not ass_path: raise Exception("Subtitle generation failed")
             if not render_video_shorts(local_image, local_audio_out, ass_path, local_video_out):
                 raise Exception("Shorts render failed")
         else:
-            if not render_video(local_image, local_audio_out, ass_path, local_video_out):
+            # Landscape: use l.py's LandscapeGenerator
+            # First enhance audio (from l.py)
+            mastered_audio = enhance_audio(local_audio_out)
+
+            # Generate subtitles using l.py
+            ass_path = landscape_gen.generate_subtitles(mastered_audio)
+            if not ass_path: raise Exception("Subtitle generation failed")
+
+            # Render video using l.py
+            if not landscape_gen.render(mastered_audio, local_image, ass_path, local_video_out):
                 raise Exception("Video render failed")
 
-        final_vid = local_video_out
+            # Cleanup mastered audio if different
+            if mastered_audio != local_audio_out and os.path.exists(mastered_audio):
+                os.remove(mastered_audio)
 
         # Cleanup ASS file
-        if os.path.exists(ass_path): os.remove(ass_path)
+        if ass_path and os.path.exists(ass_path):
+            os.remove(ass_path)
 
-        # Upload Video to Gofile
         print("📤 Uploading video to Gofile...")
-        video_gofile = await upload_to_gofile(final_vid)
+        video_gofile = await upload_to_gofile(local_video_out)
         if not video_gofile:
             raise Exception("Video Gofile upload failed")
 
         print(f"✅ Video uploaded: {video_gofile}")
 
-        # Delete used image from server (so it won't repeat)
         if server_image_path:
             if queue.delete_file(server_image_path):
                 print(f"🗑️ Image deleted from server: {server_image_path}")
@@ -770,11 +586,9 @@ async def process_job(job: Dict) -> bool:
                 print(f"⚠️ Failed to delete image: {server_image_path}")
 
         # ========== STEP 3: COMPLETE JOB ==========
-        # Complete with video gofile link (primary output)
         queue.complete_audio_job(job_id, WORKER_ID, video_gofile)
         queue.increment_worker_stat(WORKER_ID, "jobs_completed")
 
-        # Send Video Notification with script as .txt file
         video_type = "📱 Shorts" if is_short else "🎬 Video"
         send_telegram_document(
             script_text=script,
@@ -800,7 +614,6 @@ async def process_job(job: Dict) -> bool:
         queue.fail_audio_job(job_id, WORKER_ID, str(e))
         return False
     finally:
-        # Cleanup all temp files
         try:
             for f in [local_audio_out, local_video_out, local_image, local_ref_audio]:
                 if f and os.path.exists(f): os.remove(f)
@@ -808,26 +621,23 @@ async def process_job(job: Dict) -> bool:
 
 
 # ============================================================================
-# MAIN LOOP (SIMPLIFIED - Audio + Video in one go)
+# MAIN LOOP
 # ============================================================================
 
 async def main():
-    print(f"🚀 UNIFIED WORKER STARTED (Audio + Video Combined)")
+    print(f"🚀 UNIFIED WORKER STARTED (Audio + Video using l.py)")
     print(f"Worker ID: {WORKER_ID}")
     print(f"Poll Interval: {POLL_INTERVAL}s")
 
-    # Register with GPU info
     gpu = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], capture_output=True, text=True).stdout.strip()
     queue.send_heartbeat(WORKER_ID, status="online", gpu_model=gpu)
     print(f"GPU: {gpu}")
 
     while True:
         try:
-            # Look for Audio Job (which now includes video generation)
             job = queue.claim_audio_job(WORKER_ID)
 
             if job:
-                # Process Audio + Video in one go
                 await process_job(job)
             else:
                 print(f"⏳ Waiting for jobs... ({POLL_INTERVAL}s)")
@@ -845,4 +655,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
