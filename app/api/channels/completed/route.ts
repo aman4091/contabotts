@@ -47,20 +47,29 @@ export async function GET(request: NextRequest) {
     const files = fs.readdirSync(completedDir).filter(f => f.endsWith(".json"))
     const completed: CompletedVideo[] = []
 
-    // Get job statuses from file server
+    // Get job statuses from file server (fetch all statuses)
     let jobStatuses: Map<string, { status: string; gofile_link?: string }> = new Map()
     try {
-      const res = await fetch(`${FILE_SERVER_URL}/queue/audio/jobs?username=${username}`, {
-        headers: { "x-api-key": FILE_SERVER_API_KEY }
-      })
-      if (res.ok) {
-        const data = await res.json()
-        if (data.jobs) {
-          for (const job of data.jobs) {
-            jobStatuses.set(job.job_id, {
-              status: job.status,
-              gofile_link: job.gofile_link
-            })
+      const statuses = ["pending", "processing", "completed", "failed"]
+      const responses = await Promise.all(
+        statuses.map(status =>
+          fetch(`${FILE_SERVER_URL}/queue/audio/jobs?status=${status}`, {
+            headers: { "x-api-key": FILE_SERVER_API_KEY },
+            cache: "no-store"
+          })
+        )
+      )
+
+      for (let i = 0; i < responses.length; i++) {
+        if (responses[i].ok) {
+          const data = await responses[i].json()
+          for (const job of data.jobs || []) {
+            if (job.username === username) {
+              jobStatuses.set(job.job_id, {
+                status: statuses[i],
+                gofile_link: job.gofile_link
+              })
+            }
           }
         }
       }
