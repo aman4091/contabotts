@@ -14,7 +14,11 @@ import {
   ExternalLink,
   Loader2,
   Plus,
-  Music
+  Music,
+  Scissors,
+  ChevronRight,
+  Check,
+  Merge
 } from "lucide-react"
 
 interface Video {
@@ -74,6 +78,13 @@ export function VideoPopup({
   const [processing, setProcessing] = useState(false)
   const [addingToQueue, setAddingToQueue] = useState(false)
   const [selectedAudio, setSelectedAudio] = useState(defaultReferenceAudio)
+
+  // Chunks mode state
+  const [chunksMode, setChunksMode] = useState(false)
+  const [chunks, setChunks] = useState<string[]>([])
+  const [processedChunks, setProcessedChunks] = useState<string[]>([])
+  const [currentChunkIndex, setCurrentChunkIndex] = useState(0)
+  const [chunkInput, setChunkInput] = useState("")
 
   useEffect(() => {
     fetchTranscript()
@@ -164,6 +175,105 @@ export function VideoPopup({
   function handleSkip() {
     onSkip(video.videoId)
     onClose()
+  }
+
+  // Split transcript into chunks of <7000 chars on fullstop
+  function startChunksMode() {
+    if (!transcript) {
+      toast.error("No transcript to chunk")
+      return
+    }
+
+    const maxChunkSize = 7000
+    const sentences = transcript.split(/(?<=[।.!?])\s*/)
+    const newChunks: string[] = []
+    let currentChunk = ""
+
+    for (const sentence of sentences) {
+      if ((currentChunk + sentence).length > maxChunkSize && currentChunk.length > 0) {
+        newChunks.push(currentChunk.trim())
+        currentChunk = sentence
+      } else {
+        currentChunk += sentence + " "
+      }
+    }
+    if (currentChunk.trim()) {
+      newChunks.push(currentChunk.trim())
+    }
+
+    if (newChunks.length === 1) {
+      toast.info("Transcript is small enough, no chunking needed")
+      return
+    }
+
+    setChunks(newChunks)
+    setProcessedChunks(new Array(newChunks.length).fill(""))
+    setCurrentChunkIndex(0)
+    setChunkInput("")
+    setChunksMode(true)
+    toast.success(`Split into ${newChunks.length} chunks`)
+  }
+
+  function copyCurrentChunk() {
+    const currentChunk = chunks[currentChunkIndex]
+    const textToCopy = prompt + "\n\n" + currentChunk
+    try {
+      const textarea = document.createElement("textarea")
+      textarea.value = textToCopy
+      textarea.style.position = "fixed"
+      textarea.style.left = "-9999px"
+      document.body.appendChild(textarea)
+      textarea.focus()
+      textarea.select()
+      document.execCommand("copy")
+      document.body.removeChild(textarea)
+      toast.success(`Copied chunk ${currentChunkIndex + 1}/${chunks.length}`)
+    } catch (error) {
+      toast.error("Copy failed")
+    }
+  }
+
+  function saveChunkAndNext() {
+    if (!chunkInput.trim()) {
+      toast.error("Please paste the processed chunk")
+      return
+    }
+
+    // Clean the input
+    const cleaned = chunkInput.replace(/[*""\u201C\u201D\u2018\u2019`#@&^~]/g, '')
+
+    const newProcessed = [...processedChunks]
+    newProcessed[currentChunkIndex] = cleaned
+    setProcessedChunks(newProcessed)
+
+    if (currentChunkIndex < chunks.length - 1) {
+      setCurrentChunkIndex(currentChunkIndex + 1)
+      setChunkInput("")
+      toast.success(`Saved chunk ${currentChunkIndex + 1}, moving to next`)
+    } else {
+      toast.success("All chunks processed! Click Merge to combine.")
+    }
+  }
+
+  function mergeAllChunks() {
+    const emptyChunks = processedChunks.filter(c => !c.trim()).length
+    if (emptyChunks > 0) {
+      toast.error(`${emptyChunks} chunks are still empty`)
+      return
+    }
+
+    const merged = processedChunks.join("\n\n")
+    setScript(merged)
+    setChunksMode(false)
+    toast.success("All chunks merged into script!")
+  }
+
+  function exitChunksMode() {
+    setChunksMode(false)
+    setChunks([])
+    setProcessedChunks([])
+    setCurrentChunkIndex(0)
+    setChunkInput("")
   }
 
   function handleOpenGemini() {
@@ -316,7 +426,143 @@ export function VideoPopup({
               <ExternalLink className="w-4 h-4 mr-2" />
               Open Gemini
             </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => startChunksMode()}
+              disabled={!transcript || chunksMode}
+              className="border-pink-500/30 text-pink-400 hover:bg-pink-500/10"
+            >
+              <Scissors className="w-4 h-4 mr-2" />
+              Chunks
+            </Button>
           </div>
+
+          {/* Chunks Mode UI */}
+          {chunksMode && (
+            <div className="border border-pink-500/30 rounded-lg p-4 bg-pink-500/5 space-y-4">
+              {/* Header with progress */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Scissors className="w-5 h-5 text-pink-400" />
+                  <span className="font-medium text-pink-400">
+                    Chunk {currentChunkIndex + 1} of {chunks.length}
+                  </span>
+                  <Badge variant="outline" className="text-xs">
+                    {processedChunks.filter(c => c.trim()).length}/{chunks.length} done
+                  </Badge>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={exitChunksMode}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+
+              {/* Chunk indicators */}
+              <div className="flex gap-1 flex-wrap">
+                {chunks.map((_, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => {
+                      setCurrentChunkIndex(idx)
+                      setChunkInput(processedChunks[idx] || "")
+                    }}
+                    className={`w-8 h-8 rounded text-xs font-medium transition-colors ${
+                      idx === currentChunkIndex
+                        ? "bg-pink-500 text-white"
+                        : processedChunks[idx]?.trim()
+                        ? "bg-green-500/20 text-green-400 border border-green-500/30"
+                        : "bg-muted text-muted-foreground hover:bg-muted/80"
+                    }`}
+                  >
+                    {processedChunks[idx]?.trim() ? <Check className="w-4 h-4 mx-auto" /> : idx + 1}
+                  </button>
+                ))}
+              </div>
+
+              {/* Current chunk display */}
+              <div>
+                <label className="text-sm font-medium text-muted-foreground mb-2 block">
+                  Current Chunk ({chunks[currentChunkIndex]?.length.toLocaleString()} chars)
+                </label>
+                <div className="bg-background border border-border rounded-lg p-3 max-h-32 overflow-y-auto">
+                  <p className="text-sm font-mono whitespace-pre-wrap text-muted-foreground">
+                    {chunks[currentChunkIndex]?.substring(0, 500)}
+                    {chunks[currentChunkIndex]?.length > 500 && "..."}
+                  </p>
+                </div>
+              </div>
+
+              {/* Copy button */}
+              <div className="flex gap-2">
+                <Button
+                  onClick={copyCurrentChunk}
+                  className="bg-gradient-to-r from-pink-600 to-purple-500 hover:from-pink-500 hover:to-purple-400"
+                >
+                  <Copy className="w-4 h-4 mr-2" />
+                  Copy Prompt + Chunk {currentChunkIndex + 1}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    copyCurrentChunk()
+                    window.open("https://gemini.google.com", "_blank")
+                  }}
+                  className="border-blue-500/30 text-blue-400 hover:bg-blue-500/10"
+                >
+                  <ExternalLink className="w-4 h-4 mr-2" />
+                  Open Gemini
+                </Button>
+              </div>
+
+              {/* Paste processed chunk */}
+              <div>
+                <label className="text-sm font-medium text-muted-foreground mb-2 block">
+                  Paste Processed Chunk Here ({chunkInput.length.toLocaleString()} chars)
+                </label>
+                <Textarea
+                  value={chunkInput}
+                  onChange={e => setChunkInput(e.target.value)}
+                  className="h-32 font-mono text-sm resize-none"
+                  placeholder="Paste the processed script for this chunk..."
+                />
+              </div>
+
+              {/* Action buttons */}
+              <div className="flex gap-2">
+                <Button
+                  onClick={saveChunkAndNext}
+                  disabled={!chunkInput.trim()}
+                  className="bg-gradient-to-r from-emerald-600 to-cyan-500 hover:from-emerald-500 hover:to-cyan-400"
+                >
+                  {currentChunkIndex < chunks.length - 1 ? (
+                    <>
+                      <ChevronRight className="w-4 h-4 mr-2" />
+                      Save & Next
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-4 h-4 mr-2" />
+                      Save Last
+                    </>
+                  )}
+                </Button>
+                {processedChunks.every(c => c.trim()) && (
+                  <Button
+                    onClick={mergeAllChunks}
+                    className="bg-gradient-to-r from-violet-600 to-pink-500 hover:from-violet-500 hover:to-pink-400"
+                  >
+                    <Merge className="w-4 h-4 mr-2" />
+                    Merge All ({processedChunks.length} chunks)
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Script Box */}
           <div>

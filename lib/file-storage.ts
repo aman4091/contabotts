@@ -27,6 +27,7 @@ export interface Settings {
     youtube: string
     channel: string
     title: string
+    shorts: string
   }
   ai: {
     provider: string
@@ -46,6 +47,12 @@ export interface Settings {
   // New settings for video grid system
   sourceChannelUrl?: string
   defaultReferenceAudio?: string
+}
+
+export interface ShortsTracker {
+  processed: string[]  // video folder names that have been converted to shorts
+  lastRun: string      // ISO date string
+  dailyCount: number   // shorts generated today
 }
 
 export interface TranscriptFile {
@@ -87,7 +94,7 @@ export function saveSourceChannels(channels: SourceChannel[], username?: string)
 // Settings
 export function getSettings(username?: string): Settings {
   const defaults: Settings = {
-    prompts: { youtube: '', channel: '', title: '' },
+    prompts: { youtube: '', channel: '', title: '', shorts: '' },
     ai: { provider: 'gemini', model: 'gemini-2.0-flash', max_chunk_size: 7000, temperature: 0.7 },
     audio: { chunk_size: 500, speed: 1.0, remove_silence: true },
     video: { default_image_folder: 'nature', subtitle_style: '' }
@@ -250,4 +257,94 @@ export function listImages(folder: string): string[] {
   const dirPath = getImagesPath(folder)
   if (!fs.existsSync(dirPath)) return []
   return fs.readdirSync(dirPath).filter(f => /\.(jpg|jpeg|png|webp)$/i.test(f))
+}
+
+// Shorts Tracking
+export function getShortsTracker(username?: string): ShortsTracker {
+  const dataDir = getUserDataDir(username)
+  const filePath = path.join(dataDir, 'shorts-tracker.json')
+
+  const defaults: ShortsTracker = {
+    processed: [],
+    lastRun: '',
+    dailyCount: 0
+  }
+
+  if (!fs.existsSync(filePath)) return defaults
+
+  try {
+    const content = fs.readFileSync(filePath, 'utf-8')
+    const data = JSON.parse(content)
+
+    // Reset daily count if it's a new day
+    const today = new Date().toISOString().split('T')[0]
+    const lastRunDate = data.lastRun ? data.lastRun.split('T')[0] : ''
+
+    if (lastRunDate !== today) {
+      data.dailyCount = 0
+    }
+
+    return { ...defaults, ...data }
+  } catch {
+    return defaults
+  }
+}
+
+export function saveShortsTracker(tracker: ShortsTracker, username?: string): void {
+  const dataDir = getUserDataDir(username)
+  ensureDir(dataDir)
+  const filePath = path.join(dataDir, 'shorts-tracker.json')
+  fs.writeFileSync(filePath, JSON.stringify(tracker, null, 2))
+}
+
+export function markScriptAsProcessedForShorts(videoFolder: string, username?: string): void {
+  const tracker = getShortsTracker(username)
+  if (!tracker.processed.includes(videoFolder)) {
+    tracker.processed.push(videoFolder)
+  }
+  tracker.lastRun = new Date().toISOString()
+  tracker.dailyCount += 1
+  saveShortsTracker(tracker, username)
+}
+
+export function getUnprocessedScriptsForShorts(username?: string, maxCount: number = 3): string[] {
+  const tracker = getShortsTracker(username)
+  const dataDir = getUserDataDir(username)
+  const organizedDir = path.join(dataDir, 'organized')
+
+  if (!fs.existsSync(organizedDir)) return []
+
+  // Get all video folders
+  const allFolders = fs.readdirSync(organizedDir)
+    .filter(f => f.startsWith('video_'))
+    .filter(f => {
+      // Check if script.txt exists
+      const scriptPath = path.join(organizedDir, f, 'script.txt')
+      return fs.existsSync(scriptPath)
+    })
+    .sort((a, b) => {
+      // Sort by video number
+      const numA = parseInt(a.replace('video_', ''))
+      const numB = parseInt(b.replace('video_', ''))
+      return numA - numB
+    })
+
+  // Filter out already processed
+  const unprocessed = allFolders.filter(f => !tracker.processed.includes(f))
+
+  // Check daily limit
+  const today = new Date().toISOString().split('T')[0]
+  const lastRunDate = tracker.lastRun ? tracker.lastRun.split('T')[0] : ''
+  const currentDailyCount = lastRunDate === today ? tracker.dailyCount : 0
+  const remainingToday = Math.max(0, maxCount - currentDailyCount)
+
+  return unprocessed.slice(0, remainingToday)
+}
+
+export function getScriptContent(videoFolder: string, username?: string): string | null {
+  const dataDir = getUserDataDir(username)
+  const scriptPath = path.join(dataDir, 'organized', videoFolder, 'script.txt')
+
+  if (!fs.existsSync(scriptPath)) return null
+  return fs.readFileSync(scriptPath, 'utf-8')
 }

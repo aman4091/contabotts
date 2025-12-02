@@ -112,11 +112,22 @@ except Exception as e:
     print(f"❌ Failed to load models: {e}")
     sys.exit(1)
 
-# Video Settings (Landscape 1920x1080)
+# Video Settings (Landscape 1920x1080) - Updated from l.py
 TARGET_W = 1920
 TARGET_H = 1080
-FONT_SIZE = 70
-TEXT_Y_POS = 540  # Dead Center
+FONT_SIZE = 80       # Updated from l.py (was 70)
+TEXT_Y_POS = 540     # Dead Center
+
+# Shorts Settings (Vertical 1080x1920) - from s.py
+SHORTS_W = 1080
+SHORTS_H = 1920
+SHORTS_FONT_SIZE = 70
+SHORTS_TEXT_Y = 1150
+SHORTS_MAX_CHARS = 22
+SHORTS_PADDING_X = 90
+SHORTS_PADDING_Y = 90
+SHORTS_CORNER_RADIUS = 40
+SHORTS_BOX_OPACITY = "00"  # Solid black
 
 # ============================================================================
 # FILE SERVER QUEUE (Merged Audio + Video)
@@ -330,15 +341,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
             final_text = "\\N".join(lines)
 
-            # --- BOX CALCULATION (EXACT FROM l.py, scaled for 1080p) ---
+            # --- BOX CALCULATION (EXACT FROM l.py) ---
             char_width = FONT_SIZE * 0.55  # From l.py
             longest_line = max(len(l) for l in lines)
             text_w = longest_line * char_width
             text_h = len(lines) * (FONT_SIZE * 1.4)
 
-            # Padding scaled from l.py (4K: 60/40 -> 1080p: 30/20)
-            padding_x = 30
-            padding_y = 20
+            # Tight Padding for 1080p (from l.py)
+            padding_x = 40
+            padding_y = 60  # Enough for 1080p ascenders
 
             box_w = text_w + padding_x
             box_h = text_h + padding_y
@@ -348,9 +359,26 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
             x1 = int(cx - (box_w / 2))
             x2 = int(cx + (box_w / 2))
+
+            # Safety Check (from l.py)
+            if x2 > TARGET_W - 20:
+                diff = x2 - (TARGET_W - 20)
+                x1 -= diff
+                x2 -= diff
+                cx -= diff
+            if x1 < 20:
+                diff = 20 - x1
+                x1 += diff
+                x2 += diff
+                cx += diff
+
             y1 = int(cy - (box_h / 2))
             y2 = int(cy + (box_h / 2))
-            r = 30  # Radius scaled from l.py (4K: 60 -> 1080p: 30)
+
+            # Smart Radius (from l.py)
+            r = 40
+            if r > (box_w // 2):
+                r = int(box_w // 2)
 
             # --- THE ROUNDED CORNER DRAWING COMMAND (RESTORED) ---
             draw = (
@@ -377,6 +405,99 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         return ass_path
     except Exception as e:
         print(f"❌ Subtitle Error: {e}")
+        traceback.print_exc()
+        return None
+
+def generate_subtitles_shorts(audio_path: str) -> Optional[str]:
+    """Generate ASS subtitles for Shorts (1080x1920) - EXACT s.py style"""
+    try:
+        print(f"📝 Transcribing audio for Shorts...")
+        if whisper_model is None: return None
+
+        result = whisper_model.transcribe(audio_path, word_timestamps=False)
+        ass_path = os.path.splitext(audio_path)[0] + "_shorts.ass"
+
+        header = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: {SHORTS_W}
+PlayResY: {SHORTS_H}
+
+[V4+ Styles]
+Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
+Style: Default,Arial,{SHORTS_FONT_SIZE},&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,1,0,5,20,20,20,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+        events = []
+
+        for segment in result['segments']:
+            start = format_ass_time(segment['start'])
+            end = format_ass_time(segment['end'])
+            text = segment['text'].strip()
+
+            # Wrap text (max 22 chars per line - from s.py)
+            words = text.split()
+            lines = []
+            curr = []
+            curr_len = 0
+            for w in words:
+                if curr_len + len(w) > SHORTS_MAX_CHARS:
+                    if curr:
+                        lines.append(" ".join(curr))
+                    curr = [w]
+                    curr_len = len(w)
+                else:
+                    curr.append(w)
+                    curr_len += len(w) + 1
+            if curr:
+                lines.append(" ".join(curr))
+
+            final_text = "\\N".join(lines)
+
+            # Position (center X, Y=1150 from s.py)
+            cx = SHORTS_W // 2
+            cy = SHORTS_TEXT_Y
+
+            # Box size calculation (from s.py)
+            longest_line = max(len(l) for l in lines) if lines else 1
+            char_width = SHORTS_FONT_SIZE * 0.5
+            text_w = longest_line * char_width
+            text_h = len(lines) * (SHORTS_FONT_SIZE * 1.2)
+
+            box_w = text_w + SHORTS_PADDING_X
+            box_h = text_h + SHORTS_PADDING_Y
+
+            x1 = int(cx - (box_w / 2))
+            x2 = int(cx + (box_w / 2))
+            y1 = int(cy - (box_h / 2))
+            y2 = int(cy + (box_h / 2))
+            r = SHORTS_CORNER_RADIUS
+
+            # Rounded box drawing (from s.py)
+            draw = (
+                f"m {x1+r} {y1} l {x2-r} {y1} "
+                f"b {x2} {y1} {x2} {y1} {x2} {y1+r} "
+                f"l {x2} {y2-r} "
+                f"b {x2} {y2} {x2} {y2} {x2-r} {y2} "
+                f"l {x1+r} {y2} "
+                f"b {x1} {y2} {x1} {y2} {x1} {y2-r} "
+                f"l {x1} {y1+r} "
+                f"b {x1} {y1} {x1} {y1} {x1+r} {y1}"
+            )
+
+            # Layer 0: Box (Solid Black - opacity 00)
+            events.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{{\\p1\\an7\\pos(0,0)\\1c&H000000&\\1a&H{SHORTS_BOX_OPACITY}&\\bord0\\shad0}}{draw}{{\\p0}}")
+            # Layer 1: Text
+            events.append(f"Dialogue: 1,{start},{end},Default,,0,0,0,,{{\\pos({cx},{cy})\\an5}}{final_text}")
+
+        with open(ass_path, "w", encoding="utf-8") as f:
+            f.write(header + "\n".join(events))
+
+        print(f"✅ Shorts subtitles generated: {len(result['segments'])} segments")
+        return ass_path
+    except Exception as e:
+        print(f"❌ Shorts Subtitle Error: {e}")
         traceback.print_exc()
         return None
 
@@ -442,18 +563,18 @@ def render_video(image_path: str, audio_path: str, ass_path: str, output_path: s
         safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
         vf = f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,subtitles='{safe_ass}'"
 
-        # --- HIGH QUALITY SETTINGS FROM l.py (scaled for 1080p) ---
+        # --- 1080p FAST & CRISP SETTINGS (from l.py) ---
         cmd_gpu = [
             "ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path,
             "-vf", vf,
             "-c:v", "h264_nvenc",
-            "-preset", "p5",        # P5 = Good Quality + Speed
+            "-preset", "p5",        # P5 = High Quality (Faster than P7)
             "-tune", "hq",
             "-rc", "cbr",
-            "-b:v", "15M",          # 15 Mbps (scaled for 1080p)
-            "-maxrate", "15M",
-            "-bufsize", "30M",
-            "-c:a", "aac", "-b:a", "320k",
+            "-b:v", "20M",          # 20 Mbps (YouTube Standard is 8-10, we give 20)
+            "-maxrate", "20M",
+            "-bufsize", "40M",
+            "-c:a", "aac", "-b:a", "192k",
             "-shortest", output_path
         ]
 
@@ -462,7 +583,7 @@ def render_video(image_path: str, audio_path: str, ass_path: str, output_path: s
             "ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path,
             "-vf", vf,
             "-c:v", "libx264", "-preset", "faster", "-crf", "18",
-            "-c:a", "aac", "-b:a", "320k",
+            "-c:a", "aac", "-b:a", "192k",
             "-shortest", output_path
         ]
 
@@ -478,6 +599,53 @@ def render_video(image_path: str, audio_path: str, ass_path: str, output_path: s
         return False
     except Exception as e:
         print(f"❌ Render Error: {e}")
+        traceback.print_exc()
+        return False
+
+def render_video_shorts(image_path: str, audio_path: str, ass_path: str, output_path: str) -> bool:
+    """Render Shorts video (1080x1920) with subtitles - EXACT s.py style"""
+    try:
+        print("🎬 Rendering Shorts Video (1080x1920)...")
+
+        total_duration = get_audio_duration(audio_path)
+        print(f"   Audio Duration: {total_duration:.1f}s")
+
+        safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
+        # Use scale + crop for vertical (from s.py)
+        vf = f"scale={SHORTS_W}:{SHORTS_H}:force_original_aspect_ratio=increase,crop={SHORTS_W}:{SHORTS_H},format=yuv420p,subtitles='{safe_ass}'"
+
+        # GPU command (from s.py)
+        cmd_gpu = [
+            "ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path,
+            "-vf", vf,
+            "-c:v", "h264_nvenc",
+            "-preset", "p4",
+            "-b:v", "5M",
+            "-c:a", "aac", "-b:a", "192k",
+            "-shortest", output_path
+        ]
+
+        # CPU fallback
+        cmd_cpu = [
+            "ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path,
+            "-vf", vf,
+            "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+            "-c:a", "aac", "-b:a", "192k",
+            "-shortest", output_path
+        ]
+
+        print("   Attempting NVENC (GPU) for Shorts...")
+        if run_ffmpeg_with_progress(cmd_gpu, total_duration):
+            return os.path.exists(output_path)
+
+        print("\n⚠️ GPU Failed. Switching to CPU...")
+        if run_ffmpeg_with_progress(cmd_cpu, total_duration):
+            return os.path.exists(output_path)
+
+        print("❌ FFmpeg Failed")
+        return False
+    except Exception as e:
+        print(f"❌ Shorts Render Error: {e}")
         traceback.print_exc()
         return False
 
@@ -549,22 +717,37 @@ async def process_job(job: Dict) -> bool:
 
         # ========== STEP 2: VIDEO GENERATION ==========
         print("\n" + "="*50)
-        print("🎬 STEP 2: Video Generation")
+        is_short = job.get('is_short', False)
+        if is_short:
+            print("🎬 STEP 2: SHORTS Video Generation (1080x1920)")
+        else:
+            print("🎬 STEP 2: Video Generation (1920x1080)")
         print("="*50)
 
-        # Get Image
-        image_folder = job.get('image_folder', 'nature')
-        local_image, server_image_path = queue.get_random_image(image_folder)
-        if not local_image: raise Exception("Image fetch failed")
+        # Get Image (use 'shorts' folder for shorts, otherwise use specified or 'nature')
+        if is_short:
+            image_folder = 'shorts'
+        else:
+            image_folder = job.get('image_folder', 'nature')
 
-        # Generate Subtitles using Whisper (Landscape style)
+        local_image, server_image_path = queue.get_random_image(image_folder)
+        if not local_image: raise Exception(f"Image fetch failed from {image_folder}")
+
+        # Generate Subtitles using Whisper
         print("🎥 Generating Video with subtitles...")
-        ass_path = generate_subtitles(local_audio_out)
+        if is_short:
+            ass_path = generate_subtitles_shorts(local_audio_out)
+        else:
+            ass_path = generate_subtitles(local_audio_out)
         if not ass_path: raise Exception("Subtitle generation failed")
 
         # Render Video with FFmpeg
-        if not render_video(local_image, local_audio_out, ass_path, local_video_out):
-            raise Exception("Video render failed")
+        if is_short:
+            if not render_video_shorts(local_image, local_audio_out, ass_path, local_video_out):
+                raise Exception("Shorts render failed")
+        else:
+            if not render_video(local_image, local_audio_out, ass_path, local_video_out):
+                raise Exception("Video render failed")
 
         final_vid = local_video_out
 
@@ -592,9 +775,10 @@ async def process_job(job: Dict) -> bool:
         queue.increment_worker_stat(WORKER_ID, "jobs_completed")
 
         # Send Video Notification with script as .txt file
+        video_type = "📱 Shorts" if is_short else "🎬 Video"
         send_telegram_document(
             script_text=script,
-            caption=f"🎬 <b>Video Complete</b>\n"
+            caption=f"{video_type} <b>Complete</b>\n"
                     f"<b>Channel:</b> {channel} | <b>Video:</b> #{job['video_number']}\n"
                     f"<b>Date:</b> {job.get('date', 'N/A')}\n\n"
                     f"<b>🔗 Video:</b> {video_gofile}",
@@ -603,7 +787,7 @@ async def process_job(job: Dict) -> bool:
         )
 
         print("\n" + "="*50)
-        print(f"✅ JOB COMPLETE: {job_id[:8]}")
+        print(f"✅ JOB COMPLETE: {job_id[:8]} {'(SHORT)' if is_short else ''}")
         print(f"   Audio: {audio_gofile}")
         print(f"   Video: {video_gofile}")
         print("="*50)

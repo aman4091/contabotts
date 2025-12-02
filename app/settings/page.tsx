@@ -34,6 +34,7 @@ interface Settings {
     youtube: string
     channel: string
     title: string
+    shorts: string
   }
   ai: {
     provider: string
@@ -1016,6 +1017,24 @@ export default function SettingsPage() {
                   } : s)}
                   className="h-32 mt-1 font-mono text-sm"
                   placeholder="Generate 20 viral YouTube titles for the following script. Titles should be catchy, attention-grabbing, and optimized for clicks..."
+                />
+              </div>
+              <div>
+                <Label className="flex items-center gap-2">
+                  Shorts Generation Prompt
+                  <Badge variant="secondary" className="text-xs">Auto Cron</Badge>
+                </Label>
+                <p className="text-xs text-muted-foreground mb-2">
+                  Used by automatic daily cron to generate 10 shorts from each processed script (max 3 scripts/day = 30 shorts)
+                </p>
+                <Textarea
+                  value={settings?.prompts.shorts || ""}
+                  onChange={e => setSettings(s => s ? {
+                    ...s,
+                    prompts: { ...s.prompts, shorts: e.target.value }
+                  } : s)}
+                  className="h-40 mt-1 font-mono text-sm"
+                  placeholder="Convert this script into 10 short viral clips for YouTube Shorts (under 60 seconds each). Each short should be numbered 1-10 and contain engaging, standalone content..."
                 />
               </div>
               <Button

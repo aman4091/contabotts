@@ -10,6 +10,14 @@ export function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
+  // Allow shorts cron API with secret key
+  if (pathname === "/api/shorts/process") {
+    const cronSecret = request.headers.get("x-cron-secret")
+    if (cronSecret) {
+      return NextResponse.next()
+    }
+  }
+
   // Check if user is authenticated
   if (!user) {
     return NextResponse.redirect(new URL("/login", request.url))

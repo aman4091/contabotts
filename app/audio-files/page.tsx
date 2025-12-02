@@ -16,7 +16,8 @@ import {
   PlayCircle,
   Music,
   RotateCcw,
-  ExternalLink
+  ExternalLink,
+  Trash2
 } from "lucide-react"
 
 interface Job {
@@ -39,6 +40,7 @@ export default function AudioFilesPage() {
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState("all")
   const [updating, setUpdating] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState<string | null>(null)
 
   useEffect(() => {
     loadJobs()
@@ -80,6 +82,27 @@ export default function AudioFilesPage() {
       alert("Error updating status")
     } finally {
       setUpdating(null)
+    }
+  }
+
+  async function deleteJob(jobId: string) {
+    if (!confirm("Are you sure you want to delete this job?")) return
+
+    setDeleting(jobId)
+    try {
+      const res = await fetch(`/api/queue-status?queue_type=audio&job_id=${jobId}`, {
+        method: "DELETE"
+      })
+      const data = await res.json()
+      if (data.success) {
+        await loadJobs()
+      } else {
+        alert("Failed to delete job: " + (data.error || "Unknown error"))
+      }
+    } catch (error) {
+      alert("Error deleting job")
+    } finally {
+      setDeleting(null)
     }
   }
 
@@ -308,6 +331,22 @@ export default function AudioFilesPage() {
                                       <RotateCcw className="w-3 h-3" />
                                     )}
                                     Reprocess
+                                  </Button>
+                                )}
+                                {(job.status === "pending" || job.status === "processing") && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => deleteJob(job.job_id)}
+                                    disabled={deleting === job.job_id}
+                                    className="flex items-center gap-1 text-xs px-2 py-1 h-auto bg-red-500/10 text-red-400 hover:bg-red-500/20 border-red-500/30"
+                                  >
+                                    {deleting === job.job_id ? (
+                                      <Loader2 className="w-3 h-3 animate-spin" />
+                                    ) : (
+                                      <Trash2 className="w-3 h-3" />
+                                    )}
+                                    Remove
                                   </Button>
                                 )}
                               </div>
