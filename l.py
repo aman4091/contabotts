@@ -2,7 +2,7 @@
 """
 Landscape Video Worker - 1080p PRO (Fast Render + High Bitrate)
 Resolution: 1920x1080
-Bitrate: 20 Mbps (Crisp Quality)
+Bitrate: 12 Mbps
 Speed: Optimized (P5 Preset)
 """
 
@@ -191,7 +191,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         return ass_path
 
     def render(self, audio_path, image_path, ass_path, output_path):
-        print("🎬 Rendering 1080p PRO (20 Mbps)...")
+        print("🎬 Rendering 1080p PRO (12 Mbps)...")
         safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
         
         vf = f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,subtitles='{safe_ass}'"
@@ -205,9 +205,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             "-preset", "p5",        # P5 = High Quality (Faster than P7)
             "-tune", "hq",
             "-rc", "cbr",
-            "-b:v", "20M",          # 20 Mbps (YouTube Standard is 8-10, we give 20)
-            "-maxrate", "20M",      
-            "-bufsize", "40M",     
+            "-b:v", "12M",          # 12 Mbps
+            "-maxrate", "12M",
+            "-bufsize", "24M",     
             "-c:a", "aac", "-b:a", "192k",
             "-shortest", output_path
         ]
