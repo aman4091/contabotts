@@ -205,7 +205,7 @@ export function TranscriptPopup({
       return
     }
 
-    const cleaned = chunkInput.replace(/[*""\u201C\u201D\u2018\u2019`#@&^~]/g, '')
+    const cleaned = chunkInput.replace(/[\u2018\u2019]/g, "'").replace(/[*""\u201C\u201D`#@&^~]/g, '')
 
     const newProcessed = [...processedChunks]
     newProcessed[currentChunkIndex] = cleaned
@@ -264,7 +264,7 @@ export function TranscriptPopup({
 
         const data = await res.json()
         if (res.ok && data.result) {
-          const cleaned = data.result.replace(/[*""\u201C\u201D\u2018\u2019`#@&^~]/g, '')
+          const cleaned = data.result.replace(/[\u2018\u2019]/g, "'").replace(/[*""\u201C\u201D`#@&^~]/g, '')
           results.push(cleaned)
 
           const newProcessed = [...processedChunks]
@@ -609,7 +609,7 @@ export function TranscriptPopup({
               onChange={e => {
                 // Clean script: remove asterisks, quotes, and special symbols
                 const cleaned = e.target.value
-                  .replace(/[*""\u201C\u201D\u2018\u2019`#@&^~]/g, '')
+                  .replace(/[\u2018\u2019]/g, "'").replace(/[*""\u201C\u201D`#@&^~]/g, '')
                 setScript(cleaned)
               }}
               className="h-48 font-mono text-sm resize-none"

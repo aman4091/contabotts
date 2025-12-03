@@ -246,8 +246,8 @@ export function VideoPopup({
       return
     }
 
-    // Clean the input
-    const cleaned = chunkInput.replace(/[*""\u201C\u201D\u2018\u2019`#@&^~]/g, '')
+    // Clean the input - convert curly quotes to apostrophe, remove other symbols
+    const cleaned = chunkInput.replace(/[\u2018\u2019]/g, "'").replace(/[*""\u201C\u201D`#@&^~]/g, '')
 
     const newProcessed = [...processedChunks]
     newProcessed[currentChunkIndex] = cleaned
@@ -630,9 +630,9 @@ export function VideoPopup({
             <Textarea
               value={script}
               onChange={e => {
-                // Clean script: remove asterisks, quotes, and special symbols
+                // Clean script: convert curly quotes to apostrophe, remove other symbols
                 const cleaned = e.target.value
-                  .replace(/[*""\u201C\u201D\u2018\u2019`#@&^~]/g, '')
+                  .replace(/[\u2018\u2019]/g, "'").replace(/[*""\u201C\u201D`#@&^~]/g, '')
                 setScript(cleaned)
               }}
               className="h-48 font-mono text-sm resize-none"
