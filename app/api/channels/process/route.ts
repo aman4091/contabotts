@@ -148,6 +148,8 @@ async function processVideosInBackground(
       console.log(`[BG]   Queueing as ${folderName}...`)
       const audioCounter = await getNextAudioCounter()
       const jobId = randomUUID()
+      // Priority: anu = 10 (high), aman = 5 (normal)
+      const priority = username === "anu" ? 10 : 5
 
       const jobResult = await createAudioJob({
         job_id: jobId,
@@ -157,7 +159,7 @@ async function processVideosInBackground(
         date: getTomorrowDate(),
         audio_counter: audioCounter,
         organized_path: `/organized/${folderName}`,
-        priority: 5,
+        priority,
         username,
         reference_audio: referenceAudio,
         source_channel: channelId,

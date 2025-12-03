@@ -188,6 +188,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Create audio job
+    // Priority: anu = 10 (high), aman = 5 (normal)
+    const priority = username === "anu" ? 10 : 5
     const jobId = randomUUID()
     const result = await createAudioJob({
       job_id: jobId,
@@ -197,7 +199,7 @@ export async function POST(request: NextRequest) {
       date: getTomorrowDate(),
       audio_counter: audioCounter,
       organized_path: `/organized/${folderName}`,
-      priority: 5,
+      priority,
       username,
       reference_audio: referenceAudio
     })
