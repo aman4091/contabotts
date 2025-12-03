@@ -17,7 +17,11 @@ import {
   Scissors,
   ChevronRight,
   Check,
-  Merge
+  Merge,
+  Edit3,
+  RotateCcw,
+  ChevronDown,
+  ChevronUp
 } from "lucide-react"
 
 interface AudioFile {
@@ -48,6 +52,10 @@ export function TranscriptPopup({
   const [addingToQueue, setAddingToQueue] = useState(false)
   const [selectedAudio, setSelectedAudio] = useState(defaultReferenceAudio)
 
+  // Custom prompt (editable, starts with default)
+  const [customPrompt, setCustomPrompt] = useState(prompt)
+  const [showPromptEditor, setShowPromptEditor] = useState(false)
+
   // Chunks mode state
   const [chunksMode, setChunksMode] = useState(false)
   const [chunks, setChunks] = useState<string[]>([])
@@ -61,7 +69,7 @@ export function TranscriptPopup({
       toast.error("No transcript to copy")
       return
     }
-    const textToCopy = prompt + "\n\n" + transcript
+    const textToCopy = customPrompt + "\n\n" + transcript
     try {
       const textarea = document.createElement("textarea")
       textarea.value = textToCopy
@@ -94,7 +102,7 @@ export function TranscriptPopup({
       const res = await fetch("/api/ai/process", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transcript, prompt })
+        body: JSON.stringify({ transcript, prompt: customPrompt })
       })
 
       const data = await res.json()
@@ -116,7 +124,7 @@ export function TranscriptPopup({
       toast.error("No transcript to copy")
       return
     }
-    const textToCopy = prompt + "\n\n" + transcript
+    const textToCopy = customPrompt + "\n\n" + transcript
     try {
       const textarea = document.createElement("textarea")
       textarea.value = textToCopy
@@ -174,7 +182,7 @@ export function TranscriptPopup({
 
   function copyCurrentChunk() {
     const currentChunk = chunks[currentChunkIndex]
-    const textToCopy = prompt + "\n\n" + currentChunk
+    const textToCopy = customPrompt + "\n\n" + currentChunk
     try {
       const textarea = document.createElement("textarea")
       textarea.value = textToCopy
@@ -250,7 +258,7 @@ export function TranscriptPopup({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             transcript: chunks[i],
-            prompt: prompt + `\n\n[Part ${i + 1} of ${chunks.length}]`
+            prompt: customPrompt + `\n\n[Part ${i + 1} of ${chunks.length}]`
           })
         })
 
@@ -359,6 +367,53 @@ export function TranscriptPopup({
               className="h-48 font-mono text-sm resize-none"
               placeholder="Transcript will appear here..."
             />
+          </div>
+
+          {/* Prompt Editor (Collapsible) */}
+          <div className="border border-border rounded-lg">
+            <button
+              onClick={() => setShowPromptEditor(!showPromptEditor)}
+              className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <Edit3 className="w-4 h-4 text-muted-foreground" />
+                <span className="text-sm font-medium">Custom Prompt</span>
+                {customPrompt !== prompt && (
+                  <span className="text-xs px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-400">Modified</span>
+                )}
+              </div>
+              {showPromptEditor ? (
+                <ChevronUp className="w-4 h-4 text-muted-foreground" />
+              ) : (
+                <ChevronDown className="w-4 h-4 text-muted-foreground" />
+              )}
+            </button>
+            {showPromptEditor && (
+              <div className="p-3 pt-0 space-y-2">
+                <Textarea
+                  value={customPrompt}
+                  onChange={e => setCustomPrompt(e.target.value)}
+                  className="h-32 font-mono text-sm resize-none"
+                  placeholder="Enter custom prompt for this transcript..."
+                />
+                <div className="flex justify-between items-center">
+                  <p className="text-xs text-muted-foreground">
+                    This prompt will only be used for this transcript
+                  </p>
+                  {customPrompt !== prompt && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setCustomPrompt(prompt)}
+                      className="text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      <RotateCcw className="w-3 h-3 mr-1" />
+                      Reset to Default
+                    </Button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Action Buttons */}
