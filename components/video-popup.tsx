@@ -18,7 +18,10 @@ import {
   Scissors,
   ChevronRight,
   Check,
-  Merge
+  Merge,
+  Edit3,
+  ChevronDown,
+  RotateCcw
 } from "lucide-react"
 
 interface Video {
@@ -86,6 +89,10 @@ export function VideoPopup({
   const [currentChunkIndex, setCurrentChunkIndex] = useState(0)
   const [chunkInput, setChunkInput] = useState("")
 
+  // Custom prompt state
+  const [customPrompt, setCustomPrompt] = useState(prompt)
+  const [showPromptEditor, setShowPromptEditor] = useState(false)
+
   useEffect(() => {
     fetchTranscript()
   }, [video.videoId])
@@ -111,12 +118,12 @@ export function VideoPopup({
   }
 
   async function handleCopy() {
-    console.log("handleCopy called, transcript length:", transcript.length, "prompt length:", prompt.length)
+    console.log("handleCopy called, transcript length:", transcript.length, "prompt length:", customPrompt.length)
     if (!transcript) {
       toast.error("No transcript to copy")
       return
     }
-    const textToCopy = prompt + "\n\n" + transcript
+    const textToCopy = customPrompt + "\n\n" + transcript
     console.log("Text to copy length:", textToCopy.length)
     try {
       // Always use fallback method for reliability
@@ -154,7 +161,7 @@ export function VideoPopup({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           transcript,
-          prompt
+          prompt: customPrompt
         })
       })
 
@@ -216,7 +223,7 @@ export function VideoPopup({
 
   function copyCurrentChunk() {
     const currentChunk = chunks[currentChunkIndex]
-    const textToCopy = prompt + "\n\n" + currentChunk
+    const textToCopy = customPrompt + "\n\n" + currentChunk
     try {
       const textarea = document.createElement("textarea")
       textarea.value = textToCopy
@@ -282,7 +289,7 @@ export function VideoPopup({
       toast.error("No transcript to copy")
       return
     }
-    const textToCopy = prompt + "\n\n" + transcript
+    const textToCopy = customPrompt + "\n\n" + transcript
     try {
       const textarea = document.createElement("textarea")
       textarea.value = textToCopy
@@ -436,7 +443,58 @@ export function VideoPopup({
               <Scissors className="w-4 h-4 mr-2" />
               Chunks
             </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowPromptEditor(!showPromptEditor)}
+              className="border-amber-500/30 text-amber-400 hover:bg-amber-500/10"
+            >
+              <Edit3 className="w-4 h-4 mr-2" />
+              Prompt
+              {customPrompt !== prompt && (
+                <Badge variant="secondary" className="ml-2 text-xs bg-amber-500/20 text-amber-400">
+                  Modified
+                </Badge>
+              )}
+              <ChevronDown className={`w-4 h-4 ml-1 transition-transform ${showPromptEditor ? 'rotate-180' : ''}`} />
+            </Button>
           </div>
+
+          {/* Custom Prompt Editor */}
+          {showPromptEditor && (
+            <div className="border border-amber-500/30 rounded-lg p-4 bg-amber-500/5 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Edit3 className="w-4 h-4 text-amber-400" />
+                  <span className="text-sm font-medium text-amber-400">Custom Prompt (one-time)</span>
+                  {customPrompt !== prompt && (
+                    <Badge variant="outline" className="text-xs border-amber-500/30 text-amber-400">
+                      Modified
+                    </Badge>
+                  )}
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setCustomPrompt(prompt)}
+                  disabled={customPrompt === prompt}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <RotateCcw className="w-4 h-4 mr-1" />
+                  Reset to Default
+                </Button>
+              </div>
+              <Textarea
+                value={customPrompt}
+                onChange={e => setCustomPrompt(e.target.value)}
+                className="h-32 font-mono text-sm resize-none"
+                placeholder="Enter custom prompt..."
+              />
+              <p className="text-xs text-muted-foreground">
+                This prompt will be used only for this video. Refresh or close popup to reset.
+              </p>
+            </div>
+          )}
 
           {/* Chunks Mode UI */}
           {chunksMode && (
