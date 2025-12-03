@@ -3,6 +3,43 @@ import { NextRequest, NextResponse } from "next/server"
 const FILE_SERVER_URL = process.env.FILE_SERVER_URL || ""
 const FILE_SERVER_API_KEY = process.env.FILE_SERVER_API_KEY || ""
 
+// PUT - Pause or Resume a job
+export async function PUT(request: NextRequest) {
+  try {
+    const body = await request.json()
+    const { queue_type = "audio", job_id, action } = body
+
+    if (!job_id || !action) {
+      return NextResponse.json({ error: "job_id and action required" }, { status: 400 })
+    }
+
+    if (action !== "pause" && action !== "resume") {
+      return NextResponse.json({ error: "action must be 'pause' or 'resume'" }, { status: 400 })
+    }
+
+    const response = await fetch(
+      `${FILE_SERVER_URL}/queue/${queue_type}/jobs/${job_id}/${action}`,
+      {
+        method: "POST",
+        headers: {
+          "x-api-key": FILE_SERVER_API_KEY
+        }
+      }
+    )
+
+    if (!response.ok) {
+      const error = await response.text()
+      return NextResponse.json({ error: error || `Failed to ${action} job` }, { status: 500 })
+    }
+
+    const data = await response.json()
+    return NextResponse.json({ success: true, ...data })
+  } catch (error) {
+    console.error("Error pausing/resuming job:", error)
+    return NextResponse.json({ error: "Failed to pause/resume job" }, { status: 500 })
+  }
+}
+
 // DELETE - Remove job from queue (sets status to "cancelled")
 export async function DELETE(request: NextRequest) {
   try {

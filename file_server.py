@@ -443,7 +443,8 @@ def get_queue_paths(queue_type: str):
         "pending": base / "pending",
         "processing": base / "processing",
         "completed": base / "completed",
-        "failed": base / "failed"
+        "failed": base / "failed",
+        "paused": base / "paused"
     }
 
 
@@ -751,10 +752,192 @@ async def update_job_status(
     }
 
 
+@app.post("/queue/{queue_type}/jobs/{job_id}/pause")
+async def pause_job(
+    queue_type: str,
+    job_id: str,
+    x_api_key: Optional[str] = Header(None)
+):
+    """
+    Pause a pending job - move from pending to paused
+    Paused jobs won't be picked up by workers
+
+    Args:
+        queue_type: 'audio' or 'video'
+        job_id: Job ID
+
+    Returns:
+        Success status
+    """
+    verify_api_key(x_api_key)
+    paths = get_queue_paths(queue_type)
+
+    # Find job in pending folder
+    job_file = paths["pending"] / f"{job_id}.json"
+
+    if not job_file.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found in pending: {job_id}")
+
+    # Read job data
+    with open(job_file) as f:
+        job_data = json.load(f)
+
+    # Update status
+    job_data["status"] = "paused"
+    job_data["paused_at"] = datetime.now().isoformat()
+
+    # Move to paused folder
+    paused_file = paths["paused"] / f"{job_id}.json"
+    paths["paused"].mkdir(parents=True, exist_ok=True)
+
+    with open(paused_file, "w") as f:
+        json.dump(job_data, f, indent=2)
+
+    # Delete from pending
+    job_file.unlink()
+
+    return {"success": True, "job_id": job_id, "status": "paused"}
+
+
+@app.post("/queue/{queue_type}/jobs/{job_id}/resume")
+async def resume_job(
+    queue_type: str,
+    job_id: str,
+    x_api_key: Optional[str] = Header(None)
+):
+    """
+    Resume a paused job - move from paused to pending
+    Job will be picked up by workers again
+
+    Args:
+        queue_type: 'audio' or 'video'
+        job_id: Job ID
+
+    Returns:
+        Success status
+    """
+    verify_api_key(x_api_key)
+    paths = get_queue_paths(queue_type)
+
+    # Find job in paused folder
+    job_file = paths["paused"] / f"{job_id}.json"
+
+    if not job_file.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found in paused: {job_id}")
+
+    # Read job data
+    with open(job_file) as f:
+        job_data = json.load(f)
+
+    # Update status
+    job_data["status"] = "pending"
+    job_data["resumed_at"] = datetime.now().isoformat()
+    if "paused_at" in job_data:
+        del job_data["paused_at"]
+
+    # Move to pending folder
+    pending_file = paths["pending"] / f"{job_id}.json"
+    paths["pending"].mkdir(parents=True, exist_ok=True)
+
+    with open(pending_file, "w") as f:
+        json.dump(job_data, f, indent=2)
+
+    # Delete from paused
+    job_file.unlink()
+
+    return {"success": True, "job_id": job_id, "status": "pending"}
+
+
+@app.post("/queue/{queue_type}/pause-all")
+async def pause_all_jobs(
+    queue_type: str,
+    x_api_key: Optional[str] = Header(None)
+):
+    """
+    Pause all pending jobs
+
+    Args:
+        queue_type: 'audio' or 'video'
+
+    Returns:
+        Count of paused jobs
+    """
+    verify_api_key(x_api_key)
+    paths = get_queue_paths(queue_type)
+
+    pending_files = list(paths["pending"].glob("*.json"))
+    paused_count = 0
+
+    paths["paused"].mkdir(parents=True, exist_ok=True)
+
+    for job_file in pending_files:
+        try:
+            with open(job_file) as f:
+                job_data = json.load(f)
+
+            job_data["status"] = "paused"
+            job_data["paused_at"] = datetime.now().isoformat()
+
+            paused_file = paths["paused"] / job_file.name
+            with open(paused_file, "w") as f:
+                json.dump(job_data, f, indent=2)
+
+            job_file.unlink()
+            paused_count += 1
+        except:
+            continue
+
+    return {"success": True, "paused_count": paused_count}
+
+
+@app.post("/queue/{queue_type}/resume-all")
+async def resume_all_jobs(
+    queue_type: str,
+    x_api_key: Optional[str] = Header(None)
+):
+    """
+    Resume all paused jobs
+
+    Args:
+        queue_type: 'audio' or 'video'
+
+    Returns:
+        Count of resumed jobs
+    """
+    verify_api_key(x_api_key)
+    paths = get_queue_paths(queue_type)
+
+    paused_files = list(paths["paused"].glob("*.json"))
+    resumed_count = 0
+
+    paths["pending"].mkdir(parents=True, exist_ok=True)
+
+    for job_file in paused_files:
+        try:
+            with open(job_file) as f:
+                job_data = json.load(f)
+
+            job_data["status"] = "pending"
+            job_data["resumed_at"] = datetime.now().isoformat()
+            if "paused_at" in job_data:
+                del job_data["paused_at"]
+
+            pending_file = paths["pending"] / job_file.name
+            with open(pending_file, "w") as f:
+                json.dump(job_data, f, indent=2)
+
+            job_file.unlink()
+            resumed_count += 1
+        except:
+            continue
+
+    return {"success": True, "resumed_count": resumed_count}
+
+
 @app.get("/queue/{queue_type}/jobs")
 async def list_jobs(
     queue_type: str,
-    status: str = Query("pending", description="Job status: pending, processing, completed, failed"),
+    status: str = Query("pending", description="Job status: pending, processing, completed, failed, paused"),
     x_api_key: Optional[str] = Header(None)
 ):
     """

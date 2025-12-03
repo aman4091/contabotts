@@ -13,8 +13,8 @@ export async function GET(request: NextRequest) {
   try {
     const username = await getUser()
 
-    // Fetch all statuses in parallel
-    const statuses = ["pending", "processing", "completed", "failed"]
+    // Fetch all statuses in parallel (including paused)
+    const statuses = ["pending", "processing", "completed", "failed", "paused"]
     const responses = await Promise.all(
       statuses.map(status =>
         fetch(`${FILE_SERVER_URL}/queue/audio/jobs?status=${status}`, {

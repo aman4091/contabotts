@@ -17,7 +17,9 @@ import {
   Music,
   RotateCcw,
   ExternalLink,
-  Trash2
+  Trash2,
+  Pause,
+  Play
 } from "lucide-react"
 
 interface Job {
@@ -41,6 +43,7 @@ export default function AudioFilesPage() {
   const [statusFilter, setStatusFilter] = useState("all")
   const [updating, setUpdating] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
+  const [pausing, setPausing] = useState<string | null>(null)
 
   useEffect(() => {
     loadJobs()
@@ -106,6 +109,31 @@ export default function AudioFilesPage() {
     }
   }
 
+  async function pauseResumeJob(jobId: string, action: "pause" | "resume") {
+    setPausing(jobId)
+    try {
+      const res = await fetch("/api/queue-status", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          queue_type: "audio",
+          job_id: jobId,
+          action
+        })
+      })
+      const data = await res.json()
+      if (data.success) {
+        await loadJobs()
+      } else {
+        alert(`Failed to ${action} job: ` + (data.error || "Unknown error"))
+      }
+    } catch (error) {
+      alert(`Error ${action}ing job`)
+    } finally {
+      setPausing(null)
+    }
+  }
+
   const filteredJobs = jobs.filter(job => {
     if (statusFilter === "all") return true
     return job.status === statusFilter
@@ -115,7 +143,8 @@ export default function AudioFilesPage() {
     pending: jobs.filter(j => j.status === "pending").length,
     processing: jobs.filter(j => j.status === "processing").length,
     completed: jobs.filter(j => j.status === "completed").length,
-    failed: jobs.filter(j => j.status === "failed").length
+    failed: jobs.filter(j => j.status === "failed").length,
+    paused: jobs.filter(j => j.status === "paused").length
   }
 
   function getStatusIcon(status: string) {
@@ -128,6 +157,8 @@ export default function AudioFilesPage() {
         return <CheckCircle2 className="w-4 h-4 text-green-500" />
       case "failed":
         return <XCircle className="w-4 h-4 text-red-500" />
+      case "paused":
+        return <Pause className="w-4 h-4 text-orange-500" />
       default:
         return null
     }
@@ -143,6 +174,8 @@ export default function AudioFilesPage() {
         return <Badge variant="success">Completed</Badge>
       case "failed":
         return <Badge variant="destructive">Failed</Badge>
+      case "paused":
+        return <Badge className="bg-orange-500/20 text-orange-400 border-orange-500/30">Paused</Badge>
       default:
         return <Badge variant="outline">{status}</Badge>
     }
@@ -247,6 +280,7 @@ export default function AudioFilesPage() {
         <TabsList className="flex flex-wrap h-auto gap-1">
           <TabsTrigger value="all" className="text-xs sm:text-sm">All ({jobs.length})</TabsTrigger>
           <TabsTrigger value="pending" className="text-xs sm:text-sm">Pending ({stats.pending})</TabsTrigger>
+          <TabsTrigger value="paused" className="text-xs sm:text-sm">Paused ({stats.paused})</TabsTrigger>
           <TabsTrigger value="processing" className="text-xs sm:text-sm">Processing ({stats.processing})</TabsTrigger>
           <TabsTrigger value="completed" className="text-xs sm:text-sm">Done ({stats.completed})</TabsTrigger>
           <TabsTrigger value="failed" className="text-xs sm:text-sm">Failed ({stats.failed})</TabsTrigger>
@@ -333,7 +367,39 @@ export default function AudioFilesPage() {
                                     Reprocess
                                   </Button>
                                 )}
-                                {(job.status === "pending" || job.status === "processing") && (
+                                {job.status === "pending" && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => pauseResumeJob(job.job_id, "pause")}
+                                    disabled={pausing === job.job_id}
+                                    className="flex items-center gap-1 text-xs px-2 py-1 h-auto bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 border-orange-500/30"
+                                  >
+                                    {pausing === job.job_id ? (
+                                      <Loader2 className="w-3 h-3 animate-spin" />
+                                    ) : (
+                                      <Pause className="w-3 h-3" />
+                                    )}
+                                    Pause
+                                  </Button>
+                                )}
+                                {job.status === "paused" && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => pauseResumeJob(job.job_id, "resume")}
+                                    disabled={pausing === job.job_id}
+                                    className="flex items-center gap-1 text-xs px-2 py-1 h-auto bg-green-500/10 text-green-400 hover:bg-green-500/20 border-green-500/30"
+                                  >
+                                    {pausing === job.job_id ? (
+                                      <Loader2 className="w-3 h-3 animate-spin" />
+                                    ) : (
+                                      <Play className="w-3 h-3" />
+                                    )}
+                                    Resume
+                                  </Button>
+                                )}
+                                {(job.status === "pending" || job.status === "processing" || job.status === "paused") && (
                                   <Button
                                     size="sm"
                                     variant="outline"
