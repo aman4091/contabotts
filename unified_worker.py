@@ -263,7 +263,16 @@ def generate_audio_f5tts(script_text: str, ref_audio: str, out_path: str, chunk_
 
             if torch.cuda.is_available(): torch.cuda.empty_cache()
             with torch.inference_mode():
-                res = f5_model.infer(ref_file=ref_audio, ref_text="", gen_text=chk, remove_silence=True, speed=1.0)
+                res = f5_model.infer(
+                    ref_file=ref_audio,
+                    ref_text="",
+                    gen_text=chk,
+                    remove_silence=True,
+                    speed=0.8,             # Slower, natural pace
+                    nfe_step=64,           # Premium quality (default 32)
+                    cfg_strength=2.0,      # Classifier-free guidance
+                    sway_sampling_coef=-1.0  # Sway sampling enabled
+                )
             audio_data = res[0] if isinstance(res, tuple) else res
             all_audio.append(audio_data)
 
