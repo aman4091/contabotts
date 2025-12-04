@@ -240,6 +240,79 @@ async def upload_to_gofile(file_path: str) -> Optional[str]:
         print(f"Gofile error: {e}")
         return None
 
+async def download_from_gofile(gofile_link: str, output_path: str) -> bool:
+    """Download audio file from Gofile link"""
+    try:
+        import httpx
+        import re
+
+        # Extract content ID from link (e.g., https://gofile.io/d/xxxxx -> xxxxx)
+        match = re.search(r'gofile\.io/d/([a-zA-Z0-9]+)', gofile_link)
+        if not match:
+            print(f"❌ Invalid Gofile link format: {gofile_link}")
+            return False
+
+        content_id = match.group(1)
+        print(f"📥 Downloading from Gofile: {content_id}")
+
+        async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client:
+            # Get content info
+            info_url = f"https://api.gofile.io/contents/{content_id}?wt=4fd6sg89d7s6"
+            info_res = await client.get(info_url)
+
+            if info_res.status_code != 200:
+                print(f"❌ Failed to get Gofile info: {info_res.status_code}")
+                return False
+
+            data = info_res.json()
+            if data.get("status") != "ok":
+                print(f"❌ Gofile API error: {data}")
+                return False
+
+            # Find the audio file
+            contents = data.get("data", {}).get("children", {})
+            audio_file = None
+
+            for file_id, file_info in contents.items():
+                name = file_info.get("name", "").lower()
+                if name.endswith((".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg")):
+                    audio_file = file_info
+                    break
+
+            if not audio_file:
+                # If no audio found, just get the first file
+                if contents:
+                    audio_file = list(contents.values())[0]
+                else:
+                    print("❌ No files found in Gofile")
+                    return False
+
+            download_url = audio_file.get("link")
+            if not download_url:
+                print("❌ No download link found")
+                return False
+
+            print(f"   Downloading: {audio_file.get('name')}")
+
+            # Download the file
+            response = await client.get(download_url, headers={
+                "Cookie": "accountToken=undefined"
+            })
+
+            if response.status_code == 200:
+                with open(output_path, 'wb') as f:
+                    f.write(response.content)
+                print(f"✅ Downloaded to: {output_path}")
+                return True
+            else:
+                print(f"❌ Download failed: {response.status_code}")
+                return False
+
+    except Exception as e:
+        print(f"❌ Gofile download error: {e}")
+        traceback.print_exc()
+        return False
+
 def generate_audio_f5tts(script_text: str, ref_audio: str, out_path: str, chunk_size=500) -> bool:
     try:
         print(f"🎙️ Generating Audio (Len: {len(script_text)})...")
@@ -482,57 +555,85 @@ def render_video_shorts(image_path: str, audio_path: str, ass_path: str, output_
 async def process_job(job: Dict) -> bool:
     """Process Audio + Video in single job"""
     job_id = job["job_id"]
-    channel = job["channel_code"]
-    org_path = job["organized_path"]
-    ref_audio_file = job.get("reference_audio") or f"{channel}.wav"
+    is_video_only = job.get("videoOnly", False)
 
-    print(f"\n🎯 Processing Job: {job_id[:8]} ({channel} #{job['video_number']})")
-    print(f"   Reference Audio: {ref_audio_file}")
+    # For videoOnly jobs, we don't need channel/org_path
+    channel = job.get("channel_code", "MANUAL")
+    org_path = job.get("organized_path", "")
+    ref_audio_file = job.get("reference_audio") or f"{channel}.wav"
+    video_number = job.get("video_number", 0)
+
+    if is_video_only:
+        print(f"\n🎯 Processing Video-Only Job: {job_id[:8]}")
+        print(f"   Audio Link: {job.get('audioLink', 'N/A')[:50]}...")
+    else:
+        print(f"\n🎯 Processing Job: {job_id[:8]} ({channel} #{video_number})")
+        print(f"   Reference Audio: {ref_audio_file}")
+
     queue.send_heartbeat(WORKER_ID, status="busy", current_job=job_id)
 
     local_ref_audio = os.path.join(TEMP_DIR, f"{channel}_ref.wav")
     local_audio_out = os.path.join(OUTPUT_DIR, f"audio_{job_id}.wav")
     local_video_out = os.path.join(OUTPUT_DIR, f"video_{job_id}.mp4")
     local_image = None
+    audio_gofile = None
 
     try:
-        # ========== STEP 1: AUDIO GENERATION ==========
+        # ========== STEP 1: AUDIO (Generate or Download) ==========
         print("\n" + "="*50)
-        print("🎧 STEP 1: Audio Generation")
-        print("="*50)
 
-        script = job.get('script_text') or queue.get_script(org_path)
-        if not script: raise Exception("Script fetch failed")
-        if not queue.get_reference_audio(ref_audio_file, local_ref_audio): raise Exception(f"Ref audio failed: {ref_audio_file}")
+        if is_video_only:
+            # VIDEO-ONLY MODE: Download audio from Gofile
+            print("📥 STEP 1: Download Audio from Gofile")
+            print("="*50)
 
-        if not generate_audio_f5tts(script, local_ref_audio, local_audio_out):
-            raise Exception("TTS failed")
+            audio_link = job.get("audioLink")
+            if not audio_link:
+                raise Exception("No audioLink provided for videoOnly job")
 
-        print("📤 Uploading audio to Gofile...")
-        audio_gofile = await upload_to_gofile(local_audio_out)
-        if not audio_gofile:
-            raise Exception("Audio Gofile upload failed")
+            if not await download_from_gofile(audio_link, local_audio_out):
+                raise Exception("Failed to download audio from Gofile")
 
-        print(f"✅ Audio uploaded to Gofile: {audio_gofile}")
+            audio_gofile = audio_link  # Use original link for reference
+            print(f"✅ Audio downloaded successfully")
 
-        print("📤 Uploading audio to Contabo...")
-        username = job.get("username", "default")
-        audio_remote_path = f"users/{username}/organized/video_{job['video_number']}/audio.wav"
-        if queue.upload_file(local_audio_out, audio_remote_path):
-            print(f"✅ Audio uploaded to Contabo: {audio_remote_path}")
         else:
-            print("⚠️ Contabo audio upload failed (non-critical)")
+            # NORMAL MODE: Generate TTS audio
+            print("🎧 STEP 1: Audio Generation")
+            print("="*50)
 
-        script_filename = f"{channel}_V{job['video_number']}_{job.get('date', 'unknown')}_script.txt"
-        send_telegram_document(
-            script_text=script,
-            caption=f"🎵 <b>Audio Complete</b>\n"
-                    f"<b>Channel:</b> {channel} | <b>Video:</b> #{job['video_number']}\n"
-                    f"<b>Date:</b> {job.get('date', 'N/A')}\n\n"
-                    f"<b>🔗 Audio:</b> {audio_gofile}",
-            filename=script_filename,
-            username=job.get("username")
-        )
+            script = job.get('script_text') or queue.get_script(org_path)
+            if not script: raise Exception("Script fetch failed")
+            if not queue.get_reference_audio(ref_audio_file, local_ref_audio): raise Exception(f"Ref audio failed: {ref_audio_file}")
+
+            if not generate_audio_f5tts(script, local_ref_audio, local_audio_out):
+                raise Exception("TTS failed")
+
+            print("📤 Uploading audio to Gofile...")
+            audio_gofile = await upload_to_gofile(local_audio_out)
+            if not audio_gofile:
+                raise Exception("Audio Gofile upload failed")
+
+            print(f"✅ Audio uploaded to Gofile: {audio_gofile}")
+
+            print("📤 Uploading audio to Contabo...")
+            username = job.get("username", "default")
+            audio_remote_path = f"users/{username}/organized/video_{video_number}/audio.wav"
+            if queue.upload_file(local_audio_out, audio_remote_path):
+                print(f"✅ Audio uploaded to Contabo: {audio_remote_path}")
+            else:
+                print("⚠️ Contabo audio upload failed (non-critical)")
+
+            script_filename = f"{channel}_V{video_number}_{job.get('date', 'unknown')}_script.txt"
+            send_telegram_document(
+                script_text=script,
+                caption=f"🎵 <b>Audio Complete</b>\n"
+                        f"<b>Channel:</b> {channel} | <b>Video:</b> #{video_number}\n"
+                        f"<b>Date:</b> {job.get('date', 'N/A')}\n\n"
+                        f"<b>🔗 Audio:</b> {audio_gofile}",
+                filename=script_filename,
+                username=job.get("username")
+            )
 
         # ========== STEP 2: VIDEO GENERATION ==========
         print("\n" + "="*50)
@@ -598,18 +699,29 @@ async def process_job(job: Dict) -> bool:
         queue.increment_worker_stat(WORKER_ID, "jobs_completed")
 
         video_type = "📱 Shorts" if is_short else "🎬 Video"
-        send_telegram_document(
-            script_text=script,
-            caption=f"{video_type} <b>Complete</b>\n"
-                    f"<b>Channel:</b> {channel} | <b>Video:</b> #{job['video_number']}\n"
-                    f"<b>Date:</b> {job.get('date', 'N/A')}\n\n"
-                    f"<b>🔗 Video:</b> {video_gofile}",
-            filename=script_filename,
-            username=job.get("username")
-        )
+
+        if is_video_only:
+            # For videoOnly jobs, send simple telegram message
+            send_telegram(
+                f"{video_type} <b>Complete (Manual Audio)</b>\n"
+                f"<b>Title:</b> {job.get('videoTitle', 'Unknown')}\n\n"
+                f"<b>🔗 Video:</b> {video_gofile}",
+                username=job.get("username")
+            )
+        else:
+            # Normal job - send with script document
+            send_telegram_document(
+                script_text=script,
+                caption=f"{video_type} <b>Complete</b>\n"
+                        f"<b>Channel:</b> {channel} | <b>Video:</b> #{video_number}\n"
+                        f"<b>Date:</b> {job.get('date', 'N/A')}\n\n"
+                        f"<b>🔗 Video:</b> {video_gofile}",
+                filename=script_filename,
+                username=job.get("username")
+            )
 
         print("\n" + "="*50)
-        print(f"✅ JOB COMPLETE: {job_id[:8]} {'(SHORT)' if is_short else ''}")
+        print(f"✅ JOB COMPLETE: {job_id[:8]} {'(SHORT)' if is_short else ''} {'(VIDEO-ONLY)' if is_video_only else ''}")
         print(f"   Audio: {audio_gofile}")
         print(f"   Video: {video_gofile}")
         print("="*50)

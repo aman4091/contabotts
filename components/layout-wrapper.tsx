@@ -17,7 +17,8 @@ import {
   ImageIcon,
   History,
   Film,
-  Tv2
+  Tv2,
+  Video
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -42,6 +43,7 @@ const navItems = [
   { title: "Calendar", href: "/calendar", icon: Calendar },
   { title: "Thumbnails", href: "/titles-thumbnails", icon: ImageIcon },
   { title: "Queue", href: "/audio-files", icon: FileAudio },
+  { title: "A2V", href: "/audio-to-video", icon: Video },
   { title: "Subtitles", href: "/subtitle-settings", icon: Subtitles },
   { title: "Settings", href: "/settings", icon: Settings }
 ]
