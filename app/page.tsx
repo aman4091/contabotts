@@ -316,37 +316,42 @@ export default function HomePage() {
   // When a video is processed (skip or add to queue), remove from selection and open next
   function handleSkipWithSelection(videoId: string) {
     handleSkip(videoId)
-    // Remove from selection
-    setSelectedVideoIds(prev => {
-      const newSet = new Set(prev)
-      newSet.delete(videoId)
-      return newSet
-    })
-  }
+    // Remove from selection and open next
+    const remainingIds = Array.from(selectedVideoIds).filter(id => id !== videoId)
+    setSelectedVideoIds(new Set(remainingIds))
 
-  function handleAddToQueueWithSelection(videoId: string) {
-    handleAddToQueue(videoId)
-    // Remove from selection
-    setSelectedVideoIds(prev => {
-      const newSet = new Set(prev)
-      newSet.delete(videoId)
-      return newSet
-    })
-  }
-
-  // When popup closes in select mode, open next selected video
-  function handlePopupClose() {
-    setSelectedVideo(null)
-    if (selectMode && selectedVideoIds.size > 0) {
-      // Small delay then open next
+    // Open next video after small delay
+    if (remainingIds.length > 0) {
       setTimeout(() => {
-        const nextId = Array.from(selectedVideoIds)[0]
-        const nextVideo = videos.find(v => v.videoId === nextId)
+        const nextVideo = videos.find(v => v.videoId === remainingIds[0])
         if (nextVideo) {
           setSelectedVideo(nextVideo)
         }
       }, 300)
     }
+  }
+
+  function handleAddToQueueWithSelection(videoId: string) {
+    handleAddToQueue(videoId)
+    // Remove from selection and open next
+    const remainingIds = Array.from(selectedVideoIds).filter(id => id !== videoId)
+    setSelectedVideoIds(new Set(remainingIds))
+
+    // Open next video after small delay
+    if (remainingIds.length > 0) {
+      setTimeout(() => {
+        // Need to check videos list again since handleAddToQueue removes the video
+        const nextVideo = videos.find(v => v.videoId === remainingIds[0])
+        if (nextVideo) {
+          setSelectedVideo(nextVideo)
+        }
+      }, 300)
+    }
+  }
+
+  // When popup closes normally (not via skip/add), just close
+  function handlePopupClose() {
+    setSelectedVideo(null)
   }
 
   if (loading) {
