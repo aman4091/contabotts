@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "sonner"
-import { Loader2, RefreshCw, Settings, Youtube, Search, X } from "lucide-react"
+import { Loader2, RefreshCw, Settings, Youtube, Search, X, CheckSquare, Square, Play } from "lucide-react"
 import { VideoPopup } from "@/components/video-popup"
 import { TranscriptPopup } from "@/components/transcript-popup"
 import Link from "next/link"
@@ -75,6 +75,13 @@ export default function HomePage() {
   const [showTranscriptPopup, setShowTranscriptPopup] = useState(false)
   const [urlTranscript, setUrlTranscript] = useState("")
   const [urlVideoId, setUrlVideoId] = useState("")
+
+  // Search state
+  const [searchQuery, setSearchQuery] = useState("")
+
+  // Multi-select state
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedVideoIds, setSelectedVideoIds] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     loadInitialData()
@@ -265,6 +272,83 @@ export default function HomePage() {
     setYoutubeUrl("")
   }
 
+  // Filter videos based on search query
+  const filteredVideos = searchQuery.trim()
+    ? videos.filter(v => v.title.toLowerCase().includes(searchQuery.toLowerCase()))
+    : videos
+
+  // Toggle video selection
+  function toggleVideoSelection(videoId: string) {
+    setSelectedVideoIds(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(videoId)) {
+        newSet.delete(videoId)
+      } else {
+        newSet.add(videoId)
+      }
+      return newSet
+    })
+  }
+
+  // Select all filtered videos
+  function selectAllFiltered() {
+    setSelectedVideoIds(new Set(filteredVideos.map(v => v.videoId)))
+  }
+
+  // Clear selection
+  function clearSelection() {
+    setSelectedVideoIds(new Set())
+  }
+
+  // Process first selected video (opens popup, user processes, then moves to next)
+  function processNextSelected() {
+    if (selectedVideoIds.size === 0) {
+      toast.error("No videos selected")
+      return
+    }
+    const firstId = Array.from(selectedVideoIds)[0]
+    const video = videos.find(v => v.videoId === firstId)
+    if (video) {
+      setSelectedVideo(video)
+    }
+  }
+
+  // When a video is processed (skip or add to queue), remove from selection and open next
+  function handleSkipWithSelection(videoId: string) {
+    handleSkip(videoId)
+    // Remove from selection
+    setSelectedVideoIds(prev => {
+      const newSet = new Set(prev)
+      newSet.delete(videoId)
+      return newSet
+    })
+  }
+
+  function handleAddToQueueWithSelection(videoId: string) {
+    handleAddToQueue(videoId)
+    // Remove from selection
+    setSelectedVideoIds(prev => {
+      const newSet = new Set(prev)
+      newSet.delete(videoId)
+      return newSet
+    })
+  }
+
+  // When popup closes in select mode, open next selected video
+  function handlePopupClose() {
+    setSelectedVideo(null)
+    if (selectMode && selectedVideoIds.size > 0) {
+      // Small delay then open next
+      setTimeout(() => {
+        const nextId = Array.from(selectedVideoIds)[0]
+        const nextVideo = videos.find(v => v.videoId === nextId)
+        if (nextVideo) {
+          setSelectedVideo(nextVideo)
+        }
+      }, 300)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-20">
@@ -380,6 +464,25 @@ export default function HomePage() {
         </Button>
       </div>
 
+      {/* Search Bar */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+        <Input
+          value={searchQuery}
+          onChange={e => setSearchQuery(e.target.value)}
+          placeholder="Search videos by title..."
+          className="pl-10 pr-10"
+        />
+        {searchQuery && (
+          <button
+            onClick={() => setSearchQuery("")}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
+      </div>
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex flex-col sm:flex-row sm:items-center gap-3">
@@ -389,7 +492,7 @@ export default function HomePage() {
               <h1 className="text-xl sm:text-2xl md:text-3xl font-bold">{channelName || "Videos"}</h1>
             </div>
             <p className="text-muted-foreground text-sm mt-1">
-              {total} videos available
+              {searchQuery ? `${filteredVideos.length} of ${total} videos` : `${total} videos available`}
             </p>
           </div>
           {/* Channel Dropdown */}
@@ -408,51 +511,120 @@ export default function HomePage() {
             </Select>
           )}
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleRefresh}
-          className="border-violet-500/30 hover:border-violet-500 hover:bg-violet-500/10"
-        >
-          <RefreshCw className="w-4 h-4 mr-2" />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          {/* Select Mode Toggle */}
+          <Button
+            variant={selectMode ? "default" : "outline"}
+            size="sm"
+            onClick={() => {
+              setSelectMode(!selectMode)
+              if (selectMode) clearSelection()
+            }}
+            className={selectMode ? "bg-violet-600 hover:bg-violet-500" : "border-violet-500/30 hover:border-violet-500 hover:bg-violet-500/10"}
+          >
+            <CheckSquare className="w-4 h-4 mr-2" />
+            Select
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRefresh}
+            className="border-violet-500/30 hover:border-violet-500 hover:bg-violet-500/10"
+          >
+            <RefreshCw className="w-4 h-4 mr-2" />
+            Refresh
+          </Button>
+        </div>
       </div>
+
+      {/* Selection Controls */}
+      {selectMode && (
+        <div className="flex items-center gap-2 p-3 bg-violet-500/10 border border-violet-500/30 rounded-lg">
+          <span className="text-sm text-violet-400">
+            {selectedVideoIds.size} selected
+          </span>
+          <div className="flex-1" />
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={selectAllFiltered}
+            className="text-violet-400 hover:text-violet-300"
+          >
+            Select All ({filteredVideos.length})
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={clearSelection}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            Clear
+          </Button>
+          <Button
+            size="sm"
+            onClick={processNextSelected}
+            disabled={selectedVideoIds.size === 0}
+            className="bg-gradient-to-r from-emerald-600 to-cyan-500 hover:from-emerald-500 hover:to-cyan-400"
+          >
+            <Play className="w-4 h-4 mr-2" />
+            Process ({selectedVideoIds.size})
+          </Button>
+        </div>
+      )}
 
       {/* Video Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-        {videos.map(video => (
-          <div
-            key={video.videoId}
-            onClick={() => handleVideoClick(video)}
-            className="group cursor-pointer"
-          >
-            {/* Thumbnail */}
-            <div className="relative aspect-video rounded-lg overflow-hidden bg-muted">
-              <img
-                src={video.thumbnail}
-                alt={video.title}
-                className="w-full h-full object-cover transition-transform group-hover:scale-105"
-                loading="lazy"
-              />
-              {/* Duration badge */}
-              <div className="absolute bottom-1 right-1 bg-black/80 text-white text-xs px-1 rounded">
-                {formatDuration(video.duration)}
+        {filteredVideos.map(video => {
+          const isSelected = selectedVideoIds.has(video.videoId)
+          return (
+            <div
+              key={video.videoId}
+              onClick={() => {
+                if (selectMode) {
+                  toggleVideoSelection(video.videoId)
+                } else {
+                  handleVideoClick(video)
+                }
+              }}
+              className={`group cursor-pointer ${isSelected ? 'ring-2 ring-violet-500 rounded-lg' : ''}`}
+            >
+              {/* Thumbnail */}
+              <div className="relative aspect-video rounded-lg overflow-hidden bg-muted">
+                <img
+                  src={video.thumbnail}
+                  alt={video.title}
+                  className="w-full h-full object-cover transition-transform group-hover:scale-105"
+                  loading="lazy"
+                />
+                {/* Selection checkbox in select mode */}
+                {selectMode && (
+                  <div className="absolute top-2 left-2 z-10">
+                    {isSelected ? (
+                      <CheckSquare className="w-6 h-6 text-violet-400 drop-shadow-lg" />
+                    ) : (
+                      <Square className="w-6 h-6 text-white/70 drop-shadow-lg" />
+                    )}
+                  </div>
+                )}
+                {/* Duration badge */}
+                <div className="absolute bottom-1 right-1 bg-black/80 text-white text-xs px-1 rounded">
+                  {formatDuration(video.duration)}
+                </div>
+                {/* Hover/Selected overlay */}
+                <div className={`absolute inset-0 transition-colors ${isSelected ? 'bg-violet-500/20' : 'bg-black/0 group-hover:bg-black/20'}`} />
               </div>
-              {/* Hover overlay */}
-              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors" />
+              {/* Title */}
+              <div className="mt-2">
+                <h3 className={`text-sm font-medium line-clamp-2 transition-colors ${isSelected ? 'text-violet-400' : 'group-hover:text-violet-400'}`}>
+                  {video.title}
+                </h3>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {formatViews(video.viewCount)} views
+                </p>
+              </div>
             </div>
-            {/* Title */}
-            <div className="mt-2">
-              <h3 className="text-sm font-medium line-clamp-2 group-hover:text-violet-400 transition-colors">
-                {video.title}
-              </h3>
-              <p className="text-xs text-muted-foreground mt-1">
-                {formatViews(video.viewCount)} views
-              </p>
-            </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
 
       {/* Load More */}
@@ -491,9 +663,9 @@ export default function HomePage() {
           audioFiles={audioFiles}
           defaultReferenceAudio={defaultReferenceAudio}
           prompt={prompt}
-          onClose={() => setSelectedVideo(null)}
-          onSkip={handleSkip}
-          onAddToQueue={handleAddToQueue}
+          onClose={handlePopupClose}
+          onSkip={selectMode ? handleSkipWithSelection : handleSkip}
+          onAddToQueue={selectMode ? handleAddToQueueWithSelection : handleAddToQueue}
         />
       )}
 

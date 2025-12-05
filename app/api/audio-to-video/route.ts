@@ -7,7 +7,7 @@ const FILE_SERVER_API_KEY = process.env.FILE_SERVER_API_KEY || ""
 export async function POST(request: NextRequest) {
   try {
     const cookieStore = await cookies()
-    const username = cookieStore.get("username")?.value
+    const username = cookieStore.get("user")?.value
 
     if (!username) {
       return NextResponse.json({ error: "Not logged in" }, { status: 401 })
