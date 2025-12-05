@@ -3,11 +3,11 @@
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "sonner"
-import { Loader2, Video, Link, Image as ImageIcon, Download, ExternalLink } from "lucide-react"
+import { Loader2, Video, Link, Image as ImageIcon, ExternalLink } from "lucide-react"
 
 interface ImageFolder {
   name: string
@@ -15,13 +15,13 @@ interface ImageFolder {
 }
 
 export default function AudioToVideoPage() {
-  const [gofileLink, setGofileLink] = useState("")
+  const [gofileLinks, setGofileLinks] = useState("")
   const [imageFolders, setImageFolders] = useState<ImageFolder[]>([])
   const [selectedFolder, setSelectedFolder] = useState("")
   const [loading, setLoading] = useState(true)
   const [processing, setProcessing] = useState(false)
   const [progress, setProgress] = useState("")
-  const [resultLink, setResultLink] = useState("")
+  const [addedCount, setAddedCount] = useState(0)
 
   useEffect(() => {
     fetchImageFolders()
@@ -45,8 +45,8 @@ export default function AudioToVideoPage() {
   }
 
   async function handleProcess() {
-    if (!gofileLink.trim()) {
-      toast.error("Gofile link daalo")
+    if (!gofileLinks.trim()) {
+      toast.error("Gofile links daalo")
       return
     }
 
@@ -55,37 +55,55 @@ export default function AudioToVideoPage() {
       return
     }
 
-    setProcessing(true)
-    setProgress("Starting...")
-    setResultLink("")
+    // Parse multiple links (one per line)
+    const links = gofileLinks
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l.includes('gofile.io'))
 
-    try {
-      const res = await fetch("/api/audio-to-video", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          gofileLink: gofileLink.trim(),
-          imageFolder: selectedFolder
-        })
-      })
-
-      const data = await res.json()
-
-      if (res.ok) {
-        toast.success("Job added to queue!")
-        setProgress("Added to queue")
-        setGofileLink("")
-        setResultLink(data.jobId || "")
-      } else {
-        toast.error(data.error || "Processing failed")
-        setProgress("Failed")
-      }
-    } catch (error) {
-      toast.error("Processing failed")
-      setProgress("Error")
-    } finally {
-      setProcessing(false)
+    if (links.length === 0) {
+      toast.error("No valid Gofile links found")
+      return
     }
+
+    setProcessing(true)
+    setProgress(`Processing 0/${links.length}...`)
+    setAddedCount(0)
+
+    let successCount = 0
+
+    for (let i = 0; i < links.length; i++) {
+      setProgress(`Processing ${i + 1}/${links.length}...`)
+
+      try {
+        const res = await fetch("/api/audio-to-video", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            gofileLink: links[i],
+            imageFolder: selectedFolder
+          })
+        })
+
+        if (res.ok) {
+          successCount++
+        }
+      } catch (error) {
+        console.error(`Failed to add ${links[i]}:`, error)
+      }
+    }
+
+    if (successCount > 0) {
+      toast.success(`${successCount} jobs added to queue!`)
+      setAddedCount(successCount)
+      setGofileLinks("")
+      setProgress("Done!")
+    } else {
+      toast.error("Failed to add any jobs")
+      setProgress("Failed")
+    }
+
+    setProcessing(false)
   }
 
   if (loading) {
@@ -109,19 +127,23 @@ export default function AudioToVideoPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          {/* Gofile Link Input */}
+          {/* Gofile Links Input */}
           <div className="space-y-2">
-            <Label htmlFor="gofileLink" className="flex items-center gap-2">
+            <Label htmlFor="gofileLinks" className="flex items-center gap-2">
               <Link className="w-4 h-4" />
-              Gofile Audio Link
+              Gofile Audio Links (one per line)
             </Label>
-            <Input
-              id="gofileLink"
-              placeholder="https://gofile.io/d/xxxxx"
-              value={gofileLink}
-              onChange={(e) => setGofileLink(e.target.value)}
+            <Textarea
+              id="gofileLinks"
+              placeholder="https://gofile.io/d/xxxxx&#10;https://gofile.io/d/yyyyy&#10;https://gofile.io/d/zzzzz"
+              value={gofileLinks}
+              onChange={(e) => setGofileLinks(e.target.value)}
               disabled={processing}
+              className="min-h-[120px] font-mono text-sm"
             />
+            <p className="text-xs text-muted-foreground">
+              {gofileLinks.split('\n').filter(l => l.trim().includes('gofile.io')).length} valid links detected
+            </p>
           </div>
 
           {/* Image Folder Selection */}
@@ -147,7 +169,7 @@ export default function AudioToVideoPage() {
           {/* Process Button */}
           <Button
             onClick={handleProcess}
-            disabled={processing || !gofileLink.trim() || !selectedFolder}
+            disabled={processing || !gofileLinks.trim() || !selectedFolder}
             className="w-full bg-gradient-to-r from-violet-600 to-purple-500 hover:from-violet-500 hover:to-purple-400"
           >
             {processing ? (
@@ -158,20 +180,17 @@ export default function AudioToVideoPage() {
             ) : (
               <>
                 <Video className="w-4 h-4 mr-2" />
-                Create Video
+                Create Videos
               </>
             )}
           </Button>
 
           {/* Result */}
-          {resultLink && (
+          {addedCount > 0 && (
             <div className="p-4 bg-green-500/10 border border-green-500/30 rounded-lg space-y-3">
-              <p className="text-green-400 font-medium">Job Added to Queue!</p>
+              <p className="text-green-400 font-medium">{addedCount} Jobs Added to Queue!</p>
               <p className="text-sm text-muted-foreground">
-                Job ID: {resultLink}
-              </p>
-              <p className="text-sm text-muted-foreground">
-                Check Audio Files page for result when processing is done.
+                Check Queue page for results when processing is done.
               </p>
               <Button
                 variant="outline"
@@ -179,7 +198,7 @@ export default function AudioToVideoPage() {
                 onClick={() => window.location.href = "/audio-files"}
               >
                 <ExternalLink className="w-4 h-4 mr-2" />
-                Go to Audio Files
+                Go to Queue
               </Button>
             </div>
           )}

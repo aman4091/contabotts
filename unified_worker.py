@@ -256,12 +256,37 @@ async def download_from_gofile(gofile_link: str, output_path: str) -> bool:
         print(f"📥 Downloading from Gofile: {content_id}")
 
         async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client:
-            # Get content info
+            # Step 1: Create guest account to get token
+            print("   Creating guest account...")
+            acc_res = await client.post("https://api.gofile.io/accounts")
+            if acc_res.status_code != 200:
+                print(f"❌ Failed to create guest account: {acc_res.status_code}")
+                return False
+
+            acc_data = acc_res.json()
+            if acc_data.get("status") != "ok":
+                print(f"❌ Guest account error: {acc_data}")
+                return False
+
+            token = acc_data.get("data", {}).get("token")
+            if not token:
+                print("❌ No token received")
+                return False
+
+            print(f"   Got token: {token[:10]}...")
+
+            # Step 2: Get content info with token
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json"
+            }
+
             info_url = f"https://api.gofile.io/contents/{content_id}?wt=4fd6sg89d7s6"
-            info_res = await client.get(info_url)
+            info_res = await client.get(info_url, headers=headers)
 
             if info_res.status_code != 200:
                 print(f"❌ Failed to get Gofile info: {info_res.status_code}")
+                print(f"   Response: {info_res.text[:200]}")
                 return False
 
             data = info_res.json()
@@ -294,9 +319,9 @@ async def download_from_gofile(gofile_link: str, output_path: str) -> bool:
 
             print(f"   Downloading: {audio_file.get('name')}")
 
-            # Download the file
+            # Step 3: Download the file with token cookie
             response = await client.get(download_url, headers={
-                "Cookie": "accountToken=undefined"
+                "Cookie": f"accountToken={token}"
             })
 
             if response.status_code == 200:
