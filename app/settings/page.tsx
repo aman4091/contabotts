@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
 import { toast } from "sonner"
 import {
   Save,
@@ -41,6 +42,11 @@ interface Settings {
     model: string
     max_chunk_size: number
     temperature: number
+  }
+  video?: {
+    default_image_folder: string
+    subtitle_style: string
+    useAiImage: boolean
   }
   sourceChannelUrl?: string
   defaultReferenceAudio?: string
@@ -1225,6 +1231,39 @@ export default function SettingsPage() {
                   />
                 </div>
               </div>
+
+              {/* AI Image Generation Toggle */}
+              <div className="p-4 border border-dashed border-cyan-500/30 rounded-lg bg-cyan-500/5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label className="text-base font-medium flex items-center gap-2">
+                      <ImageIcon className="w-4 h-4 text-cyan-400" />
+                      AI Image Generation
+                    </Label>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Use Gemini 3 Pro to analyze script and Imagen 3.0 to generate background images for automation videos
+                    </p>
+                  </div>
+                  <Switch
+                    checked={settings?.video?.useAiImage || false}
+                    onCheckedChange={(checked) => setSettings(s => s ? {
+                      ...s,
+                      video: {
+                        ...s.video,
+                        default_image_folder: s.video?.default_image_folder || 'nature',
+                        subtitle_style: s.video?.subtitle_style || '',
+                        useAiImage: checked
+                      }
+                    } : s)}
+                  />
+                </div>
+                {settings?.video?.useAiImage && (
+                  <div className="text-xs text-cyan-400 bg-cyan-500/10 p-2 rounded">
+                    AI image generation is enabled. Automation videos will use AI-generated backgrounds instead of random folder images.
+                  </div>
+                )}
+              </div>
+
               <Button
                 onClick={saveSettings}
                 disabled={saving}

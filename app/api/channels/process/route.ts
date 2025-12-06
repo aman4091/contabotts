@@ -81,6 +81,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No eligible videos found" }, { status: 400 })
     }
 
+    // Get AI image setting
+    const useAiImage = settings.video?.useAiImage || false
+
     // Start background processing (don't await)
     processVideosInBackground(
       eligibleVideos,
@@ -90,7 +93,8 @@ export async function POST(request: NextRequest) {
       referenceAudio,
       processedPath,
       processedIds,
-      settings.ai?.max_chunk_size || 7000
+      settings.ai?.max_chunk_size || 7000,
+      useAiImage
     )
 
     // Return immediately
@@ -115,7 +119,8 @@ async function processVideosInBackground(
   referenceAudio: string,
   processedPath: string,
   processedIds: string[],
-  maxChunkSize: number
+  maxChunkSize: number,
+  useAiImage: boolean = false
 ) {
   console.log(`[BG] Starting background processing of ${videos.length} videos`)
 
@@ -163,7 +168,8 @@ async function processVideosInBackground(
         username,
         reference_audio: referenceAudio,
         source_channel: channelId,
-        source_video_id: video.videoId
+        source_video_id: video.videoId,
+        use_ai_image: useAiImage
       })
 
       if (!jobResult.success) {

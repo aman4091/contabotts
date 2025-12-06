@@ -33,6 +33,15 @@ from f5_tts.api import F5TTS
 # Import from l.py (same directory)
 from l import LandscapeGenerator, enhance_audio
 
+# Import AI image generator
+try:
+    from ai_image_generator import generate_ai_image
+    AI_IMAGE_AVAILABLE = True
+    print("✅ AI Image Generator loaded")
+except ImportError as e:
+    AI_IMAGE_AVAILABLE = False
+    print(f"⚠️ AI Image Generator not available: {e}")
+
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
@@ -674,7 +683,36 @@ async def process_job(job: Dict) -> bool:
         else:
             image_folder = job.get('image_folder', 'nature')
 
-        local_image, server_image_path = queue.get_random_image(image_folder)
+        # Check if AI image generation is requested
+        use_ai_image = job.get('use_ai_image', False)
+        server_image_path = None  # Track if we need to delete server image
+
+        if use_ai_image and AI_IMAGE_AVAILABLE and not is_short:
+            # AI Image Generation: Analyze script and generate image
+            print("🤖 Using AI Image Generation...")
+
+            # Get script text for analysis
+            ai_script = None
+            if is_video_only:
+                # For video-only, we don't have script - use fallback
+                ai_script = job.get('videoTitle', 'A beautiful cinematic scene')
+            else:
+                ai_script = job.get('script_text') or queue.get_script(org_path)
+
+            if ai_script:
+                local_image = os.path.join(TEMP_DIR, f"ai_image_{job_id}.jpg")
+                if generate_ai_image(ai_script, local_image):
+                    print(f"✅ AI image generated: {local_image}")
+                else:
+                    print("⚠️ AI image failed, falling back to random image")
+                    local_image, server_image_path = queue.get_random_image(image_folder)
+            else:
+                print("⚠️ No script for AI image, falling back to random image")
+                local_image, server_image_path = queue.get_random_image(image_folder)
+        else:
+            # Use random image from folder (original behavior)
+            local_image, server_image_path = queue.get_random_image(image_folder)
+
         if not local_image: raise Exception(f"Image fetch failed from {image_folder}")
 
         print("🎥 Generating Video with subtitles...")
