@@ -152,58 +152,68 @@ def generate_image_with_imagen(prompt: str, output_path: str) -> bool:
         print("❌ GEMINI_API_KEY not set")
         return False
 
-    try:
-        print(f"🎨 Generating image with Imagen 3.0...")
-        print(f"   Prompt: {prompt[:80]}...")
+    # Models to try in order
+    imagen_models = [
+        'imagen-3.0-generate-002',
+        'imagen-3.0-generate-001',
+        'imagen-4.0-generate-001',
+        'imagen-3.0-fast-generate-001',
+    ]
 
-        # Create client with API key
-        client = genai_client.Client(api_key=GEMINI_API_KEY)
+    print(f"🎨 Generating image with Imagen...")
+    print(f"   Prompt: {prompt[:80]}...")
 
-        # Generate image using Imagen 3.0
-        response = client.models.generate_images(
-            model='imagen-3.0-generate-002',
-            prompt=prompt,
-            config=genai_types.GenerateImagesConfig(
-                number_of_images=1,
-                aspect_ratio="16:9",  # Landscape for video background
-                safety_filter_level="block_only_high",
-                person_generation="allow_adult",
+    # Create client with API key
+    client = genai_client.Client(api_key=GEMINI_API_KEY)
+
+    for model_name in imagen_models:
+        try:
+            print(f"   Trying {model_name}...")
+
+            response = client.models.generate_images(
+                model=model_name,
+                prompt=prompt,
+                config=genai_types.GenerateImagesConfig(
+                    number_of_images=1,
+                    aspect_ratio="16:9",  # Landscape for video background
+                )
             )
-        )
 
-        if not response.generated_images:
-            print("❌ No images generated")
-            return False
+            if not response.generated_images:
+                print(f"   ⚠️ No images from {model_name}, trying next...")
+                continue
 
-        # Save the first image
-        generated_image = response.generated_images[0]
+            # Save the first image
+            generated_image = response.generated_images[0]
 
-        # Get image bytes and save
-        if generated_image.image and generated_image.image.image_bytes:
-            # Save and resize to exact 1920x1080
-            try:
-                from PIL import Image
-                from io import BytesIO
+            # Get image bytes and save
+            if generated_image.image and generated_image.image.image_bytes:
+                # Save and resize to exact 1920x1080
+                try:
+                    from PIL import Image
+                    from io import BytesIO
 
-                img = Image.open(BytesIO(generated_image.image.image_bytes))
-                img_resized = img.resize((1920, 1080), Image.LANCZOS)
-                img_resized.save(output_path, "JPEG", quality=95)
-                print(f"✅ Image saved (1920x1080): {output_path}")
-                return True
-            except ImportError:
-                # PIL not available, save as-is
-                with open(output_path, 'wb') as f:
-                    f.write(generated_image.image.image_bytes)
-                print(f"✅ Image saved (original size): {output_path}")
-                return True
+                    img = Image.open(BytesIO(generated_image.image.image_bytes))
+                    img_resized = img.resize((1920, 1080), Image.LANCZOS)
+                    img_resized.save(output_path, "JPEG", quality=95)
+                    print(f"✅ Image saved (1920x1080) with {model_name}: {output_path}")
+                    return True
+                except ImportError:
+                    # PIL not available, save as-is
+                    with open(output_path, 'wb') as f:
+                        f.write(generated_image.image.image_bytes)
+                    print(f"✅ Image saved (original size) with {model_name}: {output_path}")
+                    return True
+            else:
+                print(f"   ⚠️ No image data from {model_name}, trying next...")
+                continue
 
-        print("❌ Could not extract image data")
-        return False
+        except Exception as e:
+            print(f"   ⚠️ {model_name} failed: {e}")
+            continue
 
-    except Exception as e:
-        print(f"❌ Image generation error: {e}")
-        traceback.print_exc()
-        return False
+    print("❌ All Imagen models failed")
+    return False
 
 
 def generate_ai_image(script_text: str, output_path: str) -> bool:
