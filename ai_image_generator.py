@@ -67,62 +67,63 @@ def analyze_script_for_image(script_text: str, max_chars: int = 3000) -> Optiona
         print("❌ GEMINI_API_KEY not set")
         return None
 
-    try:
-        # Truncate script if too long
-        truncated_script = script_text[:max_chars] if len(script_text) > max_chars else script_text
+    # Models to try in order
+    models_to_try = ['gemini-3-pro-preview', 'gemini-2.0-flash-exp', 'gemini-1.5-flash']
 
-        # Use Gemini 3 Pro Preview for analysis
-        model = genai.GenerativeModel('gemini-3-pro-preview')
+    # Truncate script if too long
+    truncated_script = script_text[:max_chars] if len(script_text) > max_chars else script_text
+    prompt = IMAGE_ANALYSIS_PROMPT.format(script=truncated_script)
 
-        prompt = IMAGE_ANALYSIS_PROMPT.format(script=truncated_script)
+    for model_name in models_to_try:
+        try:
+            print(f"🧠 Trying {model_name}...")
+            model = genai.GenerativeModel(model_name)
 
-        print("🧠 Analyzing script with Gemini 3 Pro...")
+            response = model.generate_content(
+                prompt,
+                generation_config={
+                    "temperature": 0.7,
+                    "max_output_tokens": 500,
+                },
+                safety_settings={
+                    "HARM_CATEGORY_HARASSMENT": "BLOCK_NONE",
+                    "HARM_CATEGORY_HATE_SPEECH": "BLOCK_NONE",
+                    "HARM_CATEGORY_SEXUALLY_EXPLICIT": "BLOCK_NONE",
+                    "HARM_CATEGORY_DANGEROUS_CONTENT": "BLOCK_NONE",
+                }
+            )
 
-        response = model.generate_content(
-            prompt,
-            generation_config={
-                "temperature": 0.7,
-                "max_output_tokens": 500,
-            },
-            safety_settings={
-                "HARM_CATEGORY_HARASSMENT": "BLOCK_NONE",
-                "HARM_CATEGORY_HATE_SPEECH": "BLOCK_NONE",
-                "HARM_CATEGORY_SEXUALLY_EXPLICIT": "BLOCK_NONE",
-                "HARM_CATEGORY_DANGEROUS_CONTENT": "BLOCK_NONE",
-            }
-        )
+            # Debug: print response info
+            print(f"   Response candidates: {len(response.candidates) if response.candidates else 0}")
 
-        # Check if response has valid candidates
-        if not response.candidates:
-            print("❌ No candidates in response (possibly blocked)")
-            return None
+            if response.candidates:
+                candidate = response.candidates[0]
+                print(f"   Finish reason: {candidate.finish_reason}")
 
-        candidate = response.candidates[0]
+                # Check finish reason
+                if candidate.finish_reason and candidate.finish_reason.name == "SAFETY":
+                    print(f"   ⚠️ Blocked by safety, trying next model...")
+                    continue
 
-        # Check finish reason
-        if candidate.finish_reason and candidate.finish_reason.name == "SAFETY":
-            print("❌ Response blocked by safety filter")
-            return None
+                # Check if content parts exist
+                if candidate.content and candidate.content.parts:
+                    image_prompt = candidate.content.parts[0].text.strip()
+                    if image_prompt:
+                        print(f"✅ Image prompt generated with {model_name}: {image_prompt[:100]}...")
+                        return image_prompt
+                    else:
+                        print(f"   ⚠️ Empty text, trying next model...")
+                else:
+                    print(f"   ⚠️ No content parts, trying next model...")
+            else:
+                print(f"   ⚠️ No candidates, trying next model...")
 
-        # Check if content parts exist
-        if not candidate.content or not candidate.content.parts:
-            print("❌ No content parts in response")
-            return None
+        except Exception as e:
+            print(f"   ⚠️ {model_name} failed: {e}")
+            continue
 
-        image_prompt = candidate.content.parts[0].text.strip()
-
-        if not image_prompt:
-            print("❌ Empty image prompt generated")
-            return None
-
-        print(f"✅ Image prompt generated: {image_prompt[:100]}...")
-
-        return image_prompt
-
-    except Exception as e:
-        print(f"❌ Script analysis error: {e}")
-        traceback.print_exc()
-        return None
+    print("❌ All models failed to generate image prompt")
+    return None
 
 
 def generate_image_with_imagen(prompt: str, output_path: str) -> bool:
