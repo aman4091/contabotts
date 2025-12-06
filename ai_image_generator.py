@@ -180,10 +180,22 @@ def generate_image_with_imagen(prompt: str, output_path: str) -> bool:
 
         # Get image bytes and save
         if generated_image.image and generated_image.image.image_bytes:
-            with open(output_path, 'wb') as f:
-                f.write(generated_image.image.image_bytes)
-            print(f"✅ Image saved to: {output_path}")
-            return True
+            # Save and resize to exact 1920x1080
+            try:
+                from PIL import Image
+                from io import BytesIO
+
+                img = Image.open(BytesIO(generated_image.image.image_bytes))
+                img_resized = img.resize((1920, 1080), Image.LANCZOS)
+                img_resized.save(output_path, "JPEG", quality=95)
+                print(f"✅ Image saved (1920x1080): {output_path}")
+                return True
+            except ImportError:
+                # PIL not available, save as-is
+                with open(output_path, 'wb') as f:
+                    f.write(generated_image.image.image_bytes)
+                print(f"✅ Image saved (original size): {output_path}")
+                return True
 
         print("❌ Could not extract image data")
         return False
