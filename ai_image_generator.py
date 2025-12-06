@@ -1,26 +1,33 @@
 #!/usr/bin/env python3
 """
 AI Image Generator
-Uses Gemini 3 Pro Preview to analyze script and Imagen 3.0 to generate images
+Uses Gemini to analyze script and Imagen 3.0 to generate images
 
 Flow:
-1. Script -> Gemini 3 Pro Preview -> Image generation prompt
+1. Script -> Gemini -> Image generation prompt
 2. Image prompt -> Imagen 3.0 -> Generated image
 """
 
 import os
-import base64
 import traceback
 from typing import Optional
 
-# Google Generative AI
+# Google Generative AI (for text generation)
 try:
     import google.generativeai as genai
-    from google.generativeai import types
     GENAI_AVAILABLE = True
 except ImportError:
     GENAI_AVAILABLE = False
     print("⚠️ google-generativeai not installed. Run: pip install google-generativeai")
+
+# Google GenAI Client (for image generation)
+try:
+    from google import genai as genai_client
+    from google.genai import types as genai_types
+    GENAI_CLIENT_AVAILABLE = True
+except ImportError:
+    GENAI_CLIENT_AVAILABLE = False
+    print("⚠️ google-genai not installed. Run: pip install google-genai")
 
 
 # Configure API
@@ -137,8 +144,8 @@ def generate_image_with_imagen(prompt: str, output_path: str) -> bool:
     Returns:
         True if successful, False otherwise
     """
-    if not GENAI_AVAILABLE:
-        print("❌ google-generativeai not available")
+    if not GENAI_CLIENT_AVAILABLE:
+        print("❌ google-genai not available. Run: pip install google-genai")
         return False
 
     if not GEMINI_API_KEY:
@@ -149,35 +156,32 @@ def generate_image_with_imagen(prompt: str, output_path: str) -> bool:
         print(f"🎨 Generating image with Imagen 3.0...")
         print(f"   Prompt: {prompt[:80]}...")
 
-        # Use Imagen 3.0 model
-        imagen = genai.ImageGenerationModel("imagen-3.0-generate-001")
+        # Create client with API key
+        client = genai_client.Client(api_key=GEMINI_API_KEY)
 
-        result = imagen.generate_images(
+        # Generate image using Imagen 3.0
+        response = client.models.generate_images(
+            model='imagen-3.0-generate-002',
             prompt=prompt,
-            number_of_images=1,
-            aspect_ratio="16:9",  # Landscape for video background
-            safety_filter_level="block_only_high",
-            person_generation="allow_adult",
+            config=genai_types.GenerateImagesConfig(
+                number_of_images=1,
+                aspect_ratio="16:9",  # Landscape for video background
+                safety_filter_level="block_only_high",
+                person_generation="allow_adult",
+            )
         )
 
-        if not result.images:
+        if not response.generated_images:
             print("❌ No images generated")
             return False
 
         # Save the first image
-        image = result.images[0]
+        generated_image = response.generated_images[0]
 
-        # Get image data and save
-        image_bytes = image._pil_image
-        if image_bytes:
-            image_bytes.save(output_path, "JPEG", quality=95)
-            print(f"✅ Image saved to: {output_path}")
-            return True
-
-        # Alternative: save from base64 if available
-        if hasattr(image, '_image_bytes') and image._image_bytes:
+        # Get image bytes and save
+        if generated_image.image and generated_image.image.image_bytes:
             with open(output_path, 'wb') as f:
-                f.write(image._image_bytes)
+                f.write(generated_image.image.image_bytes)
             print(f"✅ Image saved to: {output_path}")
             return True
 
