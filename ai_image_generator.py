@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 AI Image Generator
-Uses Gemini 3 Pro to analyze script and Imagen 3.0 to generate images
+Uses Gemini 2.0 Flash to analyze script and Imagen 3.0 to generate images
 
 Flow:
-1. Script -> Gemini 3 Pro Preview -> Image generation prompt
+1. Script -> Gemini 2.0 Flash -> Image generation prompt
 2. Image prompt -> Imagen 3.0 -> Generated image
 """
 
@@ -30,7 +30,7 @@ if GEMINI_API_KEY and GENAI_AVAILABLE:
     genai.configure(api_key=GEMINI_API_KEY)
 
 
-# Image Analysis Prompt for Gemini 3 Pro
+# Image Analysis Prompt for Gemini
 IMAGE_ANALYSIS_PROMPT = """Analyze the following script/text and generate a SINGLE image generation prompt.
 
 The image should:
@@ -50,7 +50,7 @@ Image prompt:"""
 
 def analyze_script_for_image(script_text: str, max_chars: int = 3000) -> Optional[str]:
     """
-    Analyze script using Gemini 3 Pro Preview and generate an image prompt
+    Analyze script using Gemini 2.0 Flash and generate an image prompt
 
     Args:
         script_text: The script to analyze
@@ -71,12 +71,12 @@ def analyze_script_for_image(script_text: str, max_chars: int = 3000) -> Optiona
         # Truncate script if too long
         truncated_script = script_text[:max_chars] if len(script_text) > max_chars else script_text
 
-        # Use Gemini 3 Pro Preview for analysis
-        model = genai.GenerativeModel('gemini-3-pro-preview')
+        # Use Gemini 2.0 Flash for analysis (fast and reliable)
+        model = genai.GenerativeModel('gemini-2.0-flash-exp')
 
         prompt = IMAGE_ANALYSIS_PROMPT.format(script=truncated_script)
 
-        print("🧠 Analyzing script with Gemini 3 Pro...")
+        print("🧠 Analyzing script with Gemini 2.0 Flash...")
 
         response = model.generate_content(
             prompt,
@@ -92,7 +92,29 @@ def analyze_script_for_image(script_text: str, max_chars: int = 3000) -> Optiona
             }
         )
 
-        image_prompt = response.text.strip()
+        # Check if response has valid candidates
+        if not response.candidates:
+            print("❌ No candidates in response (possibly blocked)")
+            return None
+
+        candidate = response.candidates[0]
+
+        # Check finish reason
+        if candidate.finish_reason and candidate.finish_reason.name == "SAFETY":
+            print("❌ Response blocked by safety filter")
+            return None
+
+        # Check if content parts exist
+        if not candidate.content or not candidate.content.parts:
+            print("❌ No content parts in response")
+            return None
+
+        image_prompt = candidate.content.parts[0].text.strip()
+
+        if not image_prompt:
+            print("❌ Empty image prompt generated")
+            return None
+
         print(f"✅ Image prompt generated: {image_prompt[:100]}...")
 
         return image_prompt
