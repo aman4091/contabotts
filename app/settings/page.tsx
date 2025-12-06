@@ -759,27 +759,143 @@ export default function SettingsPage() {
                 </div>
               )}
 
-              {/* Default Reference Audio */}
-              <div className="space-y-2 pt-4 border-t border-border">
-                <Label>Default Reference Audio</Label>
-                <p className="text-xs text-muted-foreground mb-2">
-                  Voice used when adding videos to queue from homepage
-                </p>
-                <Select
-                  value={defaultReferenceAudio}
-                  onValueChange={v => setDefaultReferenceAudio(v)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select default voice" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {audioFiles.map(audio => (
-                      <SelectItem key={audio.name} value={audio.name}>
-                        {audio.name} ({audio.sizeFormatted})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              {/* Reference Audio Section */}
+              <div className="space-y-4 pt-4 border-t border-border">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label className="text-base font-medium flex items-center gap-2">
+                      <Music className="w-4 h-4 text-cyan-400" />
+                      Reference Audio (Voice)
+                    </Label>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Upload voice samples for TTS. Primary voice is used by default.
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowAudioUpload(!showAudioUpload)}
+                    className="border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10"
+                  >
+                    <Upload className="w-4 h-4 mr-2" />
+                    Upload New
+                  </Button>
+                </div>
+
+                {/* Upload Form */}
+                {showAudioUpload && (
+                  <div className="p-4 border border-dashed border-cyan-500/30 rounded-lg bg-cyan-500/5 space-y-3">
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="Voice name (optional)"
+                        value={newAudioName}
+                        onChange={e => setNewAudioName(e.target.value)}
+                        className="flex-1"
+                      />
+                      <Button
+                        onClick={triggerAudioUpload}
+                        disabled={uploadingAudio}
+                        className="bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500"
+                      >
+                        {uploadingAudio ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Upload className="w-4 h-4" />
+                        )}
+                        <span className="ml-2">Select File</span>
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Supported: .wav, .mp3 (10-30 seconds recommended)
+                    </p>
+                  </div>
+                )}
+
+                {/* Audio Files List */}
+                <div className="space-y-2">
+                  {audioFiles.length === 0 ? (
+                    <div className="text-center py-6 text-muted-foreground border border-dashed border-border rounded-lg">
+                      <Music className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                      <p>No voice samples yet. Upload one above.</p>
+                    </div>
+                  ) : (
+                    audioFiles.map(audio => {
+                      const isPrimary = defaultReferenceAudio === audio.name
+                      return (
+                        <div
+                          key={audio.name}
+                          className={`flex items-center justify-between p-3 rounded-lg border transition-colors ${
+                            isPrimary
+                              ? "border-cyan-500/50 bg-cyan-500/10"
+                              : "border-border hover:border-cyan-500/30"
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className={`p-2 rounded-lg ${isPrimary ? "bg-cyan-500/20" : "bg-muted"}`}>
+                              <Music className={`w-5 h-5 ${isPrimary ? "text-cyan-400" : "text-muted-foreground"}`} />
+                            </div>
+                            <div>
+                              <div className="font-medium flex items-center gap-2">
+                                {audio.name}
+                                {isPrimary && (
+                                  <Badge className="bg-cyan-500/20 text-cyan-400 border-cyan-500/30 text-xs">
+                                    Primary
+                                  </Badge>
+                                )}
+                              </div>
+                              <div className="text-sm text-muted-foreground">{audio.sizeFormatted}</div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {!isPrimary && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setDefaultReferenceAudio(audio.name)
+                                  // Auto-save when setting primary
+                                  fetch("/api/settings", {
+                                    method: "PUT",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ defaultReferenceAudio: audio.name })
+                                  }).then(() => {
+                                    toast.success(`${audio.name} set as primary voice`)
+                                  })
+                                }}
+                                className="border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10"
+                              >
+                                <Check className="w-4 h-4 mr-1" />
+                                Set Primary
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={async () => {
+                                if (!confirm(`Delete "${audio.name}"?`)) return
+                                try {
+                                  const res = await fetch(`/api/reference-audio?name=${encodeURIComponent(audio.name)}`, {
+                                    method: "DELETE"
+                                  })
+                                  if (res.ok) {
+                                    toast.success("Audio deleted")
+                                    loadAll()
+                                  } else {
+                                    toast.error("Failed to delete")
+                                  }
+                                } catch {
+                                  toast.error("Failed to delete")
+                                }
+                              }}
+                            >
+                              <Trash2 className="w-4 h-4 text-red-500" />
+                            </Button>
+                          </div>
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
               </div>
 
               {/* Save Button */}

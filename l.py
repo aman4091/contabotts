@@ -108,10 +108,41 @@ class LandscapeGenerator:
         cs = int((seconds % 1) * 100)
         return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
+    def fix_transcription(self, text):
+        """Fix common Whisper transcription errors"""
+        import re
+
+        # Dictionary of corrections (case-insensitive patterns -> correct text)
+        corrections = [
+            # Archangel Michael variations
+            (r"\bour\s*chang?g?el\s*michael\b", "Archangel Michael"),
+            (r"\bour\s*angel\s*michael\b", "Archangel Michael"),
+            (r"\barch\s*angel\s*michael\b", "Archangel Michael"),
+            (r"\bar\s*chang?el\s*michael\b", "Archangel Michael"),
+            (r"\bour\s*chang?el\b", "Archangel"),
+            # Archangel Gabriel
+            (r"\bour\s*chang?el\s*gabriel\b", "Archangel Gabriel"),
+            (r"\barch\s*angel\s*gabriel\b", "Archangel Gabriel"),
+            # Archangel Raphael
+            (r"\bour\s*chang?el\s*raphael\b", "Archangel Raphael"),
+            (r"\barch\s*angel\s*raphael\b", "Archangel Raphael"),
+            # Generic archangel fix
+            (r"\bour\s*chang?g?els?\b", "Archangel"),
+            (r"\bar\s*chang?g?els?\b", "Archangel"),
+        ]
+
+        fixed = text
+        for pattern, replacement in corrections:
+            fixed = re.sub(pattern, replacement, fixed, flags=re.IGNORECASE)
+
+        return fixed
+
     def generate_subtitles(self, audio_path):
         print(f"📝 Transcribing: {os.path.basename(audio_path)}...")
-        result = self.model.transcribe(audio_path, word_timestamps=False)
-        
+        # Prompt to help Whisper recognize religious/spiritual terms correctly
+        initial_prompt = "Archangel Michael, Archangel Gabriel, Archangel Raphael, God, Jesus Christ, Holy Spirit, angels, divine, blessed, amen."
+        result = self.model.transcribe(audio_path, word_timestamps=False, initial_prompt=initial_prompt)
+
         ass_path = os.path.splitext(audio_path)[0] + ".ass"
         
         header = f"""[Script Info]
@@ -132,6 +163,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             start = self.format_time(segment['start'])
             end = self.format_time(segment['end'])
             text = segment['text'].strip()
+
+            # Fix transcription errors (e.g., "our changel" -> "Archangel")
+            text = self.fix_transcription(text)
 
             # --- WRAP LOGIC ---
             max_chars = 35 
