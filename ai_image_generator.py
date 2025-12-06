@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 AI Image Generator
-Uses Gemini 2.0 Flash to analyze script and Imagen 3.0 to generate images
+Uses Gemini 3 Pro Preview to analyze script and Imagen 3.0 to generate images
 
 Flow:
-1. Script -> Gemini 2.0 Flash -> Image generation prompt
+1. Script -> Gemini 3 Pro Preview -> Image generation prompt
 2. Image prompt -> Imagen 3.0 -> Generated image
 """
 
@@ -50,7 +50,7 @@ Image prompt:"""
 
 def analyze_script_for_image(script_text: str, max_chars: int = 3000) -> Optional[str]:
     """
-    Analyze script using Gemini 2.0 Flash and generate an image prompt
+    Analyze script using Gemini 3 Pro Preview and generate an image prompt
 
     Args:
         script_text: The script to analyze
@@ -71,12 +71,12 @@ def analyze_script_for_image(script_text: str, max_chars: int = 3000) -> Optiona
         # Truncate script if too long
         truncated_script = script_text[:max_chars] if len(script_text) > max_chars else script_text
 
-        # Use Gemini 2.0 Flash for analysis (fast and reliable)
-        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        # Use Gemini 3 Pro Preview for analysis
+        model = genai.GenerativeModel('gemini-3-pro-preview')
 
         prompt = IMAGE_ANALYSIS_PROMPT.format(script=truncated_script)
 
-        print("🧠 Analyzing script with Gemini 2.0 Flash...")
+        print("🧠 Analyzing script with Gemini 3 Pro...")
 
         response = model.generate_content(
             prompt,
