@@ -104,7 +104,10 @@ def analyze_script_for_image(script_text: str, max_chars: int = 3000) -> Optiona
                 }],
                 "generationConfig": {
                     "temperature": 0.7,
-                    "maxOutputTokens": 500
+                    "maxOutputTokens": 500,
+                    "thinkingConfig": {
+                        "thinkingBudget": 0  # Disable thinking for Gemini 2.5 Flash
+                    }
                 }
             }, timeout=60)
 

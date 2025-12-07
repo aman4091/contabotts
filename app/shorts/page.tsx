@@ -55,6 +55,17 @@ interface PreviewShort {
   selected: boolean
 }
 
+// Clean markdown formatting from text (asterisks, bold, etc.)
+function cleanContent(text: string): string {
+  return text
+    .replace(/\*\*([^*]+)\*\*/g, '$1')  // Remove **bold**
+    .replace(/\*([^*]+)\*/g, '$1')       // Remove *italic*
+    .replace(/#{1,6}\s*/g, '')           // Remove headings
+    .replace(/`([^`]+)`/g, '$1')         // Remove inline code
+    .replace(/^\s*[-*+]\s+/gm, '')       // Remove list markers
+    .trim()
+}
+
 export default function ShortsPage() {
   const [jobs, setJobs] = useState<ShortJob[]>([])
   const [scripts, setScripts] = useState<ScriptOption[]>([])
@@ -168,7 +179,7 @@ export default function ShortsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           videoFolder: previewFolder,
-          shorts: selected.map(s => ({ number: s.number, content: s.content }))
+          shorts: selected.map(s => ({ number: s.number, content: cleanContent(s.content) }))
         })
       })
 
@@ -410,11 +421,11 @@ export default function ShortsPage() {
                               >
                                 {isExpanded ? (
                                   <p className="text-sm text-muted-foreground whitespace-pre-wrap">
-                                    {short.content}
+                                    {cleanContent(short.content)}
                                   </p>
                                 ) : (
                                   <p className="text-sm text-muted-foreground line-clamp-2">
-                                    {short.content}
+                                    {cleanContent(short.content)}
                                   </p>
                                 )}
                               </div>

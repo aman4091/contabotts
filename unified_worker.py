@@ -126,6 +126,7 @@ SHORTS_H = 1920
 SHORTS_FONT_SIZE = 70
 SHORTS_TEXT_Y = 1150
 SHORTS_MAX_CHARS = 22
+SHORTS_MAX_LINES = 2  # Maximum lines per subtitle
 SHORTS_PADDING_X = 90
 SHORTS_PADDING_Y = 90
 SHORTS_CORNER_RADIUS = 40
@@ -404,13 +405,40 @@ def format_ass_time(seconds):
     cs = int((seconds % 1) * 100)
     return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
+def fix_transcription_shorts(text: str) -> str:
+    """Fix common Whisper transcription errors for Shorts"""
+    import re
+    corrections = [
+        # Archangel Michael variations
+        (r"\bour\s*chang?g?el\s*michael\b", "Archangel Michael"),
+        (r"\bour\s*angel\s*michael\b", "Archangel Michael"),
+        (r"\barch\s*angel\s*michael\b", "Archangel Michael"),
+        (r"\bar\s*chang?el\s*michael\b", "Archangel Michael"),
+        (r"\bour\s*chang?el\b", "Archangel"),
+        # Archangel Gabriel
+        (r"\bour\s*chang?el\s*gabriel\b", "Archangel Gabriel"),
+        (r"\barch\s*angel\s*gabriel\b", "Archangel Gabriel"),
+        # Archangel Raphael
+        (r"\bour\s*chang?el\s*raphael\b", "Archangel Raphael"),
+        (r"\barch\s*angel\s*raphael\b", "Archangel Raphael"),
+        # Generic archangel fix
+        (r"\bour\s*chang?g?els?\b", "Archangel"),
+        (r"\bar\s*chang?g?els?\b", "Archangel"),
+    ]
+    fixed = text
+    for pattern, replacement in corrections:
+        fixed = re.sub(pattern, replacement, fixed, flags=re.IGNORECASE)
+    return fixed
+
 def generate_subtitles_shorts(audio_path: str) -> Optional[str]:
     """Generate ASS subtitles for Shorts (1080x1920) - EXACT s.py style"""
     try:
         print(f"📝 Transcribing audio for Shorts...")
         if landscape_gen is None or landscape_gen.model is None: return None
 
-        result = landscape_gen.model.transcribe(audio_path, word_timestamps=False)
+        # Prompt to help Whisper recognize religious/spiritual terms correctly
+        initial_prompt = "Archangel Michael, Archangel Gabriel, Archangel Raphael, God, Jesus Christ, Holy Spirit, angels, divine, blessed, amen."
+        result = landscape_gen.model.transcribe(audio_path, word_timestamps=False, initial_prompt=initial_prompt)
         ass_path = os.path.splitext(audio_path)[0] + "_shorts.ass"
 
         header = f"""[Script Info]
@@ -431,6 +459,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             start = format_ass_time(segment['start'])
             end = format_ass_time(segment['end'])
             text = segment['text'].strip()
+            # Fix transcription errors (e.g., "our changel" -> "Archangel")
+            text = fix_transcription_shorts(text)
 
             words = text.split()
             lines = []
@@ -440,15 +470,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 if curr_len + len(w) > SHORTS_MAX_CHARS:
                     if curr:
                         lines.append(" ".join(curr))
+                        # Stop if we hit max lines
+                        if len(lines) >= SHORTS_MAX_LINES:
+                            break
                     curr = [w]
                     curr_len = len(w)
                 else:
                     curr.append(w)
                     curr_len += len(w) + 1
-            if curr:
+            if curr and len(lines) < SHORTS_MAX_LINES:
                 lines.append(" ".join(curr))
 
-            final_text = "\\N".join(lines)
+            final_text = "\\N".join(lines[:SHORTS_MAX_LINES])
 
             cx = SHORTS_W // 2
             cy = SHORTS_TEXT_Y
