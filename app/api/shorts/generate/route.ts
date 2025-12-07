@@ -72,7 +72,7 @@ Here is the full script to convert:
 
 ${script}`
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-06-05:generateContent?key=${GEMINI_API_KEY}`
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent?key=${GEMINI_API_KEY}`
 
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 300000)

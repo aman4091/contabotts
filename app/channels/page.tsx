@@ -35,8 +35,20 @@ import {
   Save,
   X,
   Radio,
-  Activity
+  Activity,
+  FileCheck,
+  RotateCcw,
+  Edit3,
+  Copy,
+  ChevronDown,
+  ChevronUp
 } from "lucide-react"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { toast } from "sonner"
@@ -64,6 +76,21 @@ interface CompletedVideo {
   status?: string
 }
 
+interface PendingScript {
+  id: string
+  videoId: string
+  title: string
+  channelId: string
+  channelName: string
+  transcript: string
+  script: string
+  transcriptChars: number
+  scriptChars: number
+  createdAt: string
+  source: "auto_create" | "live_monitoring"
+  prompt: string
+}
+
 export default function ChannelsPage() {
   const [channels, setChannels] = useState<Channel[]>([])
   const [completedByChannel, setCompletedByChannel] = useState<{ [key: string]: CompletedVideo[] }>({})
@@ -85,8 +112,20 @@ export default function ChannelsPage() {
   const [promptValue, setPromptValue] = useState("")
   const [savingPrompt, setSavingPrompt] = useState(false)
 
+  // Pending scripts
+  const [pendingScripts, setPendingScripts] = useState<PendingScript[]>([])
+  const [approvingId, setApprovingId] = useState<string | null>(null)
+  const [reprocessingId, setReprocessingId] = useState<string | null>(null)
+  const [expandedScript, setExpandedScript] = useState<string | null>(null)
+
+  // Manual edit dialog
+  const [manualDialog, setManualDialog] = useState<PendingScript | null>(null)
+  const [manualScript, setManualScript] = useState("")
+  const [submittingManual, setSubmittingManual] = useState(false)
+
   useEffect(() => {
     loadChannels()
+    loadPendingScripts()
   }, [])
 
   useEffect(() => {
@@ -94,6 +133,16 @@ export default function ChannelsPage() {
       loadCompletedVideos()
     }
   }, [channels])
+
+  async function loadPendingScripts() {
+    try {
+      const res = await fetch("/api/channels/pending")
+      const data = await res.json()
+      setPendingScripts(data.scripts || [])
+    } catch (error) {
+      console.error("Error loading pending scripts:", error)
+    }
+  }
 
   async function loadChannels() {
     setLoading(true)
@@ -246,7 +295,9 @@ export default function ChannelsPage() {
       const data = await res.json()
 
       if (data.success) {
-        toast.success(`${data.queued} videos queued! Processing in background...`)
+        toast.success(data.message || "Processing started! Check Pending Scripts for review.")
+        // Reload pending scripts after a delay
+        setTimeout(loadPendingScripts, 5000)
       } else {
         toast.error(data.error || "Processing failed")
       }
@@ -254,6 +305,100 @@ export default function ChannelsPage() {
       toast.error("Processing failed")
     } finally {
       setProcessing(false)
+    }
+  }
+
+  async function approveScript(id: string, script?: string) {
+    setApprovingId(id)
+    try {
+      const res = await fetch("/api/channels/pending/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, script })
+      })
+
+      const data = await res.json()
+
+      if (data.success) {
+        toast.success(`Approved as ${data.folderName}`)
+        loadPendingScripts()
+        loadCompletedVideos()
+      } else {
+        toast.error(data.error || "Failed to approve")
+      }
+    } catch {
+      toast.error("Failed to approve")
+    } finally {
+      setApprovingId(null)
+    }
+  }
+
+  async function reprocessScript(pending: PendingScript) {
+    setReprocessingId(pending.id)
+    try {
+      const res = await fetch("/api/channels/pending/reprocess", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: pending.id })
+      })
+
+      const data = await res.json()
+
+      if (data.success) {
+        toast.success("Script reprocessed!")
+        loadPendingScripts()
+      } else {
+        toast.error(data.error || "Failed to reprocess")
+      }
+    } catch {
+      toast.error("Failed to reprocess")
+    } finally {
+      setReprocessingId(null)
+    }
+  }
+
+  async function deleteScript(id: string) {
+    try {
+      const res = await fetch(`/api/channels/pending?id=${id}`, { method: "DELETE" })
+
+      if (res.ok) {
+        toast.success("Script deleted")
+        loadPendingScripts()
+      } else {
+        toast.error("Failed to delete")
+      }
+    } catch {
+      toast.error("Failed to delete")
+    }
+  }
+
+  function openManualEdit(pending: PendingScript) {
+    setManualDialog(pending)
+    setManualScript("")
+  }
+
+  function copyPromptWithTranscript() {
+    if (manualDialog) {
+      const textToCopy = `${manualDialog.prompt}\n\n${manualDialog.transcript}`
+      navigator.clipboard.writeText(textToCopy)
+        .then(() => toast.success("Prompt + Transcript copied!"))
+        .catch(() => toast.error("Failed to copy"))
+    }
+  }
+
+  async function submitManualScript() {
+    if (!manualDialog || !manualScript.trim()) {
+      toast.error("Please paste the script")
+      return
+    }
+
+    setSubmittingManual(true)
+    try {
+      await approveScript(manualDialog.id, manualScript.trim())
+      setManualDialog(null)
+      setManualScript("")
+    } finally {
+      setSubmittingManual(false)
     }
   }
 
@@ -314,7 +459,7 @@ export default function ChannelsPage() {
         <Button
           variant="outline"
           size="sm"
-          onClick={() => { loadChannels(); loadCompletedVideos() }}
+          onClick={() => { loadChannels(); loadCompletedVideos(); loadPendingScripts() }}
           disabled={loading}
           className="border-violet-500/30 hover:border-violet-500 hover:bg-violet-500/10"
         >
@@ -517,10 +662,204 @@ export default function ChannelsPage() {
             )}
           </Button>
           <p className="text-xs text-muted-foreground">
-            This will fetch transcripts, process with Gemini using your Channel Prompt (from Settings), and queue for audio/video generation.
+            This will fetch transcripts, process with Gemini using your Channel Prompt (from Settings), and save to Pending Scripts for review.
           </p>
         </CardContent>
       </Card>
+
+      {/* Pending Scripts Section */}
+      <Card className="glass border-amber-500/30">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <FileCheck className="w-5 h-5 text-amber-400" />
+            Pending Scripts ({pendingScripts.length})
+          </CardTitle>
+          <CardDescription>Review and approve scripts before queueing for audio/video generation</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {pendingScripts.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <FileCheck className="w-12 h-12 mx-auto mb-4 opacity-30" />
+              <p>No pending scripts.</p>
+              <p className="text-sm mt-2">Use Auto Create above or enable Live Monitoring to generate scripts.</p>
+            </div>
+          ) : (
+            <ScrollArea className="max-h-[600px]">
+              <div className="space-y-4">
+                {pendingScripts.map(pending => (
+                  <div
+                    key={pending.id}
+                    className="p-4 bg-background/50 border border-amber-500/20 rounded-lg space-y-3"
+                  >
+                    {/* Header */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Badge variant={pending.source === "live_monitoring" ? "destructive" : "default"} className="text-xs">
+                            {pending.source === "live_monitoring" ? "Live" : "Auto"}
+                          </Badge>
+                          <span className="text-sm text-muted-foreground">{pending.channelName}</span>
+                        </div>
+                        <p className="font-medium text-sm line-clamp-2">{pending.title}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Created: {new Date(pending.createdAt).toLocaleString()}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => deleteScript(pending.id)}
+                        className="text-red-400 hover:text-red-300 p-1 self-start"
+                        title="Delete"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {/* Transcript */}
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs text-blue-400">Original Transcript</Label>
+                        <span className="text-xs text-muted-foreground">{pending.transcriptChars.toLocaleString()} chars</span>
+                      </div>
+                      <div className="bg-blue-500/5 border border-blue-500/20 rounded p-2 text-xs max-h-32 overflow-y-auto">
+                        <pre className="whitespace-pre-wrap font-sans">{pending.transcript}</pre>
+                      </div>
+                    </div>
+
+                    {/* AI Script */}
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs text-emerald-400">AI Script</Label>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground">{pending.scriptChars.toLocaleString()} chars</span>
+                          <button
+                            onClick={() => setExpandedScript(expandedScript === pending.id ? null : pending.id)}
+                            className="text-xs text-emerald-400 hover:text-emerald-300 flex items-center gap-1"
+                          >
+                            {expandedScript === pending.id ? (
+                              <>
+                                <ChevronUp className="w-3 h-3" />
+                                Collapse
+                              </>
+                            ) : (
+                              <>
+                                <ChevronDown className="w-3 h-3" />
+                                Expand
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                      <div className={`bg-emerald-500/5 border border-emerald-500/20 rounded p-2 text-xs overflow-y-auto ${expandedScript === pending.id ? 'max-h-96' : 'max-h-32'}`}>
+                        <pre className="whitespace-pre-wrap font-sans">{pending.script}</pre>
+                      </div>
+                    </div>
+
+                    {/* Action Buttons */}
+                    <div className="flex flex-wrap gap-2 pt-2">
+                      <Button
+                        size="sm"
+                        onClick={() => approveScript(pending.id)}
+                        disabled={approvingId === pending.id}
+                        className="bg-emerald-600 hover:bg-emerald-700"
+                      >
+                        {approvingId === pending.id ? (
+                          <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                        ) : (
+                          <CheckCircle2 className="w-4 h-4 mr-1" />
+                        )}
+                        Approve
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => reprocessScript(pending)}
+                        disabled={reprocessingId === pending.id}
+                        className="border-violet-500/30 hover:border-violet-500"
+                      >
+                        {reprocessingId === pending.id ? (
+                          <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                        ) : (
+                          <RotateCcw className="w-4 h-4 mr-1" />
+                        )}
+                        Process Again
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => openManualEdit(pending)}
+                        className="border-amber-500/30 hover:border-amber-500"
+                      >
+                        <Edit3 className="w-4 h-4 mr-1" />
+                        Manual
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Manual Edit Dialog */}
+      <Dialog open={!!manualDialog} onOpenChange={() => setManualDialog(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Edit3 className="w-5 h-5 text-amber-400" />
+              Manual Script Edit
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            {manualDialog && (
+              <>
+                <p className="text-sm text-muted-foreground line-clamp-2">{manualDialog.title}</p>
+
+                {/* Copy Prompt + Transcript Button */}
+                <div className="space-y-2">
+                  <Label className="text-xs text-muted-foreground">Step 1: Copy the prompt + transcript and paste in ChatGPT/Gemini</Label>
+                  <Button
+                    variant="outline"
+                    onClick={copyPromptWithTranscript}
+                    className="w-full justify-center border-violet-500/30 hover:border-violet-500"
+                  >
+                    <Copy className="w-4 h-4 mr-2" />
+                    Copy Prompt + Transcript
+                  </Button>
+                </div>
+
+                {/* Paste Script */}
+                <div className="space-y-2">
+                  <Label className="text-xs text-muted-foreground">Step 2: Paste the generated script here</Label>
+                  <Textarea
+                    value={manualScript}
+                    onChange={e => setManualScript(e.target.value)}
+                    placeholder="Paste the script from ChatGPT/Gemini here..."
+                    className="min-h-[200px]"
+                  />
+                  {manualScript && (
+                    <p className="text-xs text-muted-foreground">{manualScript.length.toLocaleString()} chars</p>
+                  )}
+                </div>
+
+                {/* Submit */}
+                <Button
+                  onClick={submitManualScript}
+                  disabled={submittingManual || !manualScript.trim()}
+                  className="w-full bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500"
+                >
+                  {submittingManual ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="w-4 h-4 mr-2" />
+                  )}
+                  Approve with Manual Script
+                </Button>
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Completed Videos Tabs */}
       {channels.length > 0 && (

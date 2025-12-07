@@ -118,14 +118,11 @@ export async function GET(request: NextRequest) {
           continue
         }
 
-        if (!referenceAudio) {
-          console.log(`   No reference audio configured, skipping`)
-          continue
-        }
-
         let processed = 0
+        const pendingPath = path.join(DATA_DIR, "users", username, "channel-automation", "pending-scripts.json")
 
         // Process new videos (max 3 at a time to avoid overload)
+        // Save to pending for review instead of direct queue
         for (const video of newVideos.slice(0, 3)) {
           console.log(`   Processing: ${video.title}`)
 
@@ -144,56 +141,39 @@ export async function GET(request: NextRequest) {
               continue
             }
 
-            // 3. Save and queue
-            const videoNumber = getNextVideoNumber(username)
-            const folderName = `video_${videoNumber}`
-            saveToOrganized(username, videoNumber, transcript, script, video.title)
+            // 3. Save to pending scripts for review (instead of direct queue)
+            let pendingScripts: any[] = []
+            if (fs.existsSync(pendingPath)) {
+              try {
+                pendingScripts = JSON.parse(fs.readFileSync(pendingPath, "utf-8"))
+              } catch {}
+            }
 
-            // 4. Queue for audio/video generation
-            const audioCounter = await getNextAudioCounter()
-            const jobId = randomUUID()
-            const priority = username === "anu" ? 10 : 5
+            // Check if already pending
+            if (!pendingScripts.find(s => s.videoId === video.videoId)) {
+              pendingScripts.push({
+                id: randomUUID(),
+                videoId: video.videoId,
+                title: video.title,
+                channelId: channel.channelId,
+                channelName: channel.name,
+                transcript,
+                script,
+                transcriptChars: transcript.length,
+                scriptChars: script.length,
+                createdAt: new Date().toISOString(),
+                source: "live_monitoring",
+                prompt: channelPrompt
+              })
 
-            const jobResult = await createAudioJob({
-              job_id: jobId,
-              script_text: script,
-              channel_code: "LIVE",
-              video_number: videoNumber,
-              date: getTomorrowDate(),
-              audio_counter: audioCounter,
-              organized_path: `/organized/${folderName}`,
-              priority,
-              username,
-              reference_audio: referenceAudio,
-              source_channel: channel.channelId,
-              source_video_id: video.videoId,
-              use_ai_image: useAiImage
-            })
-
-            if (jobResult.success) {
-              // Mark as processed
-              processedIds.push(video.videoId)
-
-              // Save completed info
-              const completedDir = path.join(DATA_DIR, "users", username, "channel-automation", channel.channelId, "completed")
-              if (!fs.existsSync(completedDir)) {
-                fs.mkdirSync(completedDir, { recursive: true })
+              const pendingDir = path.dirname(pendingPath)
+              if (!fs.existsSync(pendingDir)) {
+                fs.mkdirSync(pendingDir, { recursive: true })
               }
-              fs.writeFileSync(
-                path.join(completedDir, `${video.videoId}.json`),
-                JSON.stringify({
-                  videoId: video.videoId,
-                  title: video.title,
-                  videoNumber,
-                  folderName,
-                  jobId,
-                  processedAt: new Date().toISOString(),
-                  source: "live_monitoring"
-                }, null, 2)
-              )
+              fs.writeFileSync(pendingPath, JSON.stringify(pendingScripts, null, 2))
 
               processed++
-              console.log(`   ✅ Queued as ${folderName}`)
+              console.log(`   ✅ Added to pending for review`)
             }
 
             // Delay between videos
@@ -343,7 +323,7 @@ function splitIntoChunks(text: string, maxSize: number): string[] {
 
 async function callGemini(prompt: string): Promise<string | null> {
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`
 
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 300000)
@@ -355,7 +335,8 @@ async function callGemini(prompt: string): Promise<string | null> {
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
           temperature: 0.7,
-          maxOutputTokens: 65536
+          maxOutputTokens: 65536,
+          thinkingConfig: { thinkingBudget: 0 }
         }
       }),
       signal: controller.signal

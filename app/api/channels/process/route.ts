@@ -98,24 +98,33 @@ export async function POST(request: NextRequest) {
     // Get AI image setting
     const useAiImage = settings.video?.useAiImage || false
 
-    // Start background processing (don't await)
-    processVideosInBackground(
+    // Get channel name
+    let channelName = "Unknown"
+    if (fs.existsSync(channelsPath)) {
+      try {
+        const channels = JSON.parse(fs.readFileSync(channelsPath, "utf-8"))
+        const channel = channels.find((c: any) => c.channelId === channelId)
+        if (channel?.name) channelName = channel.name
+      } catch {}
+    }
+
+    // Start background processing (saves to pending, not queue)
+    processVideosToPending(
       eligibleVideos,
       username,
       channelId,
+      channelName,
       channelPrompt,
-      referenceAudio,
       processedPath,
       processedIds,
-      settings.ai?.max_chunk_size || 7000,
-      useAiImage
+      settings.ai?.max_chunk_size || 7000
     )
 
     // Return immediately
     return NextResponse.json({
       success: true,
-      message: `Started processing ${eligibleVideos.length} videos in background`,
-      queued: eligibleVideos.length,
+      message: `Started processing ${eligibleVideos.length} videos. Check Pending Scripts for review.`,
+      processing: eligibleVideos.length,
       videos: eligibleVideos.map((v: any) => ({ videoId: v.videoId, title: v.title }))
     })
   } catch (error) {
@@ -124,19 +133,20 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Background processing function
-async function processVideosInBackground(
+// Background processing function - saves to pending for review
+async function processVideosToPending(
   videos: any[],
   username: string,
   channelId: string,
+  channelName: string,
   channelPrompt: string,
-  referenceAudio: string,
   processedPath: string,
   processedIds: string[],
-  maxChunkSize: number,
-  useAiImage: boolean = false
+  maxChunkSize: number
 ) {
-  console.log(`[BG] Starting background processing of ${videos.length} videos`)
+  console.log(`[BG] Starting background processing of ${videos.length} videos to pending`)
+
+  const pendingPath = path.join(DATA_DIR, "users", username, "channel-automation", "pending-scripts.json")
 
   for (const video of videos) {
     console.log(`[BG] Processing: ${video.title}`)
@@ -158,63 +168,39 @@ async function processVideosInBackground(
         continue
       }
 
-      // 3. Get next video number and save
-      const videoNumber = getNextVideoNumber(username)
-      const folderName = `video_${videoNumber}`
-      saveToOrganized(username, videoNumber, transcript, script, video.title)
-
-      // 4. Queue for audio/video generation
-      console.log(`[BG]   Queueing as ${folderName}...`)
-      const audioCounter = await getNextAudioCounter()
-      const jobId = randomUUID()
-      // Priority: anu = 10 (high), aman = 5 (normal)
-      const priority = username === "anu" ? 10 : 5
-
-      const jobResult = await createAudioJob({
-        job_id: jobId,
-        script_text: script,
-        channel_code: "AUTO",
-        video_number: videoNumber,
-        date: getTomorrowDate(),
-        audio_counter: audioCounter,
-        organized_path: `/organized/${folderName}`,
-        priority,
-        username,
-        reference_audio: referenceAudio,
-        source_channel: channelId,
-        source_video_id: video.videoId,
-        use_ai_image: useAiImage
-      })
-
-      if (!jobResult.success) {
-        console.log(`[BG]   Queue failed, skipping`)
-        continue
+      // 3. Save to pending scripts for review
+      let pendingScripts: any[] = []
+      if (fs.existsSync(pendingPath)) {
+        try {
+          pendingScripts = JSON.parse(fs.readFileSync(pendingPath, "utf-8"))
+        } catch {}
       }
 
-      // 5. Mark as processed
-      processedIds.push(video.videoId)
-
-      // Save completed info
-      const completedDir = path.join(DATA_DIR, "users", username, "channel-automation", channelId, "completed")
-      if (!fs.existsSync(completedDir)) {
-        fs.mkdirSync(completedDir, { recursive: true })
-      }
-      fs.writeFileSync(
-        path.join(completedDir, `${video.videoId}.json`),
-        JSON.stringify({
+      // Check if already pending
+      if (!pendingScripts.find(s => s.videoId === video.videoId)) {
+        pendingScripts.push({
+          id: randomUUID(),
           videoId: video.videoId,
           title: video.title,
-          videoNumber,
-          folderName,
-          jobId,
-          processedAt: new Date().toISOString()
-        }, null, 2)
-      )
+          channelId,
+          channelName,
+          transcript,
+          script,
+          transcriptChars: transcript.length,
+          scriptChars: script.length,
+          createdAt: new Date().toISOString(),
+          source: "auto_create",
+          prompt: channelPrompt
+        })
 
-      // Save updated processed list
-      fs.writeFileSync(processedPath, JSON.stringify({ processed: processedIds }, null, 2))
+        const pendingDir = path.dirname(pendingPath)
+        if (!fs.existsSync(pendingDir)) {
+          fs.mkdirSync(pendingDir, { recursive: true })
+        }
+        fs.writeFileSync(pendingPath, JSON.stringify(pendingScripts, null, 2))
 
-      console.log(`[BG]   Done!`)
+        console.log(`[BG]   Added to pending for review`)
+      }
 
       // Small delay between videos
       await new Promise(r => setTimeout(r, 1000))
@@ -223,7 +209,7 @@ async function processVideosInBackground(
     }
   }
 
-  console.log(`[BG] Background processing complete`)
+  console.log(`[BG] Background processing complete - check Pending Scripts for review`)
 }
 
 // Helper functions
@@ -301,7 +287,7 @@ function splitIntoChunks(text: string, maxSize: number): string[] {
 
 async function callGemini(prompt: string): Promise<string | null> {
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`
 
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 300000)
@@ -313,7 +299,8 @@ async function callGemini(prompt: string): Promise<string | null> {
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
           temperature: 0.7,
-          maxOutputTokens: 65536
+          maxOutputTokens: 65536,
+          thinkingConfig: { thinkingBudget: 0 }
         }
       }),
       signal: controller.signal
