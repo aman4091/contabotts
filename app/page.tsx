@@ -17,6 +17,7 @@ interface Video {
   thumbnail: string
   duration: number
   viewCount: number
+  publishedAt?: string
 }
 
 interface ChannelVideoStatus {
@@ -115,6 +116,8 @@ export default function HomePage() {
       const data = await res.json()
       if (data.addedCount > 0) {
         toast.success(`${data.addedCount} new video(s) added!`)
+        // Switch to Latest sort to show new videos at top
+        setSortBy("latest")
       }
     } catch (error) {
       console.error("Error fetching latest:", error)
@@ -315,9 +318,9 @@ export default function HomePage() {
       case "views":
         return b.viewCount - a.viewCount
       case "latest":
-        return b.videoId.localeCompare(a.videoId) // YouTube video IDs are roughly chronological
+        return new Date(b.publishedAt || 0).getTime() - new Date(a.publishedAt || 0).getTime()
       case "oldest":
-        return a.videoId.localeCompare(b.videoId)
+        return new Date(a.publishedAt || 0).getTime() - new Date(b.publishedAt || 0).getTime()
       default:
         return 0
     }
