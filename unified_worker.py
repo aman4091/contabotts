@@ -456,63 +456,83 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         events = []
 
         for segment in result['segments']:
-            start = format_ass_time(segment['start'])
-            end = format_ass_time(segment['end'])
+            seg_start = segment['start']
+            seg_end = segment['end']
             text = segment['text'].strip()
             # Fix transcription errors (e.g., "our changel" -> "Archangel")
             text = fix_transcription_shorts(text)
 
+            # Split text into lines based on max chars
             words = text.split()
-            lines = []
+            all_lines = []
             curr = []
             curr_len = 0
             for w in words:
                 if curr_len + len(w) > SHORTS_MAX_CHARS:
                     if curr:
-                        lines.append(" ".join(curr))
-                        # Stop if we hit max lines
-                        if len(lines) >= SHORTS_MAX_LINES:
-                            break
+                        all_lines.append(" ".join(curr))
                     curr = [w]
                     curr_len = len(w)
                 else:
                     curr.append(w)
                     curr_len += len(w) + 1
-            if curr and len(lines) < SHORTS_MAX_LINES:
-                lines.append(" ".join(curr))
+            if curr:
+                all_lines.append(" ".join(curr))
 
-            final_text = "\\N".join(lines[:SHORTS_MAX_LINES])
+            # Split into chunks of SHORTS_MAX_LINES (2 lines each)
+            # Calculate time per chunk
+            num_chunks = (len(all_lines) + SHORTS_MAX_LINES - 1) // SHORTS_MAX_LINES
+            if num_chunks == 0:
+                num_chunks = 1
+            chunk_duration = (seg_end - seg_start) / num_chunks
 
-            cx = SHORTS_W // 2
-            cy = SHORTS_TEXT_Y
+            for chunk_idx in range(num_chunks):
+                chunk_start = seg_start + (chunk_idx * chunk_duration)
+                chunk_end = seg_start + ((chunk_idx + 1) * chunk_duration)
 
-            longest_line = max(len(l) for l in lines) if lines else 1
-            char_width = SHORTS_FONT_SIZE * 0.5
-            text_w = longest_line * char_width
-            text_h = len(lines) * (SHORTS_FONT_SIZE * 1.2)
+                start = format_ass_time(chunk_start)
+                end = format_ass_time(chunk_end)
 
-            box_w = text_w + SHORTS_PADDING_X
-            box_h = text_h + SHORTS_PADDING_Y
+                # Get lines for this chunk
+                line_start = chunk_idx * SHORTS_MAX_LINES
+                line_end = line_start + SHORTS_MAX_LINES
+                lines = all_lines[line_start:line_end]
 
-            x1 = int(cx - (box_w / 2))
-            x2 = int(cx + (box_w / 2))
-            y1 = int(cy - (box_h / 2))
-            y2 = int(cy + (box_h / 2))
-            r = SHORTS_CORNER_RADIUS
+                if not lines:
+                    continue
 
-            draw = (
-                f"m {x1+r} {y1} l {x2-r} {y1} "
-                f"b {x2} {y1} {x2} {y1} {x2} {y1+r} "
-                f"l {x2} {y2-r} "
-                f"b {x2} {y2} {x2} {y2} {x2-r} {y2} "
-                f"l {x1+r} {y2} "
-                f"b {x1} {y2} {x1} {y2} {x1} {y2-r} "
-                f"l {x1} {y1+r} "
-                f"b {x1} {y1} {x1} {y1} {x1+r} {y1}"
-            )
+                final_text = "\\N".join(lines)
 
-            events.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{{\\p1\\an7\\pos(0,0)\\1c&H000000&\\1a&H{SHORTS_BOX_OPACITY}&\\bord0\\shad0}}{draw}{{\\p0}}")
-            events.append(f"Dialogue: 1,{start},{end},Default,,0,0,0,,{{\\pos({cx},{cy})\\an5}}{final_text}")
+                cx = SHORTS_W // 2
+                cy = SHORTS_TEXT_Y
+
+                longest_line = max(len(l) for l in lines) if lines else 1
+                char_width = SHORTS_FONT_SIZE * 0.5
+                text_w = longest_line * char_width
+                text_h = len(lines) * (SHORTS_FONT_SIZE * 1.2)
+
+                box_w = text_w + SHORTS_PADDING_X
+                box_h = text_h + SHORTS_PADDING_Y
+
+                x1 = int(cx - (box_w / 2))
+                x2 = int(cx + (box_w / 2))
+                y1 = int(cy - (box_h / 2))
+                y2 = int(cy + (box_h / 2))
+                r = SHORTS_CORNER_RADIUS
+
+                draw = (
+                    f"m {x1+r} {y1} l {x2-r} {y1} "
+                    f"b {x2} {y1} {x2} {y1} {x2} {y1+r} "
+                    f"l {x2} {y2-r} "
+                    f"b {x2} {y2} {x2} {y2} {x2-r} {y2} "
+                    f"l {x1+r} {y2} "
+                    f"b {x1} {y2} {x1} {y2} {x1} {y2-r} "
+                    f"l {x1} {y1+r} "
+                    f"b {x1} {y1} {x1} {y1} {x1+r} {y1}"
+                )
+
+                events.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{{\\p1\\an7\\pos(0,0)\\1c&H000000&\\1a&H{SHORTS_BOX_OPACITY}&\\bord0\\shad0}}{draw}{{\\p0}}")
+                events.append(f"Dialogue: 1,{start},{end},Default,,0,0,0,,{{\\pos({cx},{cy})\\an5}}{final_text}")
 
         with open(ass_path, "w", encoding="utf-8") as f:
             f.write(header + "\n".join(events))
