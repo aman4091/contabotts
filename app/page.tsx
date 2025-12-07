@@ -482,7 +482,7 @@ export default function HomePage() {
   return (
     <div className="flex gap-4 h-[calc(100vh-120px)]">
       {/* Channel Sidebar */}
-      <div className="w-20 flex-shrink-0 bg-background/50 border border-border rounded-lg p-2 overflow-y-auto">
+      <div className="w-36 flex-shrink-0 bg-background/50 border border-border rounded-lg p-2 overflow-y-auto">
         <div className="space-y-2">
           {channelsWithVideos.map(channel => (
             <button
@@ -506,8 +506,11 @@ export default function HomePage() {
                   <Youtube className="w-6 h-6 text-red-500" />
                 </div>
               )}
-              <span className="text-[10px] text-muted-foreground mt-1 truncate w-full text-center">
-                {channel.totalVideos}
+              <span className="text-xs font-medium mt-1 truncate w-full text-center">
+                {channel.channelName}
+              </span>
+              <span className="text-[10px] text-muted-foreground">
+                {channel.totalVideos} videos
               </span>
             </button>
           ))}
