@@ -188,10 +188,10 @@ class LandscapeGenerator:
         return fixed
 
     def generate_subtitles(self, audio_path):
-        print(f"📝 Transcribing: {os.path.basename(audio_path)}...")
+        print(f"📝 Transcribing: {os.path.basename(audio_path)} with word timestamps...")
         # Prompt to help Whisper recognize religious/spiritual terms correctly
         initial_prompt = "Archangel Michael, Archangel Gabriel, Archangel Raphael, God, Jesus Christ, Holy Spirit, angels, divine, blessed, amen."
-        result = self.model.transcribe(audio_path, word_timestamps=False, initial_prompt=initial_prompt)
+        result = self.model.transcribe(audio_path, word_timestamps=True, initial_prompt=initial_prompt)
 
         ass_path = os.path.splitext(audio_path)[0] + ".ass"
 
@@ -231,28 +231,72 @@ Style: Default,{font_family},{font_size},{font_color},{font_color},&H00000000,{b
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
         events = []
+        max_chars = box.get("maxChars", 50)
+        max_lines = 2  # Max 2 lines per subtitle
 
+        # Collect all words with timestamps
+        all_words = []
         for segment in result['segments']:
-            start = self.format_time(segment['start'])
-            end = self.format_time(segment['end'])
-            text = segment['text'].strip()
+            if 'words' in segment:
+                for word_info in segment['words']:
+                    word_text = word_info.get('word', '').strip()
+                    if word_text:
+                        all_words.append({
+                            'word': word_text,
+                            'start': word_info.get('start', 0),
+                            'end': word_info.get('end', 0)
+                        })
 
-            # Fix transcription errors (e.g., "our changel" -> "Archangel")
-            text = self.fix_transcription(text)
+        # Group words into lines (max max_chars per line)
+        lines_with_timing = []
+        curr_line_words = []
+        curr_len = 0
 
-            # --- WRAP LOGIC ---
-            max_chars = box.get("maxChars", 50)
-            words = text.split()
-            lines = []; curr = []
-            for w in words:
-                if len(" ".join(curr + [w])) <= max_chars: curr.append(w)
-                else: lines.append(" ".join(curr)); curr = [w]
-            lines.append(" ".join(curr))
+        for w in all_words:
+            word_text = w['word']
+            if curr_len + len(word_text) > max_chars and curr_line_words:
+                # Save current line
+                line_text = ' '.join([x['word'] for x in curr_line_words])
+                line_text = self.fix_transcription(line_text)
+                lines_with_timing.append({
+                    'text': line_text,
+                    'start': curr_line_words[0]['start'],
+                    'end': curr_line_words[-1]['end']
+                })
+                curr_line_words = [w]
+                curr_len = len(word_text)
+            else:
+                curr_line_words.append(w)
+                curr_len += len(word_text) + 1
+
+        if curr_line_words:
+            line_text = ' '.join([x['word'] for x in curr_line_words])
+            line_text = self.fix_transcription(line_text)
+            lines_with_timing.append({
+                'text': line_text,
+                'start': curr_line_words[0]['start'],
+                'end': curr_line_words[-1]['end']
+            })
+
+        # Group lines into chunks of max_lines (2 lines each)
+        for i in range(0, len(lines_with_timing), max_lines):
+            chunk = lines_with_timing[i:i + max_lines]
+            if not chunk:
+                continue
+
+            # Get timing from first word of first line to last word of last line
+            chunk_start = chunk[0]['start']
+            chunk_end = chunk[-1]['end']
+
+            start = self.format_time(chunk_start)
+            end = self.format_time(chunk_end)
+
+            lines = [line['text'] for line in chunk]
             final_text = "\\N".join(lines)
 
             # --- BOX CALCULATION (using settings) ---
             char_width = font_size * box["charWidth"]
-            longest_line = max(len(l) for l in lines)
+            longest_line = max(len(l) for l in lines) if lines else 1
             text_w = longest_line * char_width
             text_h = len(lines) * (font_size * 1.4)
 
@@ -289,13 +333,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             # Smart Radius from settings
             r = corner_radius
             if r > (box_w // 2): r = int(box_w // 2)
-            
+
             # Draw Box
             draw = (f"m {x1+r} {y1} l {x2-r} {y1} b {x2} {y1} {x2} {y1} {x2} {y1+r} "
                     f"l {x2} {y2-r} b {x2} {y2} {x2} {y2} {x2-r} {y2} "
                     f"l {x1+r} {y2} b {x1} {y2} {x1} {y2} {x1} {y2-r} "
                     f"l {x1} {y1+r} b {x1} {y1} {x1} {y1} {x1+r} {y1}")
-            
+
             # Extract color and alpha from bg settings
             bg_hex = bg["color"].lstrip('#')
             bg_r, bg_g, bg_b = int(bg_hex[0:2], 16), int(bg_hex[2:4], 16), int(bg_hex[4:6], 16)
@@ -306,6 +350,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
         with open(ass_path, "w", encoding="utf-8") as f:
             f.write(header + "\n".join(events))
+
+        print(f"✅ Subtitles generated: {len(lines_with_timing)} lines in {(len(lines_with_timing) + 1) // 2} chunks")
         return ass_path
 
     def get_audio_duration(self, audio_path):
