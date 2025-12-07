@@ -85,6 +85,7 @@ export async function POST(request: NextRequest) {
       channelId,
       channelCode,
       channelName: channelInfo?.title || "Unknown",
+      channelLogo: channelInfo?.logo || "",
       fetchedAt: new Date().toISOString(),
       totalVideos: topVideos.length,
       videos: topVideos.map(v => ({
@@ -144,6 +145,8 @@ export async function GET(request: NextRequest) {
                   channelCode: dir.name,
                   channelName: metadata.channelName,
                   channelUrl: metadata.channelUrl,
+                  channelLogo: metadata.channelLogo || "",
+                  channelId: metadata.channelId,
                   fetchedAt: metadata.fetchedAt,
                   totalVideos: metadata.totalVideos
                 })
@@ -253,13 +256,16 @@ async function getChannelId(url: string): Promise<string | null> {
   return null
 }
 
-async function getChannelInfo(channelId: string): Promise<{ title: string } | null> {
+async function getChannelInfo(channelId: string): Promise<{ title: string; logo: string } | null> {
   const url = `https://www.googleapis.com/youtube/v3/channels?part=snippet&id=${channelId}&key=${YOUTUBE_API_KEY}`
   const res = await fetch(url)
   const data = await res.json()
 
   if (data.items?.[0]?.snippet) {
-    return { title: data.items[0].snippet.title }
+    return {
+      title: data.items[0].snippet.title,
+      logo: data.items[0].snippet.thumbnails?.default?.url || data.items[0].snippet.thumbnails?.medium?.url || ""
+    }
   }
   return null
 }

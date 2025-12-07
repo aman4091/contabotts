@@ -22,6 +22,8 @@ interface Video {
 interface ChannelVideoStatus {
   channelCode: string
   channelName: string
+  channelLogo?: string
+  channelId?: string
   totalVideos: number
   fetchedAt: string
 }
@@ -63,6 +65,7 @@ export default function HomePage() {
   // Channels
   const [channelsWithVideos, setChannelsWithVideos] = useState<ChannelVideoStatus[]>([])
   const [selectedChannel, setSelectedChannel] = useState<string>("")
+  const [fetchingLatest, setFetchingLatest] = useState(false)
 
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null)
   const [audioFiles, setAudioFiles] = useState<AudioFile[]>([])
@@ -90,12 +93,38 @@ export default function HomePage() {
     loadInitialData()
   }, [])
 
-  // Load videos when channel changes
+  // Load videos and fetch latest when channel changes
   useEffect(() => {
     if (selectedChannel) {
-      loadVideos(1)
+      fetchLatestAndLoadVideos()
     }
   }, [selectedChannel])
+
+  async function fetchLatestAndLoadVideos() {
+    if (!selectedChannel) return
+
+    setFetchingLatest(true)
+    try {
+      // First fetch latest 10 videos and add new ones
+      const res = await fetch("/api/videos/fetch-latest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channelCode: selectedChannel })
+      })
+
+      const data = await res.json()
+      if (data.addedCount > 0) {
+        toast.success(`${data.addedCount} new video(s) added!`)
+      }
+    } catch (error) {
+      console.error("Error fetching latest:", error)
+    } finally {
+      setFetchingLatest(false)
+    }
+
+    // Then load all videos
+    loadVideos(1)
+  }
 
   async function loadInitialData() {
     setLoading(true)
@@ -451,23 +480,58 @@ export default function HomePage() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* YouTube URL Input */}
-      <div className="flex gap-2">
-        <div className="relative flex-1">
-          <Youtube className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-red-500" />
-          <Input
-            value={youtubeUrl}
-            onChange={e => setYoutubeUrl(e.target.value)}
-            placeholder="Paste YouTube video URL..."
-            className="pl-10 pr-10"
-            onKeyDown={e => e.key === "Enter" && handleProcessUrl()}
-          />
-          {youtubeUrl && (
+    <div className="flex gap-4 h-[calc(100vh-120px)]">
+      {/* Channel Sidebar */}
+      <div className="w-20 flex-shrink-0 bg-background/50 border border-border rounded-lg p-2 overflow-y-auto">
+        <div className="space-y-2">
+          {channelsWithVideos.map(channel => (
             <button
-              onClick={() => setYoutubeUrl("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              key={channel.channelCode}
+              onClick={() => setSelectedChannel(channel.channelCode)}
+              className={`w-full flex flex-col items-center p-2 rounded-lg transition-colors ${
+                selectedChannel === channel.channelCode
+                  ? "bg-violet-500/20 border border-violet-500/50"
+                  : "hover:bg-muted/50 border border-transparent"
+              }`}
+              title={channel.channelName}
             >
+              {channel.channelLogo ? (
+                <img
+                  src={channel.channelLogo}
+                  alt={channel.channelName}
+                  className="w-12 h-12 rounded-full object-cover"
+                />
+              ) : (
+                <div className="w-12 h-12 rounded-full bg-red-500/20 flex items-center justify-center">
+                  <Youtube className="w-6 h-6 text-red-500" />
+                </div>
+              )}
+              <span className="text-[10px] text-muted-foreground mt-1 truncate w-full text-center">
+                {channel.totalVideos}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div className="flex-1 space-y-4 overflow-y-auto pr-2">
+        {/* YouTube URL Input */}
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <Youtube className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-red-500" />
+            <Input
+              value={youtubeUrl}
+              onChange={e => setYoutubeUrl(e.target.value)}
+              placeholder="Paste YouTube video URL..."
+              className="pl-10 pr-10"
+              onKeyDown={e => e.key === "Enter" && handleProcessUrl()}
+            />
+            {youtubeUrl && (
+              <button
+                onClick={() => setYoutubeUrl("")}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
               <X className="w-4 h-4" />
             </button>
           )}
@@ -511,27 +575,13 @@ export default function HomePage() {
           <div>
             <div className="flex items-center gap-2">
               <Youtube className="w-6 h-6 text-red-500" />
-              <h1 className="text-xl sm:text-2xl md:text-3xl font-bold">{channelName || "Videos"}</h1>
+              <h1 className="text-xl sm:text-2xl font-bold">{channelName || "Videos"}</h1>
+              {fetchingLatest && <Loader2 className="w-4 h-4 animate-spin text-violet-400" />}
             </div>
             <p className="text-muted-foreground text-sm mt-1">
               {searchQuery ? `${filteredVideos.length} of ${total} videos` : `${total} videos available`}
             </p>
           </div>
-          {/* Channel Dropdown */}
-          {channelsWithVideos.length > 0 && (
-            <Select value={selectedChannel} onValueChange={setSelectedChannel}>
-              <SelectTrigger className="w-[200px] border-red-500/30">
-                <SelectValue placeholder="Select channel" />
-              </SelectTrigger>
-              <SelectContent>
-                {channelsWithVideos.map(ch => (
-                  <SelectItem key={ch.channelCode} value={ch.channelCode}>
-                    {ch.channelName} ({ch.totalVideos})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
           {/* Sort Dropdown */}
           <Select value={sortBy} onValueChange={(v: "views" | "latest" | "oldest") => setSortBy(v)}>
             <SelectTrigger className="w-[130px] border-amber-500/30">
@@ -689,6 +739,7 @@ export default function HomePage() {
           </Link>
         </div>
       )}
+      </div>
 
       {/* Video Popup */}
       {selectedVideo && (
