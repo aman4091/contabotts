@@ -10,8 +10,8 @@ export function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
-  // Allow subtitle-settings API for external workers (Vast.ai)
-  if (pathname === "/api/subtitle-settings") {
+  // Allow APIs for external workers (Vast.ai)
+  if (pathname === "/api/subtitle-settings" || pathname === "/api/settings") {
     return NextResponse.next()
   }
 
