@@ -24,7 +24,8 @@ const defaultSettings = {
   box: {
     hPadding: 25,
     vPadding: 15,
-    charWidth: 0.6
+    charWidth: 0.6,
+    maxChars: 50
   },
   position: {
     alignment: 5,
@@ -79,7 +80,8 @@ export async function POST(request: NextRequest) {
       box: {
         hPadding: Number(settings.box?.hPadding) ?? defaultSettings.box.hPadding,
         vPadding: Number(settings.box?.vPadding) ?? defaultSettings.box.vPadding,
-        charWidth: Number(settings.box?.charWidth) || defaultSettings.box.charWidth
+        charWidth: Number(settings.box?.charWidth) || defaultSettings.box.charWidth,
+        maxChars: Number(settings.box?.maxChars) || defaultSettings.box.maxChars
       },
       position: {
         alignment: Number(settings.position?.alignment) || defaultSettings.position.alignment,

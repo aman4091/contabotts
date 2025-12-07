@@ -22,6 +22,7 @@ interface SubtitleSettings {
     hPadding: number
     vPadding: number
     charWidth: number
+    maxChars: number
   }
   position: {
     alignment: number
@@ -34,7 +35,7 @@ interface SubtitleSettings {
 const defaultSettings: SubtitleSettings = {
   font: { family: "Arial", size: 48, color: "#FFFFFF" },
   background: { color: "#000000", opacity: 80, cornerRadius: 20 },
-  box: { hPadding: 25, vPadding: 15, charWidth: 0.6 },
+  box: { hPadding: 25, vPadding: 15, charWidth: 0.6, maxChars: 50 },
   position: { alignment: 5, marginV: 40, marginL: 40, marginR: 40 }
 }
 
@@ -289,6 +290,19 @@ export default function SubtitleSettingsPage() {
                   <span>Narrower</span>
                   <span>Wider</span>
                 </div>
+              </div>
+              <div>
+                <Label htmlFor="maxChars">Max Chars Per Line</Label>
+                <Input
+                  id="maxChars"
+                  type="number"
+                  min="20"
+                  max="80"
+                  value={settings.box.maxChars}
+                  onChange={(e) => updateBox("maxChars", parseInt(e.target.value) || 50)}
+                  className="bg-gray-800 border-gray-700"
+                />
+                <p className="text-xs text-gray-500 mt-1">Lower = more lines, Higher = fewer lines</p>
               </div>
             </div>
           </CardContent>
