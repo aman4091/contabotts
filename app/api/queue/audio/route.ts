@@ -53,6 +53,7 @@ async function createAudioJob(job: {
   reference_audio?: string
   custom_images?: string[]
   audio_only?: boolean
+  ai_image_mode?: boolean
 }): Promise<{ success: boolean; job_id?: string; error?: string }> {
   try {
     const response = await fetch(`${FILE_SERVER_URL}/queue/audio/jobs`, {
@@ -153,7 +154,8 @@ export async function POST(request: NextRequest) {
       audioEnabled = true,
       referenceAudio: customReferenceAudio,
       customImages,
-      audioOnly = false
+      audioOnly = false,
+      aiImageMode = false
     } = body
 
     if (!script) {
@@ -207,7 +209,8 @@ export async function POST(request: NextRequest) {
       username,
       reference_audio: referenceAudio,
       custom_images: customImages, // Array of image paths for fade transition
-      audio_only: audioOnly
+      audio_only: audioOnly,
+      ai_image_mode: aiImageMode // Generate images with AI instead of nature folder
     })
 
     if (!result.success) {

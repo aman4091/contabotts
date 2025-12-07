@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "sonner"
-import { Loader2, RefreshCw, Settings, Youtube, Search, X, CheckSquare, Square, Play } from "lucide-react"
+import { Loader2, RefreshCw, Settings, Youtube, Search, X, CheckSquare, Square, Play, ArrowUpDown } from "lucide-react"
 import { VideoPopup } from "@/components/video-popup"
 import { TranscriptPopup } from "@/components/transcript-popup"
 import Link from "next/link"
@@ -78,6 +78,9 @@ export default function HomePage() {
 
   // Search state
   const [searchQuery, setSearchQuery] = useState("")
+
+  // Sort state
+  const [sortBy, setSortBy] = useState<"views" | "latest" | "oldest">("views")
 
   // Multi-select state
   const [selectMode, setSelectMode] = useState(false)
@@ -277,6 +280,20 @@ export default function HomePage() {
     ? videos.filter(v => v.title.toLowerCase().includes(searchQuery.toLowerCase()))
     : videos
 
+  // Sort videos
+  const sortedVideos = [...filteredVideos].sort((a, b) => {
+    switch (sortBy) {
+      case "views":
+        return b.viewCount - a.viewCount
+      case "latest":
+        return b.videoId.localeCompare(a.videoId) // YouTube video IDs are roughly chronological
+      case "oldest":
+        return a.videoId.localeCompare(b.videoId)
+      default:
+        return 0
+    }
+  })
+
   // Toggle video selection
   function toggleVideoSelection(videoId: string) {
     setSelectedVideoIds(prev => {
@@ -290,9 +307,9 @@ export default function HomePage() {
     })
   }
 
-  // Select all filtered videos
+  // Select all sorted videos
   function selectAllFiltered() {
-    setSelectedVideoIds(new Set(filteredVideos.map(v => v.videoId)))
+    setSelectedVideoIds(new Set(sortedVideos.map(v => v.videoId)))
   }
 
   // Clear selection
@@ -515,6 +532,18 @@ export default function HomePage() {
               </SelectContent>
             </Select>
           )}
+          {/* Sort Dropdown */}
+          <Select value={sortBy} onValueChange={(v: "views" | "latest" | "oldest") => setSortBy(v)}>
+            <SelectTrigger className="w-[130px] border-amber-500/30">
+              <ArrowUpDown className="w-4 h-4 mr-2 text-amber-400" />
+              <SelectValue placeholder="Sort by" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="views">Most Views</SelectItem>
+              <SelectItem value="latest">Latest</SelectItem>
+              <SelectItem value="oldest">Oldest</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
         <div className="flex items-center gap-2">
           {/* Select Mode Toggle */}
@@ -555,7 +584,7 @@ export default function HomePage() {
             onClick={selectAllFiltered}
             className="text-violet-400 hover:text-violet-300"
           >
-            Select All ({filteredVideos.length})
+            Select All ({sortedVideos.length})
           </Button>
           <Button
             variant="ghost"
@@ -579,7 +608,7 @@ export default function HomePage() {
 
       {/* Video Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-        {filteredVideos.map(video => {
+        {sortedVideos.map(video => {
           const isSelected = selectedVideoIds.has(video.videoId)
           return (
             <div

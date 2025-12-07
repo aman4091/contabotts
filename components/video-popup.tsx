@@ -106,6 +106,9 @@ export function VideoPopup({
   // Audio only mode
   const [audioOnly, setAudioOnly] = useState(false)
 
+  // AI Image generation mode
+  const [aiImageMode, setAiImageMode] = useState(false)
+
   useEffect(() => {
     fetchTranscript()
   }, [video.videoId])
@@ -409,7 +412,8 @@ export function VideoPopup({
           referenceAudio: selectedAudio,
           audioEnabled: true,
           audioOnly,
-          customImages: uploadedImagePaths.length > 0 ? uploadedImagePaths : undefined
+          customImages: uploadedImagePaths.length > 0 ? uploadedImagePaths : undefined,
+          aiImageMode
         })
       })
 
@@ -845,6 +849,16 @@ export function VideoPopup({
               />
               <Volume2 className="w-4 h-4 text-muted-foreground" />
               <span className="text-sm text-muted-foreground">Audio Only</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={aiImageMode}
+                onChange={e => setAiImageMode(e.target.checked)}
+                className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-violet-500 focus:ring-violet-500"
+              />
+              <Sparkles className="w-4 h-4 text-violet-400" />
+              <span className="text-sm text-muted-foreground">AI Images</span>
             </label>
             <Button
               onClick={handleAddToQueue}
