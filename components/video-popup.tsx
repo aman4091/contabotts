@@ -24,7 +24,8 @@ import {
   RotateCcw,
   ImageIcon,
   Trash2,
-  Upload
+  Upload,
+  Volume2
 } from "lucide-react"
 
 interface Video {
@@ -101,6 +102,9 @@ export function VideoPopup({
   const [imagePreviewUrls, setImagePreviewUrls] = useState<string[]>([])
   const [showImageSection, setShowImageSection] = useState(false)
   const [uploadingImages, setUploadingImages] = useState(false)
+
+  // Audio only mode
+  const [audioOnly, setAudioOnly] = useState(false)
 
   useEffect(() => {
     fetchTranscript()
@@ -404,6 +408,7 @@ export function VideoPopup({
           videoId: video.videoId,
           referenceAudio: selectedAudio,
           audioEnabled: true,
+          audioOnly,
           customImages: uploadedImagePaths.length > 0 ? uploadedImagePaths : undefined
         })
       })
@@ -831,6 +836,16 @@ export function VideoPopup({
                 </SelectContent>
               </Select>
             </div>
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={audioOnly}
+                onChange={e => setAudioOnly(e.target.checked)}
+                className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-cyan-500 focus:ring-cyan-500"
+              />
+              <Volume2 className="w-4 h-4 text-muted-foreground" />
+              <span className="text-sm text-muted-foreground">Audio Only</span>
+            </label>
             <Button
               onClick={handleAddToQueue}
               disabled={!script.trim() || !selectedAudio || addingToQueue}

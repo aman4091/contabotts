@@ -590,6 +590,7 @@ async def process_job(job: Dict) -> bool:
     """Process Audio + Video in single job"""
     job_id = job["job_id"]
     is_video_only = job.get("videoOnly", False)
+    is_audio_only = job.get("audio_only", False)
 
     # For videoOnly jobs, we don't need channel/org_path
     channel = job.get("channel_code", "MANUAL")
@@ -600,6 +601,10 @@ async def process_job(job: Dict) -> bool:
     if is_video_only:
         print(f"\n🎯 Processing Video-Only Job: {job_id[:8]}")
         print(f"   Audio Link: {job.get('audioLink', 'N/A')[:50]}...")
+    elif is_audio_only:
+        print(f"\n🎯 Processing Audio-Only Job: {job_id[:8]} ({channel} #{video_number})")
+        print(f"   Reference Audio: {ref_audio_file}")
+        print(f"   ⚠️ Video generation will be skipped")
     else:
         print(f"\n🎯 Processing Job: {job_id[:8]} ({channel} #{video_number})")
         print(f"   Reference Audio: {ref_audio_file}")
@@ -668,6 +673,22 @@ async def process_job(job: Dict) -> bool:
                 filename=script_filename,
                 username=job.get("username")
             )
+
+        # ========== AUDIO ONLY: Skip Video Generation ==========
+        if is_audio_only:
+            print("\n" + "="*50)
+            print("🎧 AUDIO ONLY MODE: Skipping video generation")
+            print("="*50)
+
+            queue.complete_audio_job(job_id, WORKER_ID, audio_gofile)
+            queue.increment_worker_stat(WORKER_ID, "jobs_completed")
+
+            print("\n" + "="*50)
+            print(f"✅ JOB COMPLETE (AUDIO ONLY): {job_id[:8]}")
+            print(f"   Audio: {audio_gofile}")
+            print("="*50)
+
+            return True
 
         # ========== STEP 2: VIDEO GENERATION ==========
         print("\n" + "="*50)

@@ -21,7 +21,8 @@ import {
   Edit3,
   RotateCcw,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Volume2
 } from "lucide-react"
 
 interface AudioFile {
@@ -63,6 +64,9 @@ export function TranscriptPopup({
   const [currentChunkIndex, setCurrentChunkIndex] = useState(0)
   const [chunkInput, setChunkInput] = useState("")
   const [autoProcessing, setAutoProcessing] = useState(false)
+
+  // Audio only mode
+  const [audioOnly, setAudioOnly] = useState(false)
 
   async function handleCopy() {
     if (!transcript) {
@@ -317,7 +321,8 @@ export function TranscriptPopup({
           videoTitle: `YouTube Video ${videoId}`,
           videoId,
           referenceAudio: selectedAudio,
-          audioEnabled: true
+          audioEnabled: true,
+          audioOnly
         })
       })
 
@@ -636,6 +641,16 @@ export function TranscriptPopup({
                 </SelectContent>
               </Select>
             </div>
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={audioOnly}
+                onChange={e => setAudioOnly(e.target.checked)}
+                className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-cyan-500 focus:ring-cyan-500"
+              />
+              <Volume2 className="w-4 h-4 text-muted-foreground" />
+              <span className="text-sm text-muted-foreground">Audio Only</span>
+            </label>
             <Button
               onClick={handleAddToQueue}
               disabled={!script.trim() || !selectedAudio || addingToQueue}
