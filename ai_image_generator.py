@@ -135,9 +135,9 @@ def analyze_script_for_image(script_text: str, max_chars: int = 3000) -> Optiona
     return None
 
 
-def generate_image_with_pollinations(prompt: str, output_path: str, max_retries: int = 3) -> bool:
+def generate_image_with_nebius(prompt: str, output_path: str, max_retries: int = 3) -> bool:
     """
-    Generate image using Pollinations.ai (free, no API key required)
+    Generate image using Nebius API (Flux model)
 
     Args:
         prompt: Image generation prompt
@@ -147,60 +147,79 @@ def generate_image_with_pollinations(prompt: str, output_path: str, max_retries:
     Returns:
         True if successful, False otherwise
     """
-    print(f"🎨 Generating image with Pollinations.ai...")
+    import base64
+
+    NEBIUS_API_KEY = os.getenv("NEBIUS_API_KEY")
+    if not NEBIUS_API_KEY:
+        print("❌ NEBIUS_API_KEY not set")
+        return False
+
+    print(f"🎨 Generating image with Nebius (Flux)...")
     print(f"   Prompt: {prompt[:80]}...")
 
-    # URL encode the prompt
-    encoded_prompt = quote(prompt)
+    try:
+        from openai import OpenAI
 
-    # Pollinations.ai API - simple URL-based generation
-    # Using 1920x1080 for landscape video background
-    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1920&height=1080&nologo=true"
+        client = OpenAI(
+            base_url="https://api.tokenfactory.nebius.com/v1/",
+            api_key=NEBIUS_API_KEY
+        )
 
-    for attempt in range(max_retries):
-        try:
-            print(f"   Attempt {attempt + 1}/{max_retries} - Fetching from Pollinations.ai...")
-            response = requests.get(url, timeout=180)  # 3 minute timeout
+        for attempt in range(max_retries):
+            try:
+                print(f"   Attempt {attempt + 1}/{max_retries} - Generating with Flux...")
 
-            if response.status_code == 200:
-                # Check if we got an image
-                content_type = response.headers.get('content-type', '')
-                if 'image' in content_type:
+                response = client.images.generate(
+                    model="black-forest-labs/flux-dev",
+                    response_format="b64_json",
+                    extra_body={
+                        "response_extension": "png",
+                        "width": 1920,
+                        "height": 1080,
+                        "num_inference_steps": 28,
+                        "negative_prompt": "",
+                        "seed": -1
+                    },
+                    prompt=prompt
+                )
+
+                if response.data and len(response.data) > 0:
+                    # Decode base64 image
+                    image_data = base64.b64decode(response.data[0].b64_json)
+
                     # Save the image
                     with open(output_path, 'wb') as f:
-                        f.write(response.content)
+                        f.write(image_data)
 
-                    # Verify and resize if needed
+                    # Convert to JPEG if needed
                     try:
                         from PIL import Image
                         img = Image.open(output_path)
-                        if img.size != (1920, 1080):
-                            img_resized = img.resize((1920, 1080), Image.LANCZOS)
-                            img_resized.save(output_path, "JPEG", quality=95)
-                            print(f"✅ Image resized and saved (1920x1080): {output_path}")
-                        else:
-                            print(f"✅ Image saved (1920x1080): {output_path}")
+                        if img.mode == 'RGBA':
+                            img = img.convert('RGB')
+                        img.save(output_path, "JPEG", quality=95)
+                        print(f"✅ Image saved (1920x1080): {output_path}")
                     except ImportError:
-                        print(f"✅ Image saved (PIL not available for resize): {output_path}")
+                        print(f"✅ Image saved (PNG): {output_path}")
 
                     return True
                 else:
-                    print(f"   ⚠️ Unexpected content type: {content_type}")
-            else:
-                print(f"   ⚠️ HTTP error: {response.status_code}")
+                    print(f"   ⚠️ No image data in response")
 
-        except requests.Timeout:
-            print(f"   ⚠️ Attempt {attempt + 1} timed out")
-        except Exception as e:
-            print(f"   ⚠️ Attempt {attempt + 1} error: {e}")
+            except Exception as e:
+                print(f"   ⚠️ Attempt {attempt + 1} error: {e}")
 
-        if attempt < max_retries - 1:
-            import time
-            print(f"   Retrying in 5 seconds...")
-            time.sleep(5)
+            if attempt < max_retries - 1:
+                import time
+                print(f"   Retrying in 5 seconds...")
+                time.sleep(5)
 
-    print("   ❌ All attempts failed")
-    return False
+        print("   ❌ All attempts failed")
+        return False
+
+    except ImportError:
+        print("❌ openai package not installed. Run: pip install openai")
+        return False
 
 
 def generate_ai_image(script_text: str, output_path: str) -> bool:
@@ -215,7 +234,7 @@ def generate_ai_image(script_text: str, output_path: str) -> bool:
         True if successful, False otherwise
     """
     print("\n" + "="*50)
-    print("🤖 AI IMAGE GENERATION (Pollinations.ai)")
+    print("🤖 AI IMAGE GENERATION (Nebius Flux)")
     print("="*50)
 
     # Step 1: Analyze script and get image prompt using Gemini
@@ -225,8 +244,8 @@ def generate_ai_image(script_text: str, output_path: str) -> bool:
         print("❌ Failed to generate image prompt")
         return False
 
-    # Step 2: Generate image with Pollinations.ai
-    success = generate_image_with_pollinations(image_prompt, output_path)
+    # Step 2: Generate image with Nebius (Flux model)
+    success = generate_image_with_nebius(image_prompt, output_path)
 
     if success:
         print("✅ AI image generation complete!")
