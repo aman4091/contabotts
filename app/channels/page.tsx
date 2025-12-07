@@ -33,8 +33,11 @@ import {
   Zap,
   Settings,
   Save,
-  X
+  X,
+  Radio,
+  Activity
 } from "lucide-react"
+import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { toast } from "sonner"
 
@@ -46,6 +49,8 @@ interface Channel {
   totalVideos: number
   addedAt: string
   prompt?: string
+  liveMonitoring?: boolean
+  lastChecked?: string
 }
 
 interface CompletedVideo {
@@ -180,6 +185,25 @@ export default function ChannelsPage() {
       toast.error("Failed to save prompt")
     } finally {
       setSavingPrompt(false)
+    }
+  }
+
+  async function toggleLiveMonitoring(channelId: string, enabled: boolean) {
+    try {
+      const res = await fetch("/api/channels", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channelId, liveMonitoring: enabled })
+      })
+
+      if (res.ok) {
+        toast.success(enabled ? "Live monitoring enabled" : "Live monitoring disabled")
+        loadChannels()
+      } else {
+        toast.error("Failed to update live monitoring")
+      }
+    } catch {
+      toast.error("Failed to update live monitoring")
     }
   }
 
@@ -345,7 +369,7 @@ export default function ChannelsPage() {
                   className="p-3 bg-emerald-500/5 border border-emerald-500/30 rounded-lg"
                 >
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-emerald-400 font-medium">{channel.name}</span>
                       <span className="text-muted-foreground text-xs">({channel.totalVideos} videos)</span>
                       {channel.prompt && (
@@ -353,8 +377,22 @@ export default function ChannelsPage() {
                           Custom Prompt
                         </Badge>
                       )}
+                      {channel.liveMonitoring && (
+                        <Badge variant="outline" className="text-xs text-red-400 border-red-500/30 animate-pulse">
+                          <Radio className="w-3 h-3 mr-1" />
+                          Live
+                        </Badge>
+                      )}
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-3">
+                      {/* Live Monitoring Toggle */}
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          checked={channel.liveMonitoring || false}
+                          onCheckedChange={(checked) => toggleLiveMonitoring(channel.channelId, checked)}
+                        />
+                        <span className="text-xs text-muted-foreground hidden sm:inline">Monitor</span>
+                      </div>
                       <button
                         onClick={() => startEditPrompt(channel)}
                         className="text-violet-400 hover:text-violet-300 p-1"
@@ -371,6 +409,11 @@ export default function ChannelsPage() {
                       </button>
                     </div>
                   </div>
+                  {channel.lastChecked && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Last checked: {new Date(channel.lastChecked).toLocaleString()}
+                    </p>
+                  )}
 
                   {/* Prompt Editor */}
                   {editingPrompt === channel.channelId && (

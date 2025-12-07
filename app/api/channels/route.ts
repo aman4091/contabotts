@@ -14,6 +14,8 @@ interface Channel {
   totalVideos: number
   addedAt: string
   prompt?: string  // Channel-specific prompt for transcript processing
+  liveMonitoring?: boolean  // Enable live monitoring for this channel
+  lastChecked?: string  // Last time new videos were checked
 }
 
 async function getUser() {
@@ -174,7 +176,16 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: "Channel not found" }, { status: 404 })
     }
 
-    channels[channelIndex].prompt = prompt || ""
+    // Update prompt if provided
+    if (prompt !== undefined) {
+      channels[channelIndex].prompt = prompt || ""
+    }
+
+    // Update liveMonitoring if provided
+    if (body.liveMonitoring !== undefined) {
+      channels[channelIndex].liveMonitoring = body.liveMonitoring
+    }
+
     saveChannels(username, channels)
 
     return NextResponse.json({ success: true, channel: channels[channelIndex] })
