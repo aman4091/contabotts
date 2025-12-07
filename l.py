@@ -241,7 +241,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             text = self.fix_transcription(text)
 
             # --- WRAP LOGIC ---
-            max_chars = 35
+            max_chars = 50  # Increased for fewer lines
             words = text.split()
             lines = []; curr = []
             for w in words:
