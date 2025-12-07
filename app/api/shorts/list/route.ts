@@ -18,26 +18,29 @@ export async function GET(request: NextRequest) {
     const allJobs: any[] = []
 
     for (const status of statuses) {
-      try {
-        // Shorts are in video queue with is_short=true
-        const videoRes = await fetch(`${FILE_SERVER_URL}/queue/video/jobs?status=${status}`, {
-          headers: { "x-api-key": FILE_SERVER_API_KEY },
-          cache: "no-store"
-        })
+      // Check both audio and video queues for shorts
+      for (const queue of ["audio", "video"]) {
+        try {
+          const res = await fetch(`${FILE_SERVER_URL}/queue/${queue}/jobs?status=${status}`, {
+            headers: { "x-api-key": FILE_SERVER_API_KEY },
+            cache: "no-store"
+          })
 
-        if (videoRes.ok) {
-          const data = await videoRes.json()
-          // Filter for shorts only
-          const shortsJobs = (data.jobs || [])
-            .filter((job: any) => job.is_short === true)
-            .map((job: any) => ({
-              ...job,
-              status
-            }))
-          allJobs.push(...shortsJobs)
+          if (res.ok) {
+            const data = await res.json()
+            // Filter for shorts only
+            const shortsJobs = (data.jobs || [])
+              .filter((job: any) => job.is_short === true)
+              .map((job: any) => ({
+                ...job,
+                status,
+                queue
+              }))
+            allJobs.push(...shortsJobs)
+          }
+        } catch (e) {
+          console.error(`Error fetching ${status} shorts from ${queue}:`, e)
         }
-      } catch (e) {
-        console.error(`Error fetching ${status} shorts:`, e)
       }
     }
 
