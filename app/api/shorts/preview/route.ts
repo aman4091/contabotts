@@ -137,8 +137,8 @@ export async function POST(request: NextRequest) {
 
     console.log(`Generating shorts preview for ${username}/${videoFolder}...`)
 
-    // Use model from settings or default
-    const model = settings.ai?.model || "gemini-2.0-flash-exp"
+    // Always use Gemini 3 Pro for shorts (best quality)
+    const model = "gemini-3-pro-preview"
     const shorts = await generateShortsFromScript(scriptContent, shortsPrompt, model)
 
     if (shorts.length === 0) {
