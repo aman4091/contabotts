@@ -431,14 +431,14 @@ def fix_transcription_shorts(text: str) -> str:
     return fixed
 
 def generate_subtitles_shorts(audio_path: str) -> Optional[str]:
-    """Generate ASS subtitles for Shorts (1080x1920) - EXACT s.py style"""
+    """Generate ASS subtitles for Shorts (1080x1920) with word-level timing"""
     try:
-        print(f"📝 Transcribing audio for Shorts...")
+        print(f"📝 Transcribing audio for Shorts with word timestamps...")
         if landscape_gen is None or landscape_gen.model is None: return None
 
         # Prompt to help Whisper recognize religious/spiritual terms correctly
         initial_prompt = "Archangel Michael, Archangel Gabriel, Archangel Raphael, God, Jesus Christ, Holy Spirit, angels, divine, blessed, amen."
-        result = landscape_gen.model.transcribe(audio_path, word_timestamps=False, initial_prompt=initial_prompt)
+        result = landscape_gen.model.transcribe(audio_path, word_timestamps=True, initial_prompt=initial_prompt)
         ass_path = os.path.splitext(audio_path)[0] + "_shorts.ass"
 
         header = f"""[Script Info]
@@ -455,89 +455,98 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
         events = []
 
+        # Collect all words with timestamps
+        all_words = []
         for segment in result['segments']:
-            seg_start = segment['start']
-            seg_end = segment['end']
-            text = segment['text'].strip()
-            # Fix transcription errors (e.g., "our changel" -> "Archangel")
-            text = fix_transcription_shorts(text)
+            if 'words' in segment:
+                for word_info in segment['words']:
+                    word_text = word_info.get('word', '').strip()
+                    if word_text:
+                        all_words.append({
+                            'word': word_text,
+                            'start': word_info.get('start', 0),
+                            'end': word_info.get('end', 0)
+                        })
 
-            # Split text into lines based on max chars
-            words = text.split()
-            all_lines = []
-            curr = []
-            curr_len = 0
-            for w in words:
-                if curr_len + len(w) > SHORTS_MAX_CHARS:
-                    if curr:
-                        all_lines.append(" ".join(curr))
-                    curr = [w]
-                    curr_len = len(w)
-                else:
-                    curr.append(w)
-                    curr_len += len(w) + 1
-            if curr:
-                all_lines.append(" ".join(curr))
+        # Group words into lines (max SHORTS_MAX_CHARS per line)
+        lines_with_timing = []
+        curr_line_words = []
+        curr_len = 0
 
-            # Split into chunks of SHORTS_MAX_LINES (2 lines each)
-            # Calculate time per chunk
-            num_chunks = (len(all_lines) + SHORTS_MAX_LINES - 1) // SHORTS_MAX_LINES
-            if num_chunks == 0:
-                num_chunks = 1
-            chunk_duration = (seg_end - seg_start) / num_chunks
+        for w in all_words:
+            word_text = w['word']
+            if curr_len + len(word_text) > SHORTS_MAX_CHARS and curr_line_words:
+                # Save current line
+                lines_with_timing.append({
+                    'text': ' '.join([x['word'] for x in curr_line_words]),
+                    'start': curr_line_words[0]['start'],
+                    'end': curr_line_words[-1]['end']
+                })
+                curr_line_words = [w]
+                curr_len = len(word_text)
+            else:
+                curr_line_words.append(w)
+                curr_len += len(word_text) + 1
 
-            for chunk_idx in range(num_chunks):
-                chunk_start = seg_start + (chunk_idx * chunk_duration)
-                chunk_end = seg_start + ((chunk_idx + 1) * chunk_duration)
+        if curr_line_words:
+            lines_with_timing.append({
+                'text': ' '.join([x['word'] for x in curr_line_words]),
+                'start': curr_line_words[0]['start'],
+                'end': curr_line_words[-1]['end']
+            })
 
-                start = format_ass_time(chunk_start)
-                end = format_ass_time(chunk_end)
+        # Group lines into chunks of SHORTS_MAX_LINES (2 lines each)
+        for i in range(0, len(lines_with_timing), SHORTS_MAX_LINES):
+            chunk = lines_with_timing[i:i + SHORTS_MAX_LINES]
+            if not chunk:
+                continue
 
-                # Get lines for this chunk
-                line_start = chunk_idx * SHORTS_MAX_LINES
-                line_end = line_start + SHORTS_MAX_LINES
-                lines = all_lines[line_start:line_end]
+            # Get timing from first word of first line to last word of last line
+            chunk_start = chunk[0]['start']
+            chunk_end = chunk[-1]['end']
 
-                if not lines:
-                    continue
+            start = format_ass_time(chunk_start)
+            end = format_ass_time(chunk_end)
 
-                final_text = "\\N".join(lines)
+            # Fix transcription and join lines
+            lines = [fix_transcription_shorts(line['text']) for line in chunk]
+            final_text = "\\N".join(lines)
 
-                cx = SHORTS_W // 2
-                cy = SHORTS_TEXT_Y
+            cx = SHORTS_W // 2
+            cy = SHORTS_TEXT_Y
 
-                longest_line = max(len(l) for l in lines) if lines else 1
-                char_width = SHORTS_FONT_SIZE * 0.5
-                text_w = longest_line * char_width
-                text_h = len(lines) * (SHORTS_FONT_SIZE * 1.2)
+            longest_line = max(len(l) for l in lines) if lines else 1
+            char_width = SHORTS_FONT_SIZE * 0.5
+            text_w = longest_line * char_width
+            text_h = len(lines) * (SHORTS_FONT_SIZE * 1.2)
 
-                box_w = text_w + SHORTS_PADDING_X
-                box_h = text_h + SHORTS_PADDING_Y
+            box_w = text_w + SHORTS_PADDING_X
+            box_h = text_h + SHORTS_PADDING_Y
 
-                x1 = int(cx - (box_w / 2))
-                x2 = int(cx + (box_w / 2))
-                y1 = int(cy - (box_h / 2))
-                y2 = int(cy + (box_h / 2))
-                r = SHORTS_CORNER_RADIUS
+            x1 = int(cx - (box_w / 2))
+            x2 = int(cx + (box_w / 2))
+            y1 = int(cy - (box_h / 2))
+            y2 = int(cy + (box_h / 2))
+            r = SHORTS_CORNER_RADIUS
 
-                draw = (
-                    f"m {x1+r} {y1} l {x2-r} {y1} "
-                    f"b {x2} {y1} {x2} {y1} {x2} {y1+r} "
-                    f"l {x2} {y2-r} "
-                    f"b {x2} {y2} {x2} {y2} {x2-r} {y2} "
-                    f"l {x1+r} {y2} "
-                    f"b {x1} {y2} {x1} {y2} {x1} {y2-r} "
-                    f"l {x1} {y1+r} "
-                    f"b {x1} {y1} {x1} {y1} {x1+r} {y1}"
-                )
+            draw = (
+                f"m {x1+r} {y1} l {x2-r} {y1} "
+                f"b {x2} {y1} {x2} {y1} {x2} {y1+r} "
+                f"l {x2} {y2-r} "
+                f"b {x2} {y2} {x2} {y2} {x2-r} {y2} "
+                f"l {x1+r} {y2} "
+                f"b {x1} {y2} {x1} {y2} {x1} {y2-r} "
+                f"l {x1} {y1+r} "
+                f"b {x1} {y1} {x1} {y1} {x1+r} {y1}"
+            )
 
-                events.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{{\\p1\\an7\\pos(0,0)\\1c&H000000&\\1a&H{SHORTS_BOX_OPACITY}&\\bord0\\shad0}}{draw}{{\\p0}}")
-                events.append(f"Dialogue: 1,{start},{end},Default,,0,0,0,,{{\\pos({cx},{cy})\\an5}}{final_text}")
+            events.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{{\\p1\\an7\\pos(0,0)\\1c&H000000&\\1a&H{SHORTS_BOX_OPACITY}&\\bord0\\shad0}}{draw}{{\\p0}}")
+            events.append(f"Dialogue: 1,{start},{end},Default,,0,0,0,,{{\\pos({cx},{cy})\\an5}}{final_text}")
 
         with open(ass_path, "w", encoding="utf-8") as f:
             f.write(header + "\n".join(events))
 
-        print(f"✅ Shorts subtitles generated: {len(result['segments'])} segments")
+        print(f"✅ Shorts subtitles generated: {len(lines_with_timing)} lines in {(len(lines_with_timing) + 1) // 2} chunks")
         return ass_path
     except Exception as e:
         print(f"❌ Shorts Subtitle Error: {e}")
