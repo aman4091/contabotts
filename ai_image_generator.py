@@ -135,13 +135,14 @@ def analyze_script_for_image(script_text: str, max_chars: int = 3000) -> Optiona
     return None
 
 
-def generate_image_with_pollinations(prompt: str, output_path: str) -> bool:
+def generate_image_with_pollinations(prompt: str, output_path: str, max_retries: int = 3) -> bool:
     """
     Generate image using Pollinations.ai (free, no API key required)
 
     Args:
         prompt: Image generation prompt
         output_path: Path to save the generated image
+        max_retries: Number of retry attempts
 
     Returns:
         True if successful, False otherwise
@@ -149,52 +150,57 @@ def generate_image_with_pollinations(prompt: str, output_path: str) -> bool:
     print(f"🎨 Generating image with Pollinations.ai...")
     print(f"   Prompt: {prompt[:80]}...")
 
-    try:
-        # URL encode the prompt
-        encoded_prompt = quote(prompt)
+    # URL encode the prompt
+    encoded_prompt = quote(prompt)
 
-        # Pollinations.ai API - simple URL-based generation
-        # Using 1920x1080 for landscape video background
-        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1920&height=1080&nologo=true"
+    # Pollinations.ai API - simple URL-based generation
+    # Using 1920x1080 for landscape video background
+    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1920&height=1080&nologo=true"
 
-        print(f"   Fetching from Pollinations.ai...")
-        response = requests.get(url, timeout=120)  # 2 minute timeout for image generation
+    for attempt in range(max_retries):
+        try:
+            print(f"   Attempt {attempt + 1}/{max_retries} - Fetching from Pollinations.ai...")
+            response = requests.get(url, timeout=180)  # 3 minute timeout
 
-        if response.status_code == 200:
-            # Check if we got an image
-            content_type = response.headers.get('content-type', '')
-            if 'image' in content_type:
-                # Save the image
-                with open(output_path, 'wb') as f:
-                    f.write(response.content)
+            if response.status_code == 200:
+                # Check if we got an image
+                content_type = response.headers.get('content-type', '')
+                if 'image' in content_type:
+                    # Save the image
+                    with open(output_path, 'wb') as f:
+                        f.write(response.content)
 
-                # Verify and resize if needed
-                try:
-                    from PIL import Image
-                    img = Image.open(output_path)
-                    if img.size != (1920, 1080):
-                        img_resized = img.resize((1920, 1080), Image.LANCZOS)
-                        img_resized.save(output_path, "JPEG", quality=95)
-                        print(f"✅ Image resized and saved (1920x1080): {output_path}")
-                    else:
-                        print(f"✅ Image saved (1920x1080): {output_path}")
-                except ImportError:
-                    print(f"✅ Image saved (PIL not available for resize): {output_path}")
+                    # Verify and resize if needed
+                    try:
+                        from PIL import Image
+                        img = Image.open(output_path)
+                        if img.size != (1920, 1080):
+                            img_resized = img.resize((1920, 1080), Image.LANCZOS)
+                            img_resized.save(output_path, "JPEG", quality=95)
+                            print(f"✅ Image resized and saved (1920x1080): {output_path}")
+                        else:
+                            print(f"✅ Image saved (1920x1080): {output_path}")
+                    except ImportError:
+                        print(f"✅ Image saved (PIL not available for resize): {output_path}")
 
-                return True
+                    return True
+                else:
+                    print(f"   ⚠️ Unexpected content type: {content_type}")
             else:
-                print(f"   ❌ Unexpected content type: {content_type}")
-                return False
-        else:
-            print(f"   ❌ HTTP error: {response.status_code}")
-            return False
+                print(f"   ⚠️ HTTP error: {response.status_code}")
 
-    except requests.Timeout:
-        print("   ❌ Request timed out (Pollinations.ai may be busy)")
-        return False
-    except Exception as e:
-        print(f"   ❌ Error: {e}")
-        return False
+        except requests.Timeout:
+            print(f"   ⚠️ Attempt {attempt + 1} timed out")
+        except Exception as e:
+            print(f"   ⚠️ Attempt {attempt + 1} error: {e}")
+
+        if attempt < max_retries - 1:
+            import time
+            print(f"   Retrying in 5 seconds...")
+            time.sleep(5)
+
+    print("   ❌ All attempts failed")
+    return False
 
 
 def generate_ai_image(script_text: str, output_path: str) -> bool:
