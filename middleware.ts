@@ -10,6 +10,11 @@ export function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
+  // Allow subtitle-settings API for external workers (Vast.ai)
+  if (pathname === "/api/subtitle-settings") {
+    return NextResponse.next()
+  }
+
   // Allow shorts cron API with secret key
   if (pathname === "/api/shorts/process") {
     const cronSecret = request.headers.get("x-cron-secret")

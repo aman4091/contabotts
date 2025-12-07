@@ -79,20 +79,49 @@ def hex_to_ass_color(hex_color, opacity=100):
     return f"&H{alpha:02X}{b:02X}{g:02X}{r:02X}"
 
 def load_subtitle_settings():
-    """Load subtitle settings from JSON file"""
-    settings_file = os.path.join(os.path.dirname(__file__), "data", "subtitle-settings.json")
+    """Load subtitle settings from API (remote) or local file as fallback"""
+    import requests
+
     defaults = {
         "font": {"family": "Arial", "size": 80, "color": "#FFFFFF"},
         "background": {"color": "#000000", "opacity": 100, "cornerRadius": 40},
         "box": {"hPadding": 15, "vPadding": 10, "charWidth": 0.6},
         "position": {"alignment": 5, "marginV": 40, "marginL": 40, "marginR": 40}
     }
+
+    # Try fetching from API first (works on Vast.ai)
     try:
+        file_server_url = os.getenv("FILE_SERVER_URL", "http://38.242.144.132:8000")
+        # Webapp runs on port 3000, derive from file server URL
+        webapp_url = file_server_url.replace(":8000", ":3000")
+        api_url = f"{webapp_url}/api/subtitle-settings"
+
+        print(f"📝 Fetching subtitle settings from: {api_url}")
+        response = requests.get(api_url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("success") and data.get("settings"):
+                settings = data["settings"]
+                # Merge with defaults
+                for key in defaults:
+                    if key not in settings:
+                        settings[key] = defaults[key]
+                    else:
+                        for subkey in defaults[key]:
+                            if subkey not in settings[key]:
+                                settings[key][subkey] = defaults[key][subkey]
+                print(f"✅ Loaded settings: Font={settings['font']['family']} @ {settings['font']['size']}px")
+                return settings
+    except Exception as e:
+        print(f"⚠️ API fetch failed: {e}")
+
+    # Fallback to local file
+    try:
+        settings_file = os.path.join(os.path.dirname(__file__), "data", "subtitle-settings.json")
         if os.path.exists(settings_file):
-            print(f"📝 Loading subtitle settings from: {settings_file}")
+            print(f"📝 Fallback: Loading from local file: {settings_file}")
             with open(settings_file, 'r') as f:
                 settings = json.load(f)
-                # Merge with defaults
                 for key in defaults:
                     if key not in settings:
                         settings[key] = defaults[key]
@@ -102,7 +131,9 @@ def load_subtitle_settings():
                                 settings[key][subkey] = defaults[key][subkey]
                 return settings
     except Exception as e:
-        print(f"⚠️ Could not load subtitle settings: {e}")
+        print(f"⚠️ Local file load failed: {e}")
+
+    print("⚠️ Using default subtitle settings")
     return defaults
 
 # =================================================
