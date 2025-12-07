@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """
 AI Image Generator
-Uses Gemini to analyze script and Imagen 3.0 to generate images
+Uses Gemini to analyze script and Pollinations.ai to generate images
 
 Flow:
 1. Script -> Gemini -> Image generation prompt
-2. Image prompt -> Imagen 3.0 -> Generated image
+2. Image prompt -> Pollinations.ai -> Generated image
 """
 
 import os
-import traceback
+import requests
 from typing import Optional
+from urllib.parse import quote
 
 # Google Generative AI (for text generation)
 try:
@@ -20,21 +21,29 @@ except ImportError:
     GENAI_AVAILABLE = False
     print("⚠️ google-generativeai not installed. Run: pip install google-generativeai")
 
-# Google GenAI Client (for image generation)
-try:
-    from google import genai as genai_client
-    from google.genai import types as genai_types
-    GENAI_CLIENT_AVAILABLE = True
-except ImportError:
-    GENAI_CLIENT_AVAILABLE = False
-    print("⚠️ google-genai not installed. Run: pip install google-genai")
-
 
 # Configure API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+FILE_SERVER_URL = os.getenv("FILE_SERVER_URL", "http://38.242.144.132:8000")
 
 if GEMINI_API_KEY and GENAI_AVAILABLE:
     genai.configure(api_key=GEMINI_API_KEY)
+
+
+def get_gemini_model_from_settings() -> str:
+    """Fetch Gemini model name from settings API"""
+    try:
+        webapp_url = FILE_SERVER_URL.replace(":8000", ":3000")
+        api_url = f"{webapp_url}/api/settings"
+        response = requests.get(api_url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            model = data.get("ai", {}).get("model", "gemini-2.0-flash-exp")
+            print(f"📝 Using Gemini model from settings: {model}")
+            return model
+    except Exception as e:
+        print(f"⚠️ Could not fetch settings, using default model: {e}")
+    return "gemini-2.0-flash-exp"
 
 
 # Image Analysis Prompt for Gemini
@@ -57,7 +66,7 @@ Image prompt:"""
 
 def analyze_script_for_image(script_text: str, max_chars: int = 3000) -> Optional[str]:
     """
-    Analyze script using Gemini 3 Pro Preview and generate an image prompt
+    Analyze script using Gemini and generate an image prompt
 
     Args:
         script_text: The script to analyze
@@ -74,8 +83,11 @@ def analyze_script_for_image(script_text: str, max_chars: int = 3000) -> Optiona
         print("❌ GEMINI_API_KEY not set")
         return None
 
-    # Models to try in order
-    models_to_try = ['gemini-3-pro-preview', 'gemini-2.0-flash-exp', 'gemini-1.5-flash']
+    # Get model from settings, with fallbacks
+    settings_model = get_gemini_model_from_settings()
+    models_to_try = [settings_model, 'gemini-2.0-flash-exp', 'gemini-1.5-flash']
+    # Remove duplicates while preserving order
+    models_to_try = list(dict.fromkeys(models_to_try))
 
     # Truncate script if too long
     truncated_script = script_text[:max_chars] if len(script_text) > max_chars else script_text
@@ -100,12 +112,8 @@ def analyze_script_for_image(script_text: str, max_chars: int = 3000) -> Optiona
                 }
             )
 
-            # Debug: print response info
-            print(f"   Response candidates: {len(response.candidates) if response.candidates else 0}")
-
             if response.candidates:
                 candidate = response.candidates[0]
-                print(f"   Finish reason: {candidate.finish_reason}")
 
                 # Check finish reason
                 if candidate.finish_reason and candidate.finish_reason.name == "SAFETY":
@@ -118,12 +126,6 @@ def analyze_script_for_image(script_text: str, max_chars: int = 3000) -> Optiona
                     if image_prompt:
                         print(f"✅ Image prompt generated with {model_name}: {image_prompt[:100]}...")
                         return image_prompt
-                    else:
-                        print(f"   ⚠️ Empty text, trying next model...")
-                else:
-                    print(f"   ⚠️ No content parts, trying next model...")
-            else:
-                print(f"   ⚠️ No candidates, trying next model...")
 
         except Exception as e:
             print(f"   ⚠️ {model_name} failed: {e}")
@@ -133,9 +135,9 @@ def analyze_script_for_image(script_text: str, max_chars: int = 3000) -> Optiona
     return None
 
 
-def generate_image_with_imagen(prompt: str, output_path: str) -> bool:
+def generate_image_with_pollinations(prompt: str, output_path: str) -> bool:
     """
-    Generate image using Imagen 3.0
+    Generate image using Pollinations.ai (free, no API key required)
 
     Args:
         prompt: Image generation prompt
@@ -144,76 +146,55 @@ def generate_image_with_imagen(prompt: str, output_path: str) -> bool:
     Returns:
         True if successful, False otherwise
     """
-    if not GENAI_CLIENT_AVAILABLE:
-        print("❌ google-genai not available. Run: pip install google-genai")
-        return False
-
-    if not GEMINI_API_KEY:
-        print("❌ GEMINI_API_KEY not set")
-        return False
-
-    # Models to try in order
-    imagen_models = [
-        'imagen-3.0-generate-002',
-        'imagen-3.0-generate-001',
-        'imagen-4.0-generate-001',
-        'imagen-3.0-fast-generate-001',
-    ]
-
-    print(f"🎨 Generating image with Imagen...")
+    print(f"🎨 Generating image with Pollinations.ai...")
     print(f"   Prompt: {prompt[:80]}...")
 
-    # Create client with API key
-    client = genai_client.Client(api_key=GEMINI_API_KEY)
+    try:
+        # URL encode the prompt
+        encoded_prompt = quote(prompt)
 
-    for model_name in imagen_models:
-        try:
-            print(f"   Trying {model_name}...")
+        # Pollinations.ai API - simple URL-based generation
+        # Using 1920x1080 for landscape video background
+        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1920&height=1080&nologo=true"
 
-            response = client.models.generate_images(
-                model=model_name,
-                prompt=prompt,
-                config=genai_types.GenerateImagesConfig(
-                    number_of_images=1,
-                    aspect_ratio="16:9",  # Landscape for video background
-                )
-            )
+        print(f"   Fetching from Pollinations.ai...")
+        response = requests.get(url, timeout=120)  # 2 minute timeout for image generation
 
-            if not response.generated_images:
-                print(f"   ⚠️ No images from {model_name}, trying next...")
-                continue
+        if response.status_code == 200:
+            # Check if we got an image
+            content_type = response.headers.get('content-type', '')
+            if 'image' in content_type:
+                # Save the image
+                with open(output_path, 'wb') as f:
+                    f.write(response.content)
 
-            # Save the first image
-            generated_image = response.generated_images[0]
-
-            # Get image bytes and save
-            if generated_image.image and generated_image.image.image_bytes:
-                # Save and resize to exact 1920x1080
+                # Verify and resize if needed
                 try:
                     from PIL import Image
-                    from io import BytesIO
-
-                    img = Image.open(BytesIO(generated_image.image.image_bytes))
-                    img_resized = img.resize((1920, 1080), Image.LANCZOS)
-                    img_resized.save(output_path, "JPEG", quality=95)
-                    print(f"✅ Image saved (1920x1080) with {model_name}: {output_path}")
-                    return True
+                    img = Image.open(output_path)
+                    if img.size != (1920, 1080):
+                        img_resized = img.resize((1920, 1080), Image.LANCZOS)
+                        img_resized.save(output_path, "JPEG", quality=95)
+                        print(f"✅ Image resized and saved (1920x1080): {output_path}")
+                    else:
+                        print(f"✅ Image saved (1920x1080): {output_path}")
                 except ImportError:
-                    # PIL not available, save as-is
-                    with open(output_path, 'wb') as f:
-                        f.write(generated_image.image.image_bytes)
-                    print(f"✅ Image saved (original size) with {model_name}: {output_path}")
-                    return True
+                    print(f"✅ Image saved (PIL not available for resize): {output_path}")
+
+                return True
             else:
-                print(f"   ⚠️ No image data from {model_name}, trying next...")
-                continue
+                print(f"   ❌ Unexpected content type: {content_type}")
+                return False
+        else:
+            print(f"   ❌ HTTP error: {response.status_code}")
+            return False
 
-        except Exception as e:
-            print(f"   ⚠️ {model_name} failed: {e}")
-            continue
-
-    print("❌ All Imagen models failed")
-    return False
+    except requests.Timeout:
+        print("   ❌ Request timed out (Pollinations.ai may be busy)")
+        return False
+    except Exception as e:
+        print(f"   ❌ Error: {e}")
+        return False
 
 
 def generate_ai_image(script_text: str, output_path: str) -> bool:
@@ -228,18 +209,18 @@ def generate_ai_image(script_text: str, output_path: str) -> bool:
         True if successful, False otherwise
     """
     print("\n" + "="*50)
-    print("🤖 AI IMAGE GENERATION")
+    print("🤖 AI IMAGE GENERATION (Pollinations.ai)")
     print("="*50)
 
-    # Step 1: Analyze script and get image prompt
+    # Step 1: Analyze script and get image prompt using Gemini
     image_prompt = analyze_script_for_image(script_text)
 
     if not image_prompt:
         print("❌ Failed to generate image prompt")
         return False
 
-    # Step 2: Generate image with Imagen 3.0
-    success = generate_image_with_imagen(image_prompt, output_path)
+    # Step 2: Generate image with Pollinations.ai
+    success = generate_image_with_pollinations(image_prompt, output_path)
 
     if success:
         print("✅ AI image generation complete!")
