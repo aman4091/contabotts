@@ -21,7 +21,10 @@ import {
   Merge,
   Edit3,
   ChevronDown,
-  RotateCcw
+  RotateCcw,
+  ImageIcon,
+  Trash2,
+  Upload
 } from "lucide-react"
 
 interface Video {
@@ -92,6 +95,12 @@ export function VideoPopup({
   // Custom prompt state
   const [customPrompt, setCustomPrompt] = useState(prompt)
   const [showPromptEditor, setShowPromptEditor] = useState(false)
+
+  // Custom images state
+  const [customImages, setCustomImages] = useState<File[]>([])
+  const [imagePreviewUrls, setImagePreviewUrls] = useState<string[]>([])
+  const [showImageSection, setShowImageSection] = useState(false)
+  const [uploadingImages, setUploadingImages] = useState(false)
 
   useEffect(() => {
     fetchTranscript()
@@ -308,6 +317,43 @@ export function VideoPopup({
     window.open("https://gemini.google.com", "_blank")
   }
 
+  // Image handling functions
+  function handleImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files
+    if (!files) return
+
+    const newFiles = Array.from(files)
+    const validFiles = newFiles.filter(f => f.type.startsWith('image/'))
+
+    if (validFiles.length === 0) {
+      toast.error("Please select image files")
+      return
+    }
+
+    // Add to existing images
+    setCustomImages(prev => [...prev, ...validFiles])
+
+    // Create preview URLs
+    const newUrls = validFiles.map(f => URL.createObjectURL(f))
+    setImagePreviewUrls(prev => [...prev, ...newUrls])
+
+    toast.success(`Added ${validFiles.length} image(s)`)
+  }
+
+  function removeImage(index: number) {
+    // Revoke URL to free memory
+    URL.revokeObjectURL(imagePreviewUrls[index])
+
+    setCustomImages(prev => prev.filter((_, i) => i !== index))
+    setImagePreviewUrls(prev => prev.filter((_, i) => i !== index))
+  }
+
+  function clearAllImages() {
+    imagePreviewUrls.forEach(url => URL.revokeObjectURL(url))
+    setCustomImages([])
+    setImagePreviewUrls([])
+  }
+
   async function handleAddToQueue() {
     if (!script.trim()) {
       toast.error("Please add a script first")
@@ -321,6 +367,33 @@ export function VideoPopup({
 
     setAddingToQueue(true)
     try {
+      // If custom images, upload them first
+      let uploadedImagePaths: string[] = []
+
+      if (customImages.length > 0) {
+        setUploadingImages(true)
+        toast.info("Uploading images...")
+
+        const formData = new FormData()
+        customImages.forEach((file, index) => {
+          formData.append(`image_${index}`, file)
+        })
+
+        const uploadRes = await fetch("/api/custom-images/upload", {
+          method: "POST",
+          body: formData
+        })
+
+        const uploadData = await uploadRes.json()
+        if (uploadRes.ok && uploadData.paths) {
+          uploadedImagePaths = uploadData.paths
+          toast.success(`Uploaded ${uploadedImagePaths.length} images`)
+        } else {
+          toast.error("Failed to upload images, using default")
+        }
+        setUploadingImages(false)
+      }
+
       const res = await fetch("/api/queue/audio", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -330,13 +403,16 @@ export function VideoPopup({
           videoTitle: video.title,
           videoId: video.videoId,
           referenceAudio: selectedAudio,
-          audioEnabled: true
+          audioEnabled: true,
+          customImages: uploadedImagePaths.length > 0 ? uploadedImagePaths : undefined
         })
       })
 
       const data = await res.json()
       if (res.ok) {
         toast.success(`Added to queue: ${data.folderName || "video"}`)
+        // Clean up image URLs
+        clearAllImages()
         onAddToQueue(video.videoId)
         onClose()
       } else {
@@ -346,6 +422,7 @@ export function VideoPopup({
       toast.error("Failed to add to queue")
     } finally {
       setAddingToQueue(false)
+      setUploadingImages(false)
     }
   }
 
@@ -458,6 +535,21 @@ export function VideoPopup({
               )}
               <ChevronDown className={`w-4 h-4 ml-1 transition-transform ${showPromptEditor ? 'rotate-180' : ''}`} />
             </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowImageSection(!showImageSection)}
+              className="border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10"
+            >
+              <ImageIcon className="w-4 h-4 mr-2" />
+              Images
+              {customImages.length > 0 && (
+                <Badge variant="secondary" className="ml-2 text-xs bg-emerald-500/20 text-emerald-400">
+                  {customImages.length}
+                </Badge>
+              )}
+              <ChevronDown className={`w-4 h-4 ml-1 transition-transform ${showImageSection ? 'rotate-180' : ''}`} />
+            </Button>
           </div>
 
           {/* Custom Prompt Editor */}
@@ -492,6 +584,86 @@ export function VideoPopup({
               />
               <p className="text-xs text-muted-foreground">
                 This prompt will be used only for this video. Refresh or close popup to reset.
+              </p>
+            </div>
+          )}
+
+          {/* Custom Images Section */}
+          {showImageSection && (
+            <div className="border border-emerald-500/30 rounded-lg p-4 bg-emerald-500/5 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <ImageIcon className="w-4 h-4 text-emerald-400" />
+                  <span className="text-sm font-medium text-emerald-400">Custom Images</span>
+                  {customImages.length > 0 && (
+                    <Badge variant="outline" className="text-xs border-emerald-500/30 text-emerald-400">
+                      {customImages.length} image{customImages.length > 1 ? 's' : ''}
+                    </Badge>
+                  )}
+                </div>
+                {customImages.length > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearAllImages}
+                    className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                  >
+                    <Trash2 className="w-4 h-4 mr-1" />
+                    Clear All
+                  </Button>
+                )}
+              </div>
+
+              {/* Upload Area */}
+              <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-emerald-500/30 rounded-lg cursor-pointer hover:bg-emerald-500/5 transition-colors">
+                <div className="flex flex-col items-center justify-center">
+                  <Upload className="w-6 h-6 text-emerald-400 mb-1" />
+                  <p className="text-sm text-emerald-400">Click to upload images</p>
+                  <p className="text-xs text-muted-foreground">Multiple images will fade transition</p>
+                </div>
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={handleImageSelect}
+                  className="hidden"
+                />
+              </label>
+
+              {/* Image Previews */}
+              {imagePreviewUrls.length > 0 && (
+                <div className="grid grid-cols-4 gap-2">
+                  {imagePreviewUrls.map((url, index) => (
+                    <div key={index} className="relative group aspect-video rounded-lg overflow-hidden bg-muted">
+                      <img
+                        src={url}
+                        alt={`Image ${index + 1}`}
+                        className="w-full h-full object-cover"
+                      />
+                      <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => removeImage(index)}
+                          className="text-white hover:text-red-400 hover:bg-red-500/20"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                      <div className="absolute bottom-1 left-1 bg-black/70 text-white text-xs px-1.5 rounded">
+                        {index + 1}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <p className="text-xs text-muted-foreground">
+                {customImages.length === 0
+                  ? "No custom images. Video will use default image folder."
+                  : customImages.length === 1
+                    ? "Single image will be used as static background."
+                    : `${customImages.length} images will fade transition throughout the video.`}
               </p>
             </div>
           )}

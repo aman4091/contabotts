@@ -683,11 +683,37 @@ async def process_job(job: Dict) -> bool:
         else:
             image_folder = job.get('image_folder', 'nature')
 
-        # Check if AI image generation is requested
-        use_ai_image = job.get('use_ai_image', False)
+        # Check for custom images (multiple images with fade transition)
+        custom_images = job.get('custom_images', [])
+        local_images = []  # List for multiple images
         server_image_path = None  # Track if we need to delete server image
 
-        if use_ai_image and AI_IMAGE_AVAILABLE and not is_short:
+        if custom_images and len(custom_images) > 0 and not is_short:
+            # Download custom images from file server
+            print(f"🖼️ Using {len(custom_images)} custom images (fade transition)...")
+
+            for i, img_path in enumerate(custom_images):
+                try:
+                    # Download from file server
+                    img_url = f"{FILE_SERVER_URL}/files/{img_path}"
+                    local_img_path = os.path.join(TEMP_DIR, f"custom_img_{job_id}_{i}.jpg")
+
+                    response = requests.get(img_url, headers={"x-api-key": FILE_SERVER_API_KEY})
+                    if response.status_code == 200:
+                        with open(local_img_path, 'wb') as f:
+                            f.write(response.content)
+                        local_images.append(local_img_path)
+                        print(f"   Downloaded image {i+1}: {os.path.basename(img_path)}")
+                    else:
+                        print(f"   ⚠️ Failed to download image {i+1}")
+                except Exception as e:
+                    print(f"   ⚠️ Error downloading image {i+1}: {e}")
+
+            if len(local_images) == 0:
+                print("⚠️ No custom images downloaded, falling back to random image")
+                local_image, server_image_path = queue.get_random_image(image_folder)
+                local_images = [local_image] if local_image else []
+        elif job.get('use_ai_image', False) and AI_IMAGE_AVAILABLE and not is_short:
             # AI Image Generation: Analyze script and generate image
             print("🤖 Using AI Image Generation...")
 
@@ -703,17 +729,22 @@ async def process_job(job: Dict) -> bool:
                 local_image = os.path.join(TEMP_DIR, f"ai_image_{job_id}.jpg")
                 if generate_ai_image(ai_script, local_image):
                     print(f"✅ AI image generated: {local_image}")
+                    local_images = [local_image]
                 else:
                     print("⚠️ AI image failed, falling back to random image")
                     local_image, server_image_path = queue.get_random_image(image_folder)
+                    local_images = [local_image] if local_image else []
             else:
                 print("⚠️ No script for AI image, falling back to random image")
                 local_image, server_image_path = queue.get_random_image(image_folder)
+                local_images = [local_image] if local_image else []
         else:
             # Use random image from folder (original behavior)
             local_image, server_image_path = queue.get_random_image(image_folder)
+            local_images = [local_image] if local_image else []
 
-        if not local_image: raise Exception(f"Image fetch failed from {image_folder}")
+        if not local_images or len(local_images) == 0:
+            raise Exception(f"Image fetch failed from {image_folder}")
 
         print("🎥 Generating Video with subtitles...")
 
@@ -721,7 +752,7 @@ async def process_job(job: Dict) -> bool:
             # Shorts: use inline functions
             ass_path = generate_subtitles_shorts(local_audio_out)
             if not ass_path: raise Exception("Subtitle generation failed")
-            if not render_video_shorts(local_image, local_audio_out, ass_path, local_video_out):
+            if not render_video_shorts(local_images[0], local_audio_out, ass_path, local_video_out):
                 raise Exception("Shorts render failed")
         else:
             # Landscape: use l.py's LandscapeGenerator
@@ -733,8 +764,15 @@ async def process_job(job: Dict) -> bool:
             if not ass_path: raise Exception("Subtitle generation failed")
 
             # Render video using l.py
-            if not landscape_gen.render(mastered_audio, local_image, ass_path, local_video_out):
-                raise Exception("Video render failed")
+            if len(local_images) > 1:
+                # Multiple images: use fade transition
+                print(f"   Using {len(local_images)} images with fade transitions")
+                if not landscape_gen.render_with_fade(mastered_audio, local_images, ass_path, local_video_out):
+                    raise Exception("Video render with fade failed")
+            else:
+                # Single image: use regular render
+                if not landscape_gen.render(mastered_audio, local_images[0], ass_path, local_video_out):
+                    raise Exception("Video render failed")
 
             # Cleanup mastered audio if different
             if mastered_audio != local_audio_out and os.path.exists(mastered_audio):

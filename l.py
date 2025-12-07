@@ -224,35 +224,47 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             f.write(header + "\n".join(events))
         return ass_path
 
+    def get_audio_duration(self, audio_path):
+        """Get duration of audio file in seconds"""
+        try:
+            result = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
+                capture_output=True, text=True
+            )
+            return float(result.stdout.strip())
+        except:
+            return 60  # Default fallback
+
     def render(self, audio_path, image_path, ass_path, output_path):
         print("🎬 Rendering 1080p PRO (12 Mbps)...")
         safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
-        
+
         vf = f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,subtitles='{safe_ass}'"
-        
+
         inputs = ["ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path]
-        
+
         # --- 1080p FAST & CRISP SETTINGS ---
         cmd_gpu = inputs + [
             "-vf", vf,
-            "-c:v", "h264_nvenc", 
+            "-c:v", "h264_nvenc",
             "-preset", "p5",        # P5 = High Quality (Faster than P7)
             "-tune", "hq",
             "-rc", "cbr",
             "-b:v", "12M",          # 12 Mbps
             "-maxrate", "12M",
-            "-bufsize", "24M",     
+            "-bufsize", "24M",
             "-c:a", "aac", "-b:a", "192k",
             "-shortest", output_path
         ]
-        
+
         cmd_cpu = inputs + [
             "-vf", vf,
             "-c:v", "libx264", "-preset", "faster", "-crf", "18",
             "-c:a", "aac", "-b:a", "192k",
             "-shortest", output_path
         ]
-        
+
         print("   Attempting NVENC (1080p P5)...")
         try:
             subprocess.run(cmd_gpu, check=True)
@@ -263,6 +275,112 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 subprocess.run(cmd_cpu, check=True)
                 return True
             except Exception as e: print(f"❌ Failed: {e}"); return False
+
+    def render_with_fade(self, audio_path, image_paths, ass_path, output_path, fade_duration=1.0):
+        """
+        Render video with multiple images that fade transition between each other.
+
+        Args:
+            audio_path: Path to audio file
+            image_paths: List of image paths (will cycle through them)
+            ass_path: Path to ASS subtitle file
+            output_path: Output video path
+            fade_duration: Duration of fade transition in seconds
+        """
+        if len(image_paths) == 0:
+            print("❌ No images provided")
+            return False
+
+        if len(image_paths) == 1:
+            # Single image, use regular render
+            return self.render(audio_path, image_paths[0], ass_path, output_path)
+
+        print(f"🎬 Rendering with {len(image_paths)} images (fade transitions)...")
+
+        # Get audio duration
+        duration = self.get_audio_duration(audio_path)
+        print(f"   Audio duration: {duration:.2f}s")
+
+        # Calculate segment duration for each image
+        num_images = len(image_paths)
+        segment_duration = duration / num_images
+        print(f"   Each image: {segment_duration:.2f}s")
+
+        safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
+
+        # Build FFmpeg complex filter for crossfade
+        inputs = ["ffmpeg", "-y"]
+
+        # Add all images as inputs (looped)
+        for i, img_path in enumerate(image_paths):
+            inputs.extend(["-loop", "1", "-t", str(segment_duration + fade_duration), "-i", img_path])
+
+        # Add audio input
+        inputs.extend(["-i", audio_path])
+
+        # Build xfade filter chain
+        filter_parts = []
+        current_label = "[0:v]"
+
+        # Scale all inputs first
+        for i in range(num_images):
+            filter_parts.append(f"[{i}:v]scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,setsar=1[v{i}]")
+
+        # Chain xfade transitions
+        current_input = "[v0]"
+        for i in range(1, num_images):
+            offset = (segment_duration * i) - fade_duration
+            if offset < 0:
+                offset = 0
+            output_label = f"[xf{i}]" if i < num_images - 1 else "[vfade]"
+            filter_parts.append(f"{current_input}[v{i}]xfade=transition=fade:duration={fade_duration}:offset={offset:.2f}{output_label}")
+            current_input = f"[xf{i}]" if i < num_images - 1 else "[vfade]"
+
+        # Add subtitles to final video
+        filter_parts.append(f"[vfade]format=yuv420p,subtitles='{safe_ass}'[vout]")
+
+        filter_complex = ";".join(filter_parts)
+
+        # GPU command
+        cmd_gpu = inputs + [
+            "-filter_complex", filter_complex,
+            "-map", "[vout]",
+            "-map", f"{num_images}:a",
+            "-c:v", "h264_nvenc",
+            "-preset", "p5",
+            "-tune", "hq",
+            "-rc", "cbr",
+            "-b:v", "12M",
+            "-maxrate", "12M",
+            "-bufsize", "24M",
+            "-c:a", "aac", "-b:a", "192k",
+            "-shortest",
+            output_path
+        ]
+
+        # CPU fallback command
+        cmd_cpu = inputs + [
+            "-filter_complex", filter_complex,
+            "-map", "[vout]",
+            "-map", f"{num_images}:a",
+            "-c:v", "libx264", "-preset", "faster", "-crf", "18",
+            "-c:a", "aac", "-b:a", "192k",
+            "-shortest",
+            output_path
+        ]
+
+        print("   Attempting NVENC with fade transitions...")
+        try:
+            subprocess.run(cmd_gpu, check=True)
+            return True
+        except Exception as e:
+            print(f"⚠️ GPU Failed ({e}). Switching to CPU...")
+            try:
+                subprocess.run(cmd_cpu, check=True)
+                return True
+            except Exception as e2:
+                print(f"❌ Failed: {e2}")
+                return False
 
 def main():
     setup_environment()
