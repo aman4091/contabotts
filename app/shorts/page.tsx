@@ -67,6 +67,7 @@ export default function ShortsPage() {
 
   // Preview state
   const [previewShorts, setPreviewShorts] = useState<PreviewShort[]>([])
+  const [expandedShort, setExpandedShort] = useState<number | null>(null)
   const [showPreview, setShowPreview] = useState(false)
   const [previewFolder, setPreviewFolder] = useState<string>("")
 
@@ -365,48 +366,67 @@ export default function ShortsPage() {
               {/* Shorts Preview Grid */}
               <ScrollArea className="h-[400px] pr-4">
                 <div className="space-y-3">
-                  {previewShorts.map((short) => (
-                    <Card
-                      key={short.number}
-                      className={`cursor-pointer transition-all ${
-                        short.selected
-                          ? "border-emerald-500/50 bg-emerald-500/5"
-                          : "border-border hover:border-muted-foreground/30"
-                      }`}
-                      onClick={() => toggleShort(short.number)}
-                    >
-                      <CardContent className="pt-4">
-                        <div className="flex items-start gap-3">
-                          <Checkbox
-                            checked={short.selected}
-                            onCheckedChange={() => toggleShort(short.number)}
-                            className="mt-1"
-                          />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-2">
-                              <Badge variant="secondary">Short #{short.number}</Badge>
-                              <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                                <ImageIcon className="w-3 h-3" />
-                                AI Image
+                  {previewShorts.map((short) => {
+                    const isExpanded = expandedShort === short.number
+                    return (
+                      <Card
+                        key={short.number}
+                        className={`transition-all ${
+                          short.selected
+                            ? "border-emerald-500/50 bg-emerald-500/5"
+                            : "border-border hover:border-muted-foreground/30"
+                        }`}
+                      >
+                        <CardContent className="pt-4">
+                          <div className="flex items-start gap-3">
+                            <Checkbox
+                              checked={short.selected}
+                              onCheckedChange={() => toggleShort(short.number)}
+                              className="mt-1"
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div
+                                className="flex items-center gap-2 mb-2 cursor-pointer"
+                                onClick={() => setExpandedShort(isExpanded ? null : short.number)}
+                              >
+                                <Badge variant="secondary">Short #{short.number}</Badge>
+                                <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                  <ImageIcon className="w-3 h-3" />
+                                  AI Image
+                                </div>
+                                {short.selected && (
+                                  <Badge variant="default" className="bg-emerald-600">
+                                    <Check className="w-3 h-3 mr-1" />
+                                    Selected
+                                  </Badge>
+                                )}
+                                <span className="text-xs text-violet-400 ml-auto">
+                                  {isExpanded ? "▲ Collapse" : "▼ Expand"}
+                                </span>
                               </div>
-                              {short.selected && (
-                                <Badge variant="default" className="bg-emerald-600">
-                                  <Check className="w-3 h-3 mr-1" />
-                                  Selected
-                                </Badge>
-                              )}
+                              <div
+                                className="cursor-pointer"
+                                onClick={() => setExpandedShort(isExpanded ? null : short.number)}
+                              >
+                                {isExpanded ? (
+                                  <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                                    {short.content}
+                                  </p>
+                                ) : (
+                                  <p className="text-sm text-muted-foreground line-clamp-2">
+                                    {short.content}
+                                  </p>
+                                )}
+                              </div>
+                              <p className="text-xs text-muted-foreground/50 mt-1">
+                                {short.content.length} chars
+                              </p>
                             </div>
-                            <p className="text-sm text-muted-foreground line-clamp-3">
-                              {short.content}
-                            </p>
-                            <p className="text-xs text-muted-foreground/50 mt-1">
-                              {short.content.length} chars
-                            </p>
                           </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+                        </CardContent>
+                      </Card>
+                    )
+                  })}
                 </div>
               </ScrollArea>
 
