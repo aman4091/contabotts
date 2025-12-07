@@ -30,8 +30,12 @@ import {
   Eye,
   CheckCircle2,
   XCircle,
-  Zap
+  Zap,
+  Settings,
+  Save,
+  X
 } from "lucide-react"
+import { Textarea } from "@/components/ui/textarea"
 import { toast } from "sonner"
 
 interface Channel {
@@ -41,6 +45,7 @@ interface Channel {
   channelId: string
   totalVideos: number
   addedAt: string
+  prompt?: string
 }
 
 interface CompletedVideo {
@@ -69,6 +74,11 @@ export default function ChannelsPage() {
 
   // Active tab
   const [activeTab, setActiveTab] = useState("all")
+
+  // Prompt editing
+  const [editingPrompt, setEditingPrompt] = useState<string | null>(null)
+  const [promptValue, setPromptValue] = useState("")
+  const [savingPrompt, setSavingPrompt] = useState(false)
 
   useEffect(() => {
     loadChannels()
@@ -137,6 +147,39 @@ export default function ChannelsPage() {
       toast.error("Failed to add channel")
     } finally {
       setAddingChannel(false)
+    }
+  }
+
+  function startEditPrompt(channel: Channel) {
+    setEditingPrompt(channel.channelId)
+    setPromptValue(channel.prompt || "")
+  }
+
+  function cancelEditPrompt() {
+    setEditingPrompt(null)
+    setPromptValue("")
+  }
+
+  async function savePrompt(channelId: string) {
+    setSavingPrompt(true)
+    try {
+      const res = await fetch("/api/channels", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channelId, prompt: promptValue })
+      })
+
+      if (res.ok) {
+        toast.success("Prompt saved")
+        setEditingPrompt(null)
+        loadChannels()
+      } else {
+        toast.error("Failed to save prompt")
+      }
+    } catch {
+      toast.error("Failed to save prompt")
+    } finally {
+      setSavingPrompt(false)
     }
   }
 
@@ -293,22 +336,73 @@ export default function ChannelsPage() {
             </Button>
           </div>
 
-          {/* Channel Pills */}
+          {/* Channel List with Prompts */}
           {channels.length > 0 && (
-            <div className="flex flex-wrap gap-2 mt-4">
+            <div className="space-y-3 mt-4">
               {channels.map(channel => (
                 <div
                   key={channel.channelId}
-                  className="flex items-center gap-2 px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/30 rounded-full text-sm"
+                  className="p-3 bg-emerald-500/5 border border-emerald-500/30 rounded-lg"
                 >
-                  <span className="text-emerald-400 font-medium">{channel.name}</span>
-                  <span className="text-muted-foreground text-xs">({channel.totalVideos})</span>
-                  <button
-                    onClick={() => deleteChannel(channel.channelId)}
-                    className="text-red-400 hover:text-red-300 ml-1"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-emerald-400 font-medium">{channel.name}</span>
+                      <span className="text-muted-foreground text-xs">({channel.totalVideos} videos)</span>
+                      {channel.prompt && (
+                        <Badge variant="outline" className="text-xs text-violet-400 border-violet-500/30">
+                          Custom Prompt
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => startEditPrompt(channel)}
+                        className="text-violet-400 hover:text-violet-300 p-1"
+                        title="Edit Prompt"
+                      >
+                        <Settings className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => deleteChannel(channel.channelId)}
+                        className="text-red-400 hover:text-red-300 p-1"
+                        title="Delete Channel"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Prompt Editor */}
+                  {editingPrompt === channel.channelId && (
+                    <div className="mt-3 space-y-2">
+                      <Label className="text-xs text-muted-foreground">Channel-specific Prompt</Label>
+                      <Textarea
+                        value={promptValue}
+                        onChange={e => setPromptValue(e.target.value)}
+                        placeholder="Enter custom prompt for this channel... (leave empty to use default Channel Prompt from Settings)"
+                        className="min-h-[100px] text-sm"
+                      />
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => savePrompt(channel.channelId)}
+                          disabled={savingPrompt}
+                          className="bg-emerald-600 hover:bg-emerald-700"
+                        >
+                          {savingPrompt ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Save className="w-4 h-4 mr-1" />}
+                          Save
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={cancelEditPrompt}
+                        >
+                          <X className="w-4 h-4 mr-1" />
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

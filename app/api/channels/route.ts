@@ -13,6 +13,7 @@ interface Channel {
   channelId: string
   totalVideos: number
   addedAt: string
+  prompt?: string  // Channel-specific prompt for transcript processing
 }
 
 async function getUser() {
@@ -148,6 +149,38 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("Error adding channel:", error)
     return NextResponse.json({ error: "Failed to add channel" }, { status: 500 })
+  }
+}
+
+// PATCH - Update channel (prompt)
+export async function PATCH(request: NextRequest) {
+  try {
+    const username = await getUser()
+    if (!username) {
+      return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
+    }
+
+    const body = await request.json()
+    const { channelId, prompt } = body
+
+    if (!channelId) {
+      return NextResponse.json({ error: "Channel ID required" }, { status: 400 })
+    }
+
+    const channels = getChannels(username)
+    const channelIndex = channels.findIndex(c => c.channelId === channelId)
+
+    if (channelIndex === -1) {
+      return NextResponse.json({ error: "Channel not found" }, { status: 404 })
+    }
+
+    channels[channelIndex].prompt = prompt || ""
+    saveChannels(username, channels)
+
+    return NextResponse.json({ success: true, channel: channels[channelIndex] })
+  } catch (error) {
+    console.error("Error updating channel:", error)
+    return NextResponse.json({ error: "Failed to update channel" }, { status: 500 })
   }
 }
 

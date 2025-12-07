@@ -42,10 +42,24 @@ export async function POST(request: NextRequest) {
 
     // Get settings for channel prompt
     const settings = getSettings(username)
-    const channelPrompt = settings.prompts?.channel
+
+    // Load channel data to check for channel-specific prompt
+    const channelsPath = path.join(DATA_DIR, "users", username, "channel-automation", "channels.json")
+    let channelPrompt = settings.prompts?.channel // Default from settings
+
+    if (fs.existsSync(channelsPath)) {
+      try {
+        const channels = JSON.parse(fs.readFileSync(channelsPath, "utf-8"))
+        const channel = channels.find((c: any) => c.channelId === channelId)
+        if (channel?.prompt) {
+          channelPrompt = channel.prompt // Use channel-specific prompt
+          console.log(`Using channel-specific prompt for ${channel.name}`)
+        }
+      } catch {}
+    }
 
     if (!channelPrompt) {
-      return NextResponse.json({ error: "Channel prompt not configured in Settings" }, { status: 400 })
+      return NextResponse.json({ error: "Channel prompt not configured (set in Settings or on channel)" }, { status: 400 })
     }
 
     const referenceAudio = settings.defaultReferenceAudio
