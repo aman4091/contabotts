@@ -79,12 +79,31 @@ def hex_to_ass_color(hex_color, opacity=100):
     return f"&H{alpha:02X}{b:02X}{g:02X}{r:02X}"
 
 def load_subtitle_settings():
-    return {
-        "font": {"family": "Arial", "size": FONT_SIZE, "color": "#FFFFFF"},
+    """Load subtitle settings from JSON file"""
+    settings_file = os.path.join(os.path.dirname(__file__), "data", "subtitle-settings.json")
+    defaults = {
+        "font": {"family": "Arial", "size": 80, "color": "#FFFFFF"},
         "background": {"color": "#000000", "opacity": 100, "cornerRadius": 40},
         "box": {"hPadding": 15, "vPadding": 10, "charWidth": 0.6},
         "position": {"alignment": 5, "marginV": 40, "marginL": 40, "marginR": 40}
     }
+    try:
+        if os.path.exists(settings_file):
+            print(f"📝 Loading subtitle settings from: {settings_file}")
+            with open(settings_file, 'r') as f:
+                settings = json.load(f)
+                # Merge with defaults
+                for key in defaults:
+                    if key not in settings:
+                        settings[key] = defaults[key]
+                    else:
+                        for subkey in defaults[key]:
+                            if subkey not in settings[key]:
+                                settings[key][subkey] = defaults[key][subkey]
+                return settings
+    except Exception as e:
+        print(f"⚠️ Could not load subtitle settings: {e}")
+    return defaults
 
 # =================================================
 # VIDEO GENERATOR CLASS
@@ -144,7 +163,30 @@ class LandscapeGenerator:
         result = self.model.transcribe(audio_path, word_timestamps=False, initial_prompt=initial_prompt)
 
         ass_path = os.path.splitext(audio_path)[0] + ".ass"
-        
+
+        # Load settings from JSON file
+        settings = load_subtitle_settings()
+        font = settings["font"]
+        bg = settings["background"]
+        box = settings["box"]
+        pos = settings["position"]
+
+        font_size = font["size"]
+        font_family = font["family"]
+        font_color = hex_to_ass_color(font["color"], 100)
+        bg_color = hex_to_ass_color(bg["color"], bg["opacity"])
+        corner_radius = bg["cornerRadius"]
+
+        # Calculate Y position based on alignment
+        alignment = pos["alignment"]
+        margin_v = pos["marginV"]
+        if alignment in [1, 2, 3]:  # Bottom
+            text_y_pos = TARGET_H - margin_v - 50
+        elif alignment in [7, 8, 9]:  # Top
+            text_y_pos = margin_v + 50
+        else:  # Middle (4, 5, 6)
+            text_y_pos = TARGET_H // 2
+
         header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {TARGET_W}
@@ -152,13 +194,13 @@ PlayResY: {TARGET_H}
 
 [V4+ Styles]
 Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
-Style: Default,Arial,{FONT_SIZE},&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,1,0,2,20,20,50,1
+Style: Default,{font_family},{font_size},{font_color},{font_color},&H00000000,{bg_color},-1,0,0,0,100,100,0,0,1,1,0,{alignment},{pos["marginL"]},{pos["marginR"]},{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
         events = []
-        
+
         for segment in result['segments']:
             start = self.format_time(segment['start'])
             end = self.format_time(segment['end'])
@@ -168,7 +210,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             text = self.fix_transcription(text)
 
             # --- WRAP LOGIC ---
-            max_chars = 35 
+            max_chars = 35
             words = text.split()
             lines = []; curr = []
             for w in words:
@@ -176,26 +218,32 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 else: lines.append(" ".join(curr)); curr = [w]
             lines.append(" ".join(curr))
             final_text = "\\N".join(lines)
-            
-            # --- BOX CALCULATION ---
-            char_width = FONT_SIZE * 0.55
+
+            # --- BOX CALCULATION (using settings) ---
+            char_width = font_size * box["charWidth"]
             longest_line = max(len(l) for l in lines)
             text_w = longest_line * char_width
-            text_h = len(lines) * (FONT_SIZE * 1.4)
-            
-            # Tight Padding for 1080p
-            padding_x = 40
-            padding_y = 60 # Enough for 1080p ascenders
-            
+            text_h = len(lines) * (font_size * 1.4)
+
+            # Padding from settings
+            padding_x = box["hPadding"] * 2
+            padding_y = box["vPadding"] * 2 + 20  # Extra for ascenders
+
             box_w = text_w + padding_x
             box_h = text_h + padding_y
-            
-            # Center Position
-            cx, cy = 960, TEXT_Y_POS
-            
+
+            # Center Position (X based on alignment)
+            if alignment in [1, 4, 7]:  # Left
+                cx = pos["marginL"] + int(box_w / 2)
+            elif alignment in [3, 6, 9]:  # Right
+                cx = TARGET_W - pos["marginR"] - int(box_w / 2)
+            else:  # Center
+                cx = TARGET_W // 2
+            cy = text_y_pos
+
             x1 = int(cx - (box_w / 2))
             x2 = int(cx + (box_w / 2))
-            
+
             # Safety Check
             if x2 > TARGET_W - 20:
                 diff = x2 - (TARGET_W - 20)
@@ -206,9 +254,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
             y1 = int(cy - (box_h / 2))
             y2 = int(cy + (box_h / 2))
-            
-            # Smart Radius
-            r = 40
+
+            # Smart Radius from settings
+            r = corner_radius
             if r > (box_w // 2): r = int(box_w // 2)
             
             # Draw Box
@@ -217,7 +265,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     f"l {x1+r} {y2} b {x1} {y2} {x1} {y2} {x1} {y2-r} "
                     f"l {x1} {y1+r} b {x1} {y1} {x1} {y1} {x1+r} {y1}")
             
-            events.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{{\\p1\\an7\\pos(0,0)\\1c&H000000&\\1a&H{BOX_OPACITY}&\\bord0\\shad0}}{draw}{{\\p0}}")
+            # Extract color and alpha from bg settings
+            bg_hex = bg["color"].lstrip('#')
+            bg_r, bg_g, bg_b = int(bg_hex[0:2], 16), int(bg_hex[2:4], 16), int(bg_hex[4:6], 16)
+            box_color = f"&H{bg_b:02X}{bg_g:02X}{bg_r:02X}&"
+            box_alpha = f"&H{int((100 - bg['opacity']) * 255 / 100):02X}&"
+            events.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{{\\p1\\an7\\pos(0,0)\\1c{box_color}\\1a{box_alpha}\\bord0\\shad0}}{draw}{{\\p0}}")
             events.append(f"Dialogue: 1,{start},{end},Default,,0,0,0,,{{\\pos({cx},{cy})\\an5}}{final_text}")
 
         with open(ass_path, "w", encoding="utf-8") as f:
