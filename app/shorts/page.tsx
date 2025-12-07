@@ -29,8 +29,11 @@ import {
   Check,
   X,
   ImageIcon,
-  Sparkles
+  Sparkles,
+  Link,
+  Youtube
 } from "lucide-react"
+import { Input } from "@/components/ui/input"
 
 interface ShortJob {
   job_id: string
@@ -82,6 +85,10 @@ export default function ShortsPage() {
   const [showPreview, setShowPreview] = useState(false)
   const [previewFolder, setPreviewFolder] = useState<string>("")
 
+  // YouTube URL state
+  const [youtubeUrl, setYoutubeUrl] = useState("")
+  const [generatingFromUrl, setGeneratingFromUrl] = useState(false)
+
   useEffect(() => {
     loadJobs()
     loadScripts()
@@ -108,6 +115,44 @@ export default function ShortsPage() {
       setScripts(data.scripts || [])
     } catch (error) {
       console.error("Error loading scripts:", error)
+    }
+  }
+
+  async function generateFromYouTube() {
+    if (!youtubeUrl.trim()) {
+      setMessage({ type: "error", text: "Please enter a YouTube URL" })
+      return
+    }
+
+    setGeneratingFromUrl(true)
+    setMessage(null)
+    setShowPreview(false)
+
+    try {
+      const res = await fetch("/api/shorts/from-youtube", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ youtubeUrl: youtubeUrl.trim() })
+      })
+
+      const data = await res.json()
+
+      if (data.success && data.shorts) {
+        setPreviewShorts(data.shorts.map((s: { number: number; content: string }) => ({
+          ...s,
+          selected: true
+        })))
+        setPreviewFolder(data.videoId || "youtube")
+        setShowPreview(true)
+        setMessage({ type: "success", text: `Generated ${data.shorts.length} shorts from YouTube video` })
+        setYoutubeUrl("")
+      } else {
+        setMessage({ type: "error", text: data.error || "Failed to generate shorts from YouTube" })
+      }
+    } catch (error) {
+      setMessage({ type: "error", text: "Error generating shorts from YouTube" })
+    } finally {
+      setGeneratingFromUrl(false)
     }
   }
 
@@ -304,46 +349,96 @@ export default function ShortsPage() {
         <CardContent className="space-y-4">
           {!showPreview ? (
             <>
-              <div className="flex flex-col sm:flex-row gap-3">
-                <Select value={selectedScript} onValueChange={setSelectedScript}>
-                  <SelectTrigger className="flex-1">
-                    <SelectValue placeholder="Select a processed script..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {scripts.length === 0 ? (
-                      <SelectItem value="_none" disabled>No scripts available</SelectItem>
+              {/* Option 1: YouTube URL */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Youtube className="w-4 h-4 text-red-500" />
+                  From YouTube Video
+                </div>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <Input
+                    placeholder="https://youtube.com/watch?v=..."
+                    value={youtubeUrl}
+                    onChange={e => setYoutubeUrl(e.target.value)}
+                    className="flex-1"
+                    onKeyDown={e => e.key === "Enter" && generateFromYouTube()}
+                  />
+                  <Button
+                    onClick={generateFromYouTube}
+                    disabled={generatingFromUrl || !youtubeUrl.trim()}
+                    className="bg-red-600 hover:bg-red-700"
+                  >
+                    {generatingFromUrl ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Fetching...
+                      </>
                     ) : (
-                      scripts.map(script => (
-                        <SelectItem key={script.folder} value={script.folder}>
-                          <div className="flex items-center gap-2">
-                            <FolderOpen className="w-4 h-4" />
-                            {script.folder} {script.title && `- ${script.title.substring(0, 40)}...`}
-                          </div>
-                        </SelectItem>
-                      ))
+                      <>
+                        <Youtube className="w-4 h-4 mr-2" />
+                        Generate from URL
+                      </>
                     )}
-                  </SelectContent>
-                </Select>
-                <Button
-                  onClick={generatePreview}
-                  disabled={generating || !selectedScript}
-                  className="bg-violet-600 hover:bg-violet-700"
-                >
-                  {generating ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Generating...
-                    </>
-                  ) : (
-                    <>
-                      <Eye className="w-4 h-4 mr-2" />
-                      Preview 10 Shorts
-                    </>
-                  )}
-                </Button>
+                  </Button>
+                </div>
+              </div>
+
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center">
+                  <span className="w-full border-t border-border" />
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-background px-2 text-muted-foreground">OR</span>
+                </div>
+              </div>
+
+              {/* Option 2: From processed script */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <FolderOpen className="w-4 h-4 text-violet-400" />
+                  From Processed Script
+                </div>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <Select value={selectedScript} onValueChange={setSelectedScript}>
+                    <SelectTrigger className="flex-1">
+                      <SelectValue placeholder="Select a processed script..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {scripts.length === 0 ? (
+                        <SelectItem value="_none" disabled>No scripts available</SelectItem>
+                      ) : (
+                        scripts.map(script => (
+                          <SelectItem key={script.folder} value={script.folder}>
+                            <div className="flex items-center gap-2">
+                              <FolderOpen className="w-4 h-4" />
+                              {script.folder} {script.title && `- ${script.title.substring(0, 40)}...`}
+                            </div>
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    onClick={generatePreview}
+                    disabled={generating || !selectedScript}
+                    className="bg-violet-600 hover:bg-violet-700"
+                  >
+                    {generating ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Eye className="w-4 h-4 mr-2" />
+                        Preview 10 Shorts
+                      </>
+                    )}
+                  </Button>
+                </div>
               </div>
               <p className="text-xs text-muted-foreground">
-                This will generate 10 shorts from the script for you to review and approve.
+                Generate 10 shorts from a YouTube video URL or processed script.
                 Approved shorts will be queued with AI-generated images (1080x1920).
               </p>
             </>
