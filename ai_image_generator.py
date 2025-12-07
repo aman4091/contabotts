@@ -66,7 +66,7 @@ Image prompt:"""
 
 def analyze_script_for_image(script_text: str, max_chars: int = 3000) -> Optional[str]:
     """
-    Analyze script using Gemini and generate an image prompt
+    Analyze script using Gemini REST API and generate an image prompt
 
     Args:
         script_text: The script to analyze
@@ -75,10 +75,6 @@ def analyze_script_for_image(script_text: str, max_chars: int = 3000) -> Optiona
     Returns:
         Image generation prompt or None if failed
     """
-    if not GENAI_AVAILABLE:
-        print("❌ google-generativeai not available")
-        return None
-
     if not GEMINI_API_KEY:
         print("❌ GEMINI_API_KEY not set")
         return None
@@ -96,36 +92,39 @@ def analyze_script_for_image(script_text: str, max_chars: int = 3000) -> Optiona
     for model_name in models_to_try:
         try:
             print(f"🧠 Trying {model_name}...")
-            model = genai.GenerativeModel(model_name)
 
-            response = model.generate_content(
-                prompt,
-                generation_config={
+            # Use REST API directly (same as main page)
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
+
+            response = requests.post(url, json={
+                "contents": [{
+                    "parts": [{
+                        "text": prompt
+                    }]
+                }],
+                "generationConfig": {
                     "temperature": 0.7,
-                    "max_output_tokens": 500,
-                },
-                safety_settings={
-                    "HARM_CATEGORY_HARASSMENT": "BLOCK_NONE",
-                    "HARM_CATEGORY_HATE_SPEECH": "BLOCK_NONE",
-                    "HARM_CATEGORY_SEXUALLY_EXPLICIT": "BLOCK_NONE",
-                    "HARM_CATEGORY_DANGEROUS_CONTENT": "BLOCK_NONE",
+                    "maxOutputTokens": 500
                 }
-            )
+            }, timeout=60)
 
-            if response.candidates:
-                candidate = response.candidates[0]
+            if response.status_code == 200:
+                data = response.json()
 
-                # Check finish reason
-                if candidate.finish_reason and candidate.finish_reason.name == "SAFETY":
+                # Check for blocked content
+                if data.get("candidates", [{}])[0].get("finishReason") == "SAFETY":
                     print(f"   ⚠️ Blocked by safety, trying next model...")
                     continue
 
-                # Check if content parts exist
-                if candidate.content and candidate.content.parts:
-                    image_prompt = candidate.content.parts[0].text.strip()
-                    if image_prompt:
-                        print(f"✅ Image prompt generated with {model_name}: {image_prompt[:100]}...")
-                        return image_prompt
+                # Get text from response
+                text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+                if text:
+                    print(f"✅ Image prompt generated with {model_name}: {text[:100]}...")
+                    return text
+                else:
+                    print(f"   ⚠️ Empty response from {model_name}")
+            else:
+                print(f"   ⚠️ {model_name} HTTP {response.status_code}: {response.text[:100]}")
 
         except Exception as e:
             print(f"   ⚠️ {model_name} failed: {e}")
