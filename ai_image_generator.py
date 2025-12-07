@@ -134,7 +134,7 @@ def analyze_script_for_image(script_text: str, max_chars: int = 3000) -> Optiona
     return None
 
 
-def generate_image_with_nebius(prompt: str, output_path: str, max_retries: int = 3) -> bool:
+def generate_image_with_nebius(prompt: str, output_path: str, max_retries: int = 3, width: int = 1920, height: int = 1080) -> bool:
     """
     Generate image using Nebius API (Flux model)
 
@@ -142,6 +142,8 @@ def generate_image_with_nebius(prompt: str, output_path: str, max_retries: int =
         prompt: Image generation prompt
         output_path: Path to save the generated image
         max_retries: Number of retry attempts
+        width: Image width (default 1920 for landscape)
+        height: Image height (default 1080 for landscape)
 
     Returns:
         True if successful, False otherwise
@@ -153,7 +155,7 @@ def generate_image_with_nebius(prompt: str, output_path: str, max_retries: int =
         print("❌ NEBIUS_API_KEY not set")
         return False
 
-    print(f"🎨 Generating image with Nebius (Flux)...")
+    print(f"🎨 Generating image with Nebius (Flux) - {width}x{height}...")
     print(f"   Prompt: {prompt[:80]}...")
 
     try:
@@ -173,8 +175,8 @@ def generate_image_with_nebius(prompt: str, output_path: str, max_retries: int =
                     response_format="b64_json",
                     extra_body={
                         "response_extension": "png",
-                        "width": 1920,
-                        "height": 1080,
+                        "width": width,
+                        "height": height,
                         "num_inference_steps": 28,
                         "negative_prompt": "",
                         "seed": -1
@@ -197,7 +199,7 @@ def generate_image_with_nebius(prompt: str, output_path: str, max_retries: int =
                         if img.mode == 'RGBA':
                             img = img.convert('RGB')
                         img.save(output_path, "JPEG", quality=95)
-                        print(f"✅ Image saved (1920x1080): {output_path}")
+                        print(f"✅ Image saved ({width}x{height}): {output_path}")
                     except ImportError:
                         print(f"✅ Image saved (PNG): {output_path}")
 
@@ -221,19 +223,22 @@ def generate_image_with_nebius(prompt: str, output_path: str, max_retries: int =
         return False
 
 
-def generate_ai_image(script_text: str, output_path: str) -> bool:
+def generate_ai_image(script_text: str, output_path: str, width: int = 1920, height: int = 1080) -> bool:
     """
     Main function: Analyze script and generate AI image
 
     Args:
         script_text: The script to analyze
         output_path: Path to save the generated image
+        width: Image width (default 1920 for landscape, use 1080 for shorts)
+        height: Image height (default 1080 for landscape, use 1920 for shorts)
 
     Returns:
         True if successful, False otherwise
     """
+    is_shorts = width == 1080 and height == 1920
     print("\n" + "="*50)
-    print("🤖 AI IMAGE GENERATION (Nebius Flux)")
+    print(f"🤖 AI IMAGE GENERATION (Nebius Flux) - {'SHORTS 1080x1920' if is_shorts else '1920x1080'}")
     print("="*50)
 
     # Step 1: Analyze script and get image prompt using Gemini
@@ -244,7 +249,7 @@ def generate_ai_image(script_text: str, output_path: str) -> bool:
         return False
 
     # Step 2: Generate image with Nebius (Flux model)
-    success = generate_image_with_nebius(image_prompt, output_path)
+    success = generate_image_with_nebius(image_prompt, output_path, width=width, height=height)
 
     if success:
         print("✅ AI image generation complete!")

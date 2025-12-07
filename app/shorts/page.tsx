@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Select,
   SelectContent,
@@ -23,7 +24,12 @@ import {
   Film,
   Download,
   Zap,
-  FolderOpen
+  FolderOpen,
+  Eye,
+  Check,
+  X,
+  ImageIcon,
+  Sparkles
 } from "lucide-react"
 
 interface ShortJob {
@@ -43,14 +49,26 @@ interface ScriptOption {
   title?: string
 }
 
+interface PreviewShort {
+  number: number
+  content: string
+  selected: boolean
+}
+
 export default function ShortsPage() {
   const [jobs, setJobs] = useState<ShortJob[]>([])
   const [scripts, setScripts] = useState<ScriptOption[]>([])
   const [selectedScript, setSelectedScript] = useState<string>("")
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
+  const [approving, setApproving] = useState(false)
   const [statusFilter, setStatusFilter] = useState("all")
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
+
+  // Preview state
+  const [previewShorts, setPreviewShorts] = useState<PreviewShort[]>([])
+  const [showPreview, setShowPreview] = useState(false)
+  const [previewFolder, setPreviewFolder] = useState<string>("")
 
   useEffect(() => {
     loadJobs()
@@ -81,7 +99,7 @@ export default function ShortsPage() {
     }
   }
 
-  async function generateShorts() {
+  async function generatePreview() {
     if (!selectedScript) {
       setMessage({ type: "error", text: "Please select a script first" })
       return
@@ -89,9 +107,10 @@ export default function ShortsPage() {
 
     setGenerating(true)
     setMessage(null)
+    setShowPreview(false)
 
     try {
-      const res = await fetch("/api/shorts/generate", {
+      const res = await fetch("/api/shorts/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ videoFolder: selectedScript })
@@ -99,19 +118,82 @@ export default function ShortsPage() {
 
       const data = await res.json()
 
-      if (data.success) {
-        setMessage({ type: "success", text: `${data.shortsQueued} shorts queued for ${selectedScript}!` })
-        setSelectedScript("")
-        loadJobs()
-        loadScripts() // Refresh to remove processed script
+      if (data.success && data.shorts) {
+        // Mark all shorts as selected by default
+        setPreviewShorts(data.shorts.map((s: { number: number; content: string }) => ({
+          ...s,
+          selected: true
+        })))
+        setPreviewFolder(selectedScript)
+        setShowPreview(true)
+        setMessage({ type: "success", text: `Generated ${data.shorts.length} shorts for preview` })
       } else {
-        setMessage({ type: "error", text: data.error || "Failed to generate shorts" })
+        setMessage({ type: "error", text: data.error || "Failed to generate preview" })
       }
     } catch (error) {
-      setMessage({ type: "error", text: "Error generating shorts" })
+      setMessage({ type: "error", text: "Error generating preview" })
     } finally {
       setGenerating(false)
     }
+  }
+
+  function toggleShort(number: number) {
+    setPreviewShorts(prev =>
+      prev.map(s => s.number === number ? { ...s, selected: !s.selected } : s)
+    )
+  }
+
+  function selectAll() {
+    setPreviewShorts(prev => prev.map(s => ({ ...s, selected: true })))
+  }
+
+  function deselectAll() {
+    setPreviewShorts(prev => prev.map(s => ({ ...s, selected: false })))
+  }
+
+  async function approveShorts() {
+    const selected = previewShorts.filter(s => s.selected)
+    if (selected.length === 0) {
+      setMessage({ type: "error", text: "Please select at least one short to approve" })
+      return
+    }
+
+    setApproving(true)
+    setMessage(null)
+
+    try {
+      const res = await fetch("/api/shorts/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          videoFolder: previewFolder,
+          shorts: selected.map(s => ({ number: s.number, content: s.content }))
+        })
+      })
+
+      const data = await res.json()
+
+      if (data.success) {
+        setMessage({ type: "success", text: `${data.shortsQueued} shorts queued with AI images!` })
+        setShowPreview(false)
+        setPreviewShorts([])
+        setSelectedScript("")
+        loadJobs()
+        loadScripts()
+      } else {
+        setMessage({ type: "error", text: data.error || "Failed to approve shorts" })
+      }
+    } catch (error) {
+      setMessage({ type: "error", text: "Error approving shorts" })
+    } finally {
+      setApproving(false)
+    }
+  }
+
+  function cancelPreview() {
+    setShowPreview(false)
+    setPreviewShorts([])
+    setPreviewFolder("")
   }
 
   const filteredJobs = jobs.filter(job => {
@@ -125,6 +207,8 @@ export default function ShortsPage() {
     completed: jobs.filter(j => j.status === "completed").length,
     failed: jobs.filter(j => j.status === "failed").length
   }
+
+  const selectedCount = previewShorts.filter(s => s.selected).length
 
   function getStatusIcon(status: string) {
     switch (status) {
@@ -178,7 +262,7 @@ export default function ShortsPage() {
             Shorts
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
-            Generate YouTube Shorts (1080x1920) from scripts
+            Generate YouTube Shorts (1080x1920) with AI Images
           </p>
         </div>
         <Button
@@ -197,7 +281,7 @@ export default function ShortsPage() {
         </Button>
       </div>
 
-      {/* Generate Shorts Card */}
+      {/* Generate/Preview Card */}
       <Card className="glass border-violet-500/30">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
@@ -206,44 +290,153 @@ export default function ShortsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex flex-col sm:flex-row gap-3">
-            <Select value={selectedScript} onValueChange={setSelectedScript}>
-              <SelectTrigger className="flex-1">
-                <SelectValue placeholder="Select a processed script..." />
-              </SelectTrigger>
-              <SelectContent>
-                {scripts.length === 0 ? (
-                  <SelectItem value="_none" disabled>No scripts available</SelectItem>
-                ) : (
-                  scripts.map(script => (
-                    <SelectItem key={script.folder} value={script.folder}>
-                      <div className="flex items-center gap-2">
-                        <FolderOpen className="w-4 h-4" />
-                        {script.folder} {script.title && `- ${script.title.substring(0, 40)}...`}
-                      </div>
-                    </SelectItem>
-                  ))
-                )}
-              </SelectContent>
-            </Select>
-            <Button
-              onClick={generateShorts}
-              disabled={generating || !selectedScript}
-              className="bg-violet-600 hover:bg-violet-700"
-            >
-              {generating ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <Zap className="w-4 h-4 mr-2" />
-                  Generate 10 Shorts
-                </>
-              )}
-            </Button>
-          </div>
+          {!showPreview ? (
+            <>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <Select value={selectedScript} onValueChange={setSelectedScript}>
+                  <SelectTrigger className="flex-1">
+                    <SelectValue placeholder="Select a processed script..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {scripts.length === 0 ? (
+                      <SelectItem value="_none" disabled>No scripts available</SelectItem>
+                    ) : (
+                      scripts.map(script => (
+                        <SelectItem key={script.folder} value={script.folder}>
+                          <div className="flex items-center gap-2">
+                            <FolderOpen className="w-4 h-4" />
+                            {script.folder} {script.title && `- ${script.title.substring(0, 40)}...`}
+                          </div>
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+                <Button
+                  onClick={generatePreview}
+                  disabled={generating || !selectedScript}
+                  className="bg-violet-600 hover:bg-violet-700"
+                >
+                  {generating ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <Eye className="w-4 h-4 mr-2" />
+                      Preview 10 Shorts
+                    </>
+                  )}
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                This will generate 10 shorts from the script for you to review and approve.
+                Approved shorts will be queued with AI-generated images (1080x1920).
+              </p>
+            </>
+          ) : (
+            <>
+              {/* Preview Header */}
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline" className="text-violet-400 border-violet-500/30">
+                    {previewFolder}
+                  </Badge>
+                  <span className="text-sm text-muted-foreground">
+                    {selectedCount}/{previewShorts.length} selected
+                  </span>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={selectAll}>
+                    <Check className="w-4 h-4 mr-1" />
+                    All
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={deselectAll}>
+                    <X className="w-4 h-4 mr-1" />
+                    None
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={cancelPreview}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+
+              {/* Shorts Preview Grid */}
+              <ScrollArea className="h-[400px] pr-4">
+                <div className="space-y-3">
+                  {previewShorts.map((short) => (
+                    <Card
+                      key={short.number}
+                      className={`cursor-pointer transition-all ${
+                        short.selected
+                          ? "border-emerald-500/50 bg-emerald-500/5"
+                          : "border-border hover:border-muted-foreground/30"
+                      }`}
+                      onClick={() => toggleShort(short.number)}
+                    >
+                      <CardContent className="pt-4">
+                        <div className="flex items-start gap-3">
+                          <Checkbox
+                            checked={short.selected}
+                            onCheckedChange={() => toggleShort(short.number)}
+                            className="mt-1"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-2">
+                              <Badge variant="secondary">Short #{short.number}</Badge>
+                              <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                <ImageIcon className="w-3 h-3" />
+                                AI Image
+                              </div>
+                              {short.selected && (
+                                <Badge variant="default" className="bg-emerald-600">
+                                  <Check className="w-3 h-3 mr-1" />
+                                  Selected
+                                </Badge>
+                              )}
+                            </div>
+                            <p className="text-sm text-muted-foreground line-clamp-3">
+                              {short.content}
+                            </p>
+                            <p className="text-xs text-muted-foreground/50 mt-1">
+                              {short.content.length} chars
+                            </p>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              </ScrollArea>
+
+              {/* Approve Button */}
+              <div className="flex items-center justify-between pt-2 border-t border-border">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Sparkles className="w-4 h-4 text-violet-400" />
+                  Each short will have an AI-generated image (1080x1920)
+                </div>
+                <Button
+                  onClick={approveShorts}
+                  disabled={approving || selectedCount === 0}
+                  className="bg-emerald-600 hover:bg-emerald-700"
+                >
+                  {approving ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Approving...
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-4 h-4 mr-2" />
+                      Approve {selectedCount} Shorts
+                    </>
+                  )}
+                </Button>
+              </div>
+            </>
+          )}
+
           {message && (
             <div className={`p-3 rounded-lg text-sm ${
               message.type === "success"
@@ -253,10 +446,6 @@ export default function ShortsPage() {
               {message.text}
             </div>
           )}
-          <p className="text-xs text-muted-foreground">
-            This will send the selected script to Gemini 2.5 Pro with your Shorts prompt (from Settings)
-            and queue 10 shorts for audio + video generation.
-          </p>
         </CardContent>
       </Card>
 
@@ -345,7 +534,7 @@ export default function ShortsPage() {
                     <Film className="w-12 h-12 mx-auto mb-4 opacity-30" />
                     <p>No shorts yet.</p>
                     <p className="text-sm mt-2">
-                      Select a script above and click "Generate 10 Shorts" to start.
+                      Select a script above and preview/approve shorts to start.
                     </p>
                   </div>
                 ) : (
@@ -367,6 +556,10 @@ export default function ShortsPage() {
                                     Short #{job.short_number}
                                   </Badge>
                                 )}
+                                <Badge variant="secondary" className="text-xs">
+                                  <ImageIcon className="w-3 h-3 mr-1" />
+                                  AI Image
+                                </Badge>
                               </div>
                               {job.script_text && (
                                 <div className="text-xs sm:text-sm text-muted-foreground line-clamp-2">

@@ -734,9 +734,12 @@ async def process_job(job: Dict) -> bool:
                 print("⚠️ No custom images downloaded, falling back to random image")
                 local_image, server_image_path = queue.get_random_image(image_folder)
                 local_images = [local_image] if local_image else []
-        elif job.get('use_ai_image', False) and AI_IMAGE_AVAILABLE and not is_short:
+        elif job.get('use_ai_image', False) and AI_IMAGE_AVAILABLE:
             # AI Image Generation: Analyze script and generate image
-            print("🤖 Using AI Image Generation...")
+            if is_short:
+                print("🤖 Using AI Image Generation (SHORTS 1080x1920)...")
+            else:
+                print("🤖 Using AI Image Generation...")
 
             # Get script text for analysis
             ai_script = None
@@ -748,8 +751,11 @@ async def process_job(job: Dict) -> bool:
 
             if ai_script:
                 local_image = os.path.join(TEMP_DIR, f"ai_image_{job_id}.jpg")
-                if generate_ai_image(ai_script, local_image):
-                    print(f"✅ AI image generated: {local_image}")
+                # Use 1080x1920 for shorts, 1920x1080 for landscape
+                img_width = 1080 if is_short else 1920
+                img_height = 1920 if is_short else 1080
+                if generate_ai_image(ai_script, local_image, width=img_width, height=img_height):
+                    print(f"✅ AI image generated ({img_width}x{img_height}): {local_image}")
                     local_images = [local_image]
                 else:
                     print("⚠️ AI image failed, falling back to random image")
