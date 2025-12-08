@@ -25,7 +25,8 @@ import {
   ImageIcon,
   Trash2,
   Upload,
-  Volume2
+  Volume2,
+  Mic2
 } from "lucide-react"
 
 interface Video {
@@ -108,6 +109,9 @@ export function VideoPopup({
 
   // AI Image generation mode
   const [aiImageMode, setAiImageMode] = useState(false)
+
+  // Audio enhancement mode (default: on)
+  const [enhanceAudio, setEnhanceAudio] = useState(true)
 
   useEffect(() => {
     fetchTranscript()
@@ -413,7 +417,8 @@ export function VideoPopup({
           audioEnabled: true,
           audioOnly,
           customImages: uploadedImagePaths.length > 0 ? uploadedImagePaths : undefined,
-          aiImageMode
+          aiImageMode,
+          enhanceAudio
         })
       })
 
@@ -859,6 +864,16 @@ export function VideoPopup({
               />
               <Sparkles className="w-4 h-4 text-violet-400" />
               <span className="text-sm text-muted-foreground">AI Images</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={enhanceAudio}
+                onChange={e => setEnhanceAudio(e.target.checked)}
+                className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-amber-500 focus:ring-amber-500"
+              />
+              <Mic2 className="w-4 h-4 text-amber-400" />
+              <span className="text-sm text-muted-foreground">Enhance Audio</span>
             </label>
             <Button
               onClick={handleAddToQueue}

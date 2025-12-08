@@ -845,8 +845,12 @@ async def process_job(job: Dict) -> bool:
                 raise Exception("Shorts render failed")
         else:
             # Landscape: use l.py's LandscapeGenerator
-            # First enhance audio (from l.py)
-            mastered_audio = enhance_audio(local_audio_out)
+            # First enhance audio (from l.py) - if enabled
+            if job.get('enhance_audio', True):
+                mastered_audio = enhance_audio(local_audio_out)
+            else:
+                print("   Skipping audio enhancement (disabled)")
+                mastered_audio = local_audio_out
 
             # Generate subtitles using l.py
             ass_path = landscape_gen.generate_subtitles(mastered_audio)
