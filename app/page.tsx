@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "sonner"
-import { Loader2, RefreshCw, Settings, Youtube, Search, X, CheckSquare, Square, Play, ArrowUpDown } from "lucide-react"
+import { Loader2, RefreshCw, Settings, Youtube, Search, X, CheckSquare, Square, Play, ArrowUpDown, Menu } from "lucide-react"
 import { VideoPopup } from "@/components/video-popup"
 import { TranscriptPopup } from "@/components/transcript-popup"
 import Link from "next/link"
@@ -90,6 +90,9 @@ export default function HomePage() {
   const [selectMode, setSelectMode] = useState(false)
   const [selectedVideoIds, setSelectedVideoIds] = useState<Set<string>>(new Set())
 
+  // Mobile sidebar state
+  const [showMobileSidebar, setShowMobileSidebar] = useState(false)
+
   useEffect(() => {
     loadInitialData()
   }, [])
@@ -100,6 +103,13 @@ export default function HomePage() {
       fetchLatestAndLoadVideos()
     }
   }, [selectedChannel])
+
+  // Reload videos when sort changes (with current sort value)
+  useEffect(() => {
+    if (selectedChannel && videos.length > 0) {
+      loadVideos(1, false, sortBy)
+    }
+  }, [sortBy])
 
   async function fetchLatestAndLoadVideos() {
     if (!selectedChannel) return
@@ -118,6 +128,9 @@ export default function HomePage() {
         toast.success(`${data.addedCount} new video(s) added!`)
         // Switch to Latest sort to show new videos at top
         setSortBy("latest")
+        // Load with latest sort directly
+        loadVideos(1, false, "latest")
+        return
       }
     } catch (error) {
       console.error("Error fetching latest:", error)
@@ -125,8 +138,8 @@ export default function HomePage() {
       setFetchingLatest(false)
     }
 
-    // Then load all videos
-    loadVideos(1)
+    // Then load all videos with current sort
+    loadVideos(1, false, sortBy)
   }
 
   async function loadInitialData() {
@@ -155,7 +168,7 @@ export default function HomePage() {
     }
   }
 
-  async function loadVideos(pageNum: number, append: boolean = false) {
+  async function loadVideos(pageNum: number, append: boolean = false, sort: string = sortBy) {
     if (!selectedChannel) return
 
     if (pageNum === 1) {
@@ -165,7 +178,7 @@ export default function HomePage() {
     }
 
     try {
-      const res = await fetch(`/api/videos?page=${pageNum}&limit=100&channel=${selectedChannel}`)
+      const res = await fetch(`/api/videos?page=${pageNum}&limit=100&channel=${selectedChannel}&sort=${sort}`)
       const data = await res.json()
 
       if (data.videos) {
@@ -213,7 +226,7 @@ export default function HomePage() {
   }
 
   function handleLoadMore() {
-    loadVideos(page + 1, true)
+    loadVideos(page + 1, true, sortBy)
   }
 
   function handleVideoClick(video: Video) {
@@ -253,7 +266,7 @@ export default function HomePage() {
   }
 
   function handleRefresh() {
-    loadVideos(1)
+    loadVideos(1, false, sortBy)
   }
 
   // Extract videoId from YouTube URL
@@ -307,24 +320,10 @@ export default function HomePage() {
     setYoutubeUrl("")
   }
 
-  // Filter videos based on search query
+  // Filter videos based on search query (videos already sorted by API)
   const filteredVideos = searchQuery.trim()
     ? videos.filter(v => v.title.toLowerCase().includes(searchQuery.toLowerCase()))
     : videos
-
-  // Sort videos
-  const sortedVideos = [...filteredVideos].sort((a, b) => {
-    switch (sortBy) {
-      case "views":
-        return b.viewCount - a.viewCount
-      case "latest":
-        return new Date(b.publishedAt || 0).getTime() - new Date(a.publishedAt || 0).getTime()
-      case "oldest":
-        return new Date(a.publishedAt || 0).getTime() - new Date(b.publishedAt || 0).getTime()
-      default:
-        return 0
-    }
-  })
 
   // Toggle video selection
   function toggleVideoSelection(videoId: string) {
@@ -339,9 +338,9 @@ export default function HomePage() {
     })
   }
 
-  // Select all sorted videos
+  // Select all filtered videos
   function selectAllFiltered() {
-    setSelectedVideoIds(new Set(sortedVideos.map(v => v.videoId)))
+    setSelectedVideoIds(new Set(filteredVideos.map(v => v.videoId)))
   }
 
   // Clear selection
@@ -484,13 +483,31 @@ export default function HomePage() {
 
   return (
     <div className="flex gap-4 h-[calc(100vh-120px)]">
+      {/* Mobile Sidebar Overlay */}
+      {showMobileSidebar && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          onClick={() => setShowMobileSidebar(false)}
+        />
+      )}
+
       {/* Channel Sidebar */}
-      <div className="w-36 flex-shrink-0 bg-background/50 border border-border rounded-lg p-2 overflow-y-auto">
-        <div className="space-y-2">
+      <div className={`w-36 flex-shrink-0 bg-background border border-border rounded-lg p-2 overflow-y-auto ${showMobileSidebar ? 'fixed left-0 top-0 h-full z-50 block' : 'hidden lg:relative lg:block'}`}>
+        {/* Close button for mobile */}
+        <button
+          className="lg:hidden absolute top-2 right-2 p-1 rounded hover:bg-muted"
+          onClick={() => setShowMobileSidebar(false)}
+        >
+          <X className="w-4 h-4" />
+        </button>
+        <div className="space-y-2 mt-8 lg:mt-0">
           {channelsWithVideos.map(channel => (
             <button
               key={channel.channelCode}
-              onClick={() => setSelectedChannel(channel.channelCode)}
+              onClick={() => {
+                setSelectedChannel(channel.channelCode)
+                setShowMobileSidebar(false)
+              }}
               className={`w-full flex flex-col items-center p-2 rounded-lg transition-colors ${
                 selectedChannel === channel.channelCode
                   ? "bg-violet-500/20 border border-violet-500/50"
@@ -580,6 +597,13 @@ export default function HomePage() {
         <div className="flex flex-col sm:flex-row sm:items-center gap-3">
           <div>
             <div className="flex items-center gap-2">
+              {/* Mobile menu button */}
+              <button
+                className="lg:hidden p-1 rounded hover:bg-muted"
+                onClick={() => setShowMobileSidebar(true)}
+              >
+                <Menu className="w-6 h-6" />
+              </button>
               <Youtube className="w-6 h-6 text-red-500" />
               <h1 className="text-xl sm:text-2xl font-bold">{channelName || "Videos"}</h1>
               {fetchingLatest && <Loader2 className="w-4 h-4 animate-spin text-violet-400" />}
@@ -640,7 +664,7 @@ export default function HomePage() {
             onClick={selectAllFiltered}
             className="text-violet-400 hover:text-violet-300"
           >
-            Select All ({sortedVideos.length})
+            Select All ({filteredVideos.length})
           </Button>
           <Button
             variant="ghost"
@@ -664,7 +688,7 @@ export default function HomePage() {
 
       {/* Video Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-        {sortedVideos.map(video => {
+        {filteredVideos.map(video => {
           const isSelected = selectedVideoIds.has(video.videoId)
           return (
             <div

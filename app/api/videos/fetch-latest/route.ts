@@ -47,8 +47,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Could not find uploads playlist" }, { status: 400 })
     }
 
-    // Fetch latest 10 videos
-    const latestVideos = await fetchLatestPlaylistVideos(uploadsPlaylistId, 10)
+    // Fetch latest 50 videos (to find new 30+ min videos among recent uploads)
+    const latestVideos = await fetchLatestPlaylistVideos(uploadsPlaylistId, 50)
 
     // Get video details
     const detailedVideos = await getVideoDetails(latestVideos.map(v => v.videoId))

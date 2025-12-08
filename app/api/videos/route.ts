@@ -71,6 +71,7 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get("limit") || "100")
     const showAll = searchParams.get("showAll") === "true"
     const channelCode = searchParams.get("channel")
+    const sortBy = searchParams.get("sort") || "views" // views, latest, oldest
 
     if (!channelCode) {
       return NextResponse.json({
@@ -105,10 +106,21 @@ export async function GET(request: NextRequest) {
       ? metadata.videos
       : metadata.videos.filter(v => !processedIds.has(v.videoId))
 
+    // Sort videos BEFORE pagination
+    const sortedVideos = [...availableVideos].sort((a, b) => {
+      if (sortBy === "latest") {
+        return new Date(b.publishedAt || 0).getTime() - new Date(a.publishedAt || 0).getTime()
+      } else if (sortBy === "oldest") {
+        return new Date(a.publishedAt || 0).getTime() - new Date(b.publishedAt || 0).getTime()
+      }
+      // Default: views (descending)
+      return b.viewCount - a.viewCount
+    })
+
     // Pagination
     const startIndex = (page - 1) * limit
     const endIndex = startIndex + limit
-    const paginatedVideos = availableVideos.slice(startIndex, endIndex)
+    const paginatedVideos = sortedVideos.slice(startIndex, endIndex)
 
     return NextResponse.json({
       videos: paginatedVideos,
@@ -119,6 +131,7 @@ export async function GET(request: NextRequest) {
       fetchedAt: metadata.fetchedAt,
       page,
       limit,
+      sortBy,
       processedCount: processedIds.size,
       skippedCount: processed.skipped.length,
       completedCount: processed.completed.length
