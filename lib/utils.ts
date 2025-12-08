@@ -42,3 +42,37 @@ export function addDays(dateStr: string, days: number): string {
   date.setDate(date.getDate() + days)
   return formatDate(date)
 }
+
+// IST timezone formatting functions
+export function formatIST(date: Date | string): string {
+  const d = new Date(date)
+  return d.toLocaleString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true
+  })
+}
+
+export function formatISTDate(date: Date | string): string {
+  const d = new Date(date)
+  return d.toLocaleDateString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    day: "numeric",
+    month: "short",
+    year: "numeric"
+  })
+}
+
+export function formatISTTime(date: Date | string): string {
+  const d = new Date(date)
+  return d.toLocaleTimeString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true
+  })
+}

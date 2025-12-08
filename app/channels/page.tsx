@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { formatIST, formatISTDate } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -416,8 +417,9 @@ export default function ChannelsPage() {
     return views.toString()
   }
 
-  function formatDate(dateStr: string): string {
+  function formatDateLocal(dateStr: string): string {
     return new Date(dateStr).toLocaleDateString("en-IN", {
+      timeZone: "Asia/Kolkata",
       day: "2-digit",
       month: "short",
       year: "numeric"
@@ -556,7 +558,7 @@ export default function ChannelsPage() {
                   </div>
                   {channel.lastChecked && (
                     <p className="text-xs text-muted-foreground mt-1">
-                      Last checked: {new Date(channel.lastChecked).toLocaleString()}
+                      Last checked: {formatIST(channel.lastChecked)}
                     </p>
                   )}
 
@@ -702,7 +704,7 @@ export default function ChannelsPage() {
                         </div>
                         <p className="font-medium text-sm line-clamp-2">{pending.title}</p>
                         <p className="text-xs text-muted-foreground">
-                          Created: {new Date(pending.createdAt).toLocaleString()}
+                          Created: {formatIST(pending.createdAt)}
                         </p>
                       </div>
                       <button
@@ -885,7 +887,7 @@ export default function ChannelsPage() {
 
               {/* All Tab */}
               <TabsContent value="all">
-                <VideoList videos={allCompleted} formatDate={formatDate} getStatusBadge={getStatusBadge} />
+                <VideoList videos={allCompleted} formatDate={formatDateLocal} getStatusBadge={getStatusBadge} />
               </TabsContent>
 
               {/* Per-Channel Tabs */}
@@ -893,7 +895,7 @@ export default function ChannelsPage() {
                 <TabsContent key={channel.channelId} value={channel.channelId}>
                   <VideoList
                     videos={completedByChannel[channel.channelId] || []}
-                    formatDate={formatDate}
+                    formatDate={formatDateLocal}
                     getStatusBadge={getStatusBadge}
                   />
                 </TabsContent>

@@ -242,13 +242,55 @@ async def upload_to_gofile(file_path: str) -> Optional[str]:
         async with httpx.AsyncClient(timeout=600.0) as client:
             srv = await client.get("https://api.gofile.io/servers")
             if srv.status_code != 200: return None
-            server = srv.json()["data"]["servers"][0]["name"]
+            data = srv.json()["data"]
+            # Try servers first, fallback to serversAllZone
+            servers = data.get("servers", [])
+            if not servers:
+                servers = data.get("serversAllZone", [])
+            if not servers:
+                print("Gofile: No servers available")
+                return None
+            server = servers[0]["name"]
             with open(file_path, 'rb') as f:
                 up = await client.post(f"https://{server}.gofile.io/contents/uploadfile", files={'file': f})
-            return up.json()["data"]["downloadPage"] if up.status_code == 200 else None
+            if up.status_code == 200:
+                return up.json()["data"]["downloadPage"]
+            return None
     except Exception as e:
         print(f"Gofile error: {e}")
         return None
+
+async def upload_to_pixeldrain(file_path: str) -> Optional[str]:
+    """Fallback upload to Pixeldrain"""
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=600.0) as client:
+            with open(file_path, 'rb') as f:
+                filename = os.path.basename(file_path)
+                up = await client.post(
+                    "https://pixeldrain.com/api/file",
+                    files={'file': (filename, f)}
+                )
+            if up.status_code == 201:
+                file_id = up.json()["id"]
+                return f"https://pixeldrain.com/u/{file_id}"
+            return None
+    except Exception as e:
+        print(f"Pixeldrain error: {e}")
+        return None
+
+async def upload_file(file_path: str) -> Optional[str]:
+    """Upload file to Gofile, fallback to Pixeldrain"""
+    print(f"📤 Uploading to Gofile...")
+    link = await upload_to_gofile(file_path)
+    if link:
+        return link
+    print(f"⚠️ Gofile failed, trying Pixeldrain...")
+    link = await upload_to_pixeldrain(file_path)
+    if link:
+        return link
+    print(f"❌ All upload methods failed")
+    return None
 
 async def download_from_gofile(gofile_link: str, output_path: str) -> bool:
     """Download audio file from Gofile link"""
@@ -710,12 +752,11 @@ async def process_job(job: Dict) -> bool:
             if not generate_audio_f5tts(script, local_ref_audio, local_audio_out):
                 raise Exception("TTS failed")
 
-            print("📤 Uploading audio to Gofile...")
-            audio_gofile = await upload_to_gofile(local_audio_out)
+            audio_gofile = await upload_file(local_audio_out)
             if not audio_gofile:
-                raise Exception("Audio Gofile upload failed")
+                raise Exception("Audio upload failed")
 
-            print(f"✅ Audio uploaded to Gofile: {audio_gofile}")
+            print(f"✅ Audio uploaded: {audio_gofile}")
 
             print("📤 Uploading audio to Contabo...")
             username = job.get("username", "default")
@@ -875,10 +916,9 @@ async def process_job(job: Dict) -> bool:
         if ass_path and os.path.exists(ass_path):
             os.remove(ass_path)
 
-        print("📤 Uploading video to Gofile...")
-        video_gofile = await upload_to_gofile(local_video_out)
+        video_gofile = await upload_file(local_video_out)
         if not video_gofile:
-            raise Exception("Video Gofile upload failed")
+            raise Exception("Video upload failed")
 
         print(f"✅ Video uploaded: {video_gofile}")
 

@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
+import { formatIST, formatISTDate } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -26,7 +27,11 @@ import {
   AlertTriangle,
   RotateCcw,
   Youtube,
-  RefreshCw
+  RefreshCw,
+  FileText,
+  Clock,
+  CheckCircle,
+  XCircle
 } from "lucide-react"
 import { ThumbnailEditor } from "@/components/thumbnail-editor"
 
@@ -134,9 +139,39 @@ export default function SettingsPage() {
   const [fetchingChannel, setFetchingChannel] = useState<string | null>(null)
   const [deletingChannel, setDeletingChannel] = useState<string | null>(null)
 
+  // Transcript fetcher status
+  const [transcriptStatus, setTranscriptStatus] = useState<{
+    status: string
+    processed: number
+    total: number
+    percentage: number
+    success?: number
+    failed?: number
+    current_video?: string
+    last_run?: string
+    message: string
+    error?: string
+  } | null>(null)
+
   useEffect(() => {
     loadAll()
+    loadTranscriptStatus()
+    // Refresh transcript status every 30 seconds
+    const interval = setInterval(loadTranscriptStatus, 30000)
+    return () => clearInterval(interval)
   }, [])
+
+  async function loadTranscriptStatus() {
+    try {
+      const res = await fetch("/api/transcripts/status")
+      if (res.ok) {
+        const data = await res.json()
+        setTranscriptStatus(data)
+      }
+    } catch (error) {
+      console.error("Error loading transcript status:", error)
+    }
+  }
 
   async function loadAll() {
     setLoading(true)
@@ -724,7 +759,7 @@ export default function SettingsPage() {
                         <div className="flex-1 min-w-0">
                           <div className="font-medium text-emerald-400">{status.channelName}</div>
                           <div className="text-xs text-muted-foreground truncate">
-                            Code: {code} • {status.totalVideos} videos • {new Date(status.fetchedAt).toLocaleDateString()}
+                            Code: {code} • {status.totalVideos} videos • {formatISTDate(status.fetchedAt)}
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
@@ -902,6 +937,112 @@ export default function SettingsPage() {
                     })
                   )}
                 </div>
+              </div>
+
+              {/* Transcript Fetcher Status */}
+              <div className="space-y-4 pt-4 border-t border-border">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label className="text-base font-medium flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-green-400" />
+                      Transcript Fetcher (Auto)
+                    </Label>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Automatically downloads transcripts every 30 min via cron
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={loadTranscriptStatus}
+                    className="border-green-500/30 text-green-400 hover:bg-green-500/10"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                  </Button>
+                </div>
+
+                {transcriptStatus ? (
+                  <div className={`p-4 rounded-lg border ${
+                    transcriptStatus.status === "running" ? "border-blue-500/50 bg-blue-500/10" :
+                    transcriptStatus.status === "completed" ? "border-green-500/50 bg-green-500/10" :
+                    transcriptStatus.status === "error" ? "border-red-500/50 bg-red-500/10" :
+                    "border-border bg-muted/30"
+                  }`}>
+                    <div className="flex items-center gap-3 mb-3">
+                      {transcriptStatus.status === "running" ? (
+                        <Loader2 className="w-5 h-5 text-blue-400 animate-spin" />
+                      ) : transcriptStatus.status === "completed" ? (
+                        <CheckCircle className="w-5 h-5 text-green-400" />
+                      ) : transcriptStatus.status === "error" ? (
+                        <XCircle className="w-5 h-5 text-red-400" />
+                      ) : (
+                        <Clock className="w-5 h-5 text-muted-foreground" />
+                      )}
+                      <div className="flex-1">
+                        <div className="font-medium capitalize">
+                          {transcriptStatus.status === "not_started" ? "Not Started" : transcriptStatus.status}
+                        </div>
+                        <div className="text-sm text-muted-foreground">
+                          {transcriptStatus.message}
+                        </div>
+                      </div>
+                      <Badge variant="outline" className={
+                        transcriptStatus.status === "completed" ? "border-green-500/50 text-green-400" :
+                        transcriptStatus.status === "running" ? "border-blue-500/50 text-blue-400" :
+                        ""
+                      }>
+                        {transcriptStatus.percentage}%
+                      </Badge>
+                    </div>
+
+                    {/* Progress bar */}
+                    <div className="h-2 bg-muted rounded-full overflow-hidden mb-3">
+                      <div
+                        className={`h-full transition-all ${
+                          transcriptStatus.status === "running" ? "bg-blue-500" :
+                          transcriptStatus.status === "completed" ? "bg-green-500" :
+                          "bg-violet-500"
+                        }`}
+                        style={{ width: `${transcriptStatus.percentage}%` }}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
+                      <div className="text-center p-2 bg-muted/50 rounded">
+                        <div className="text-lg font-bold text-foreground">{transcriptStatus.processed}</div>
+                        <div className="text-xs text-muted-foreground">Processed</div>
+                      </div>
+                      <div className="text-center p-2 bg-muted/50 rounded">
+                        <div className="text-lg font-bold text-foreground">{transcriptStatus.total}</div>
+                        <div className="text-xs text-muted-foreground">Total</div>
+                      </div>
+                      {transcriptStatus.success !== undefined && (
+                        <div className="text-center p-2 bg-green-500/10 rounded">
+                          <div className="text-lg font-bold text-green-400">{transcriptStatus.success}</div>
+                          <div className="text-xs text-muted-foreground">Last Success</div>
+                        </div>
+                      )}
+                      {transcriptStatus.failed !== undefined && (
+                        <div className="text-center p-2 bg-red-500/10 rounded">
+                          <div className="text-lg font-bold text-red-400">{transcriptStatus.failed}</div>
+                          <div className="text-xs text-muted-foreground">Last Failed</div>
+                        </div>
+                      )}
+                    </div>
+
+                    {transcriptStatus.last_run && (
+                      <div className="text-xs text-muted-foreground mt-3 text-center">
+                        Last run: {formatIST(transcriptStatus.last_run)}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-center py-6 text-muted-foreground border border-dashed border-border rounded-lg">
+                    <FileText className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                    <p>Transcript fetcher not started yet</p>
+                    <p className="text-xs mt-1">Will start automatically via cron (every 30 min)</p>
+                  </div>
+                )}
               </div>
 
               {/* Save Button */}
