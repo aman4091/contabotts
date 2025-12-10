@@ -30,7 +30,8 @@ export async function GET(request: NextRequest) {
       transcript: ["transcript.txt"],
       script: ["script.txt"],
       thumbnail: ["thumbnail.jpg", "thumbnail.png"],
-      audio: ["audio.wav"]
+      audio: ["audio.wav"],
+      titles: ["titles.txt"]
     }
 
     const filenames = fileMap[file]

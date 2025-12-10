@@ -146,16 +146,22 @@ export async function GET(request: NextRequest) {
           continue
         }
 
-        // 3. Get next video number and save to organized
+        // 3. Generate 100 titles (5 calls x 20 titles each)
+        console.log(`   Generating titles...`)
+        const titlePrompt = settings.prompts?.title || "give me 20 clickbait titles for the below script"
+        const titles = await generateTitles(script, titlePrompt)
+        console.log(`   Generated ${titles.length} titles`)
+
+        // 4. Get next video number and save to organized
         const videoNumber = getNextVideoNumber(username)
         const folderName = `video_${videoNumber}`
-        saveToOrganized(username, videoNumber, transcript, script, video.title)
+        saveToOrganized(username, videoNumber, transcript, script, video.title, titles)
 
-        // 4. Download and save thumbnail
+        // 6. Download and save thumbnail
         console.log(`   Downloading thumbnail...`)
         await downloadThumbnail(username, videoNumber, video.thumbnail, video.videoId)
 
-        // 5. Add to audio queue
+        // 7. Add to audio queue
         const audioCounter = await getNextAudioCounter()
         const job = {
           id: randomUUID(),
@@ -351,7 +357,7 @@ function getNextVideoNumber(username: string): number {
   return nextNum
 }
 
-function saveToOrganized(username: string, videoNumber: number, transcript: string, script: string, title: string) {
+function saveToOrganized(username: string, videoNumber: number, transcript: string, script: string, title: string, titles: string[] = []) {
   const folderPath = path.join(DATA_DIR, "users", username, "organized", `video_${videoNumber}`)
 
   if (!fs.existsSync(folderPath)) {
@@ -361,6 +367,47 @@ function saveToOrganized(username: string, videoNumber: number, transcript: stri
   fs.writeFileSync(path.join(folderPath, "transcript.txt"), transcript)
   fs.writeFileSync(path.join(folderPath, "script.txt"), script)
   fs.writeFileSync(path.join(folderPath, "title.txt"), title)
+
+  // Save generated titles
+  if (titles.length > 0) {
+    fs.writeFileSync(path.join(folderPath, "titles.txt"), titles.join("\n"))
+  }
+}
+
+// Generate 100 titles (5 calls x 20 titles each)
+async function generateTitles(script: string, titlePrompt: string): Promise<string[]> {
+  const allTitles: string[] = []
+
+  for (let i = 0; i < 5; i++) {
+    try {
+      const fullPrompt = `${titlePrompt}\n\n${script}`
+      const result = await callGemini(fullPrompt)
+
+      if (result) {
+        // Parse titles from response - split by newlines and clean up
+        const titles = result
+          .split('\n')
+          .map(line => line.trim())
+          .filter(line => line.length > 0)
+          .map(line => {
+            // Remove numbering like "1.", "1)", "1:" etc
+            return line.replace(/^\d+[\.\)\:\-]\s*/, '').trim()
+          })
+          .filter(line => line.length > 10) // Filter out very short lines
+
+        allTitles.push(...titles)
+      }
+
+      // Small delay between calls
+      if (i < 4) {
+        await new Promise(r => setTimeout(r, 1000))
+      }
+    } catch (error) {
+      console.error(`Error generating titles batch ${i + 1}:`, error)
+    }
+  }
+
+  return allTitles
 }
 
 async function downloadThumbnail(username: string, videoNumber: number, thumbnailUrl: string, videoId: string) {

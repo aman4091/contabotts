@@ -32,7 +32,8 @@ import {
   X,
   Radio,
   Clock,
-  Image as ImageIcon
+  Image as ImageIcon,
+  List
 } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
@@ -90,6 +91,7 @@ export default function ChannelsPage() {
   // Active tabs
   const [activeTab, setActiveTab] = useState("all")
   const [scheduledTab, setScheduledTab] = useState("all-scheduled")
+  const [scheduledDateFilter, setScheduledDateFilter] = useState("all")
 
   // Prompt editing
   const [editingPrompt, setEditingPrompt] = useState<string | null>(null)
@@ -321,6 +323,28 @@ export default function ChannelsPage() {
   const allCompleted = Object.values(completedByChannel).flat()
     .sort((a, b) => new Date(b.processedAt).getTime() - new Date(a.processedAt).getTime())
 
+  // Get date in IST (India timezone)
+  const getISTDate = (dateStr: string) => {
+    const date = new Date(dateStr)
+    return date.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }) // YYYY-MM-DD format
+  }
+
+  // Get unique scheduled dates for dropdown (in IST)
+  const scheduledDates = Array.from(new Set(
+    delayedVideos
+      .filter(v => v.status === "waiting")
+      .map(v => getISTDate(v.scheduledFor))
+  )).sort()
+
+  // Today's date in IST
+  const todayIST = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" })
+
+  // Filter delayed videos by date (using IST)
+  const filterByDate = (videos: DelayedVideo[]) => {
+    if (scheduledDateFilter === "all") return videos
+    return videos.filter(v => getISTDate(v.scheduledFor) === scheduledDateFilter)
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -549,20 +573,38 @@ export default function ChannelsPage() {
       {delayedVideos.length > 0 && channels.length > 0 && (
         <Card className="glass border-amber-500/30">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-lg">
-              <Clock className="w-5 h-5 text-amber-400" />
-              Scheduled Videos ({delayedVideos.filter(v => v.status === "waiting").length} waiting)
-            </CardTitle>
-            <CardDescription>Videos will be processed 7 days after publish date</CardDescription>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Clock className="w-5 h-5 text-amber-400" />
+                  Scheduled Videos ({filterByDate(delayedVideos.filter(v => v.status === "waiting")).length} {scheduledDateFilter !== "all" ? `on ${new Date(scheduledDateFilter).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}` : "waiting"})
+                </CardTitle>
+                <CardDescription>Videos will be processed 7 days after publish date</CardDescription>
+              </div>
+              <Select value={scheduledDateFilter} onValueChange={setScheduledDateFilter}>
+                <SelectTrigger className="w-[150px] border-amber-500/30">
+                  <SelectValue placeholder="Filter by date" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Dates</SelectItem>
+                  {scheduledDates.map(date => {
+                    const label = date === todayIST ? "Today" : new Date(date + "T00:00:00").toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short" })
+                    return (
+                      <SelectItem key={date} value={date}>{label}</SelectItem>
+                    )
+                  })}
+                </SelectContent>
+              </Select>
+            </div>
           </CardHeader>
           <CardContent>
             <Tabs value={scheduledTab} onValueChange={setScheduledTab}>
               <TabsList className="flex flex-wrap h-auto gap-1 mb-4">
                 <TabsTrigger value="all-scheduled" className="text-xs sm:text-sm">
-                  All ({delayedVideos.filter(v => v.status === "waiting").length})
+                  All ({filterByDate(delayedVideos.filter(v => v.status === "waiting")).length})
                 </TabsTrigger>
                 {channels.map(channel => {
-                  const count = delayedVideos.filter(v => v.channelId === channel.channelId && v.status === "waiting").length
+                  const count = filterByDate(delayedVideos.filter(v => v.channelId === channel.channelId && v.status === "waiting")).length
                   if (count === 0) return null
                   return (
                     <TabsTrigger key={`scheduled-${channel.channelId}`} value={`scheduled-${channel.channelId}`} className="text-xs sm:text-sm">
@@ -573,13 +615,13 @@ export default function ChannelsPage() {
               </TabsList>
 
               <TabsContent value="all-scheduled">
-                <ScheduledVideoList videos={delayedVideos.filter(v => v.status === "waiting")} formatDate={formatDateLocal} removeVideo={removeDelayedVideo} />
+                <ScheduledVideoList videos={filterByDate(delayedVideos.filter(v => v.status === "waiting"))} formatDate={formatDateLocal} removeVideo={removeDelayedVideo} />
               </TabsContent>
 
               {channels.map(channel => (
                 <TabsContent key={`scheduled-${channel.channelId}`} value={`scheduled-${channel.channelId}`}>
                   <ScheduledVideoList
-                    videos={delayedVideos.filter(v => v.channelId === channel.channelId && v.status === "waiting")}
+                    videos={filterByDate(delayedVideos.filter(v => v.channelId === channel.channelId && v.status === "waiting"))}
                     formatDate={formatDateLocal}
                     removeVideo={removeDelayedVideo}
                   />
@@ -689,6 +731,13 @@ function VideoList({
                   >
                     <FileText className="w-3 h-3" />
                     Script
+                  </a>
+                  <a
+                    href={`/api/calendar/download?videoId=${video.folderName}&file=titles`}
+                    className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors"
+                  >
+                    <List className="w-3 h-3" />
+                    Titles
                   </a>
                   {video.status === "completed" && video.gofileLink && (
                     <a

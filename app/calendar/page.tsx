@@ -18,7 +18,8 @@ import {
   FolderOpen,
   RefreshCw,
   Square,
-  CheckSquare
+  CheckSquare,
+  List
 } from "lucide-react"
 
 interface VideoItem {
@@ -29,6 +30,7 @@ interface VideoItem {
   hasAudio: boolean
   hasVideo: boolean
   hasThumbnail: boolean
+  hasTitles: boolean
   isCompleted: boolean
   path: string
   gofileLink?: string | null
@@ -220,7 +222,7 @@ export default function CalendarPage() {
   }
 
   function VideoRow({ video }: { video: VideoItem }) {
-    const hasAnyFile = video.hasTranscript || video.hasScript || video.hasAudio || video.hasVideo || video.hasThumbnail
+    const hasAnyFile = video.hasTranscript || video.hasScript || video.hasAudio || video.hasVideo || video.hasThumbnail || video.hasTitles
     const isSelected = selectedIds.has(video.id)
 
     return (
@@ -297,6 +299,15 @@ export default function CalendarPage() {
             title="Thumbnail"
           >
             <ImageIcon className="w-4 h-4" />
+          </button>
+
+          <button
+            disabled={!video.hasTitles}
+            onClick={() => downloadFile(video, "titles")}
+            className={`p-1.5 rounded ${video.hasTitles ? 'text-amber-400 hover:bg-amber-500/20' : 'text-zinc-600 cursor-not-allowed'}`}
+            title="Titles (100)"
+          >
+            <List className="w-4 h-4" />
           </button>
 
           {!hasAnyFile && (
