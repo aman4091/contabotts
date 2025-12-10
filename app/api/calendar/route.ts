@@ -90,7 +90,7 @@ export async function GET(request: NextRequest) {
             hasScript: fs.existsSync(path.join(videoPath, "script.txt")),
             hasAudio: fs.existsSync(path.join(videoPath, "audio.wav")),
             hasVideo: !!gofileLink,
-            hasThumbnail: fs.existsSync(path.join(videoPath, "thumbnail.png")),
+            hasThumbnail: fs.existsSync(path.join(videoPath, "thumbnail.png")) || fs.existsSync(path.join(videoPath, "thumbnail.jpg")),
             isCompleted: completedVideos.includes(dir),
             path: `/organized/${dir}`,
             gofileLink

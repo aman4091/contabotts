@@ -26,39 +26,48 @@ export async function GET(request: NextRequest) {
     }
 
     // Map file type to filename
-    const fileMap: Record<string, string> = {
-      transcript: "transcript.txt",
-      script: "script.txt",
-      thumbnail: "thumbnail.png",
-      audio: "audio.wav"
+    const fileMap: Record<string, string[]> = {
+      transcript: ["transcript.txt"],
+      script: ["script.txt"],
+      thumbnail: ["thumbnail.jpg", "thumbnail.png"],
+      audio: ["audio.wav"]
     }
 
-    const filename = fileMap[file]
-    if (!filename) {
+    const filenames = fileMap[file]
+    if (!filenames) {
       return NextResponse.json({ error: "Invalid file type" }, { status: 400 })
     }
 
-    const filePath = path.join(getUserOrganizedDir(username), videoId, filename)
+    // Try each possible filename
+    let filePath = ""
+    let actualFilename = ""
+    for (const fn of filenames) {
+      const tryPath = path.join(getUserOrganizedDir(username), videoId, fn)
+      if (fs.existsSync(tryPath)) {
+        filePath = tryPath
+        actualFilename = fn
+        break
+      }
+    }
 
-    if (!fs.existsSync(filePath)) {
+    if (!filePath) {
       return NextResponse.json({ error: "File not found" }, { status: 404 })
     }
 
     const fileBuffer = fs.readFileSync(filePath)
     const stat = fs.statSync(filePath)
 
-    // Determine content type
-    const contentTypes: Record<string, string> = {
-      transcript: "text/plain",
-      script: "text/plain",
-      thumbnail: "image/png",
-      audio: "audio/wav"
-    }
+    // Determine content type based on actual file extension
+    let contentType = "application/octet-stream"
+    if (actualFilename.endsWith(".txt")) contentType = "text/plain"
+    else if (actualFilename.endsWith(".png")) contentType = "image/png"
+    else if (actualFilename.endsWith(".jpg")) contentType = "image/jpeg"
+    else if (actualFilename.endsWith(".wav")) contentType = "audio/wav"
 
     const headers = new Headers()
-    headers.set("Content-Type", contentTypes[file])
+    headers.set("Content-Type", contentType)
     headers.set("Content-Length", stat.size.toString())
-    headers.set("Content-Disposition", `attachment; filename="${videoId}_${file}${path.extname(filename)}"`)
+    headers.set("Content-Disposition", `attachment; filename="${videoId}_${file}${path.extname(actualFilename)}"`)
 
     return new NextResponse(fileBuffer, { headers })
   } catch (error) {

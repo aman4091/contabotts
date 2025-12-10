@@ -17,7 +17,7 @@ async function getUser() {
   return cookieStore.get("user")?.value
 }
 
-// POST - Auto Create: Process N videos from a channel (Background)
+// POST - Auto Create: Process N videos from a channel (Direct to Queue)
 export async function POST(request: NextRequest) {
   try {
     const username = await getUser()
@@ -108,13 +108,15 @@ export async function POST(request: NextRequest) {
       } catch {}
     }
 
-    // Start background processing (saves to pending, not queue)
-    processVideosToPending(
+    // Start background processing (direct to queue, no pending)
+    processVideosDirectToQueue(
       eligibleVideos,
       username,
       channelId,
       channelName,
       channelPrompt,
+      referenceAudio,
+      useAiImage,
       processedPath,
       processedIds,
       settings.ai?.max_chunk_size || 7000
@@ -123,7 +125,7 @@ export async function POST(request: NextRequest) {
     // Return immediately
     return NextResponse.json({
       success: true,
-      message: `Started processing ${eligibleVideos.length} videos. Check Pending Scripts for review.`,
+      message: `Started processing ${eligibleVideos.length} videos. They will be added directly to the queue.`,
       processing: eligibleVideos.length,
       videos: eligibleVideos.map((v: any) => ({ videoId: v.videoId, title: v.title }))
     })
@@ -133,20 +135,20 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Background processing function - saves to pending for review
-async function processVideosToPending(
+// Background processing function - direct to queue (no pending)
+async function processVideosDirectToQueue(
   videos: any[],
   username: string,
   channelId: string,
   channelName: string,
   channelPrompt: string,
+  referenceAudio: string,
+  useAiImage: boolean,
   processedPath: string,
   processedIds: string[],
   maxChunkSize: number
 ) {
-  console.log(`[BG] Starting background processing of ${videos.length} videos to pending`)
-
-  const pendingPath = path.join(DATA_DIR, "users", username, "channel-automation", "pending-scripts.json")
+  console.log(`[BG] Starting background processing of ${videos.length} videos direct to queue`)
 
   for (const video of videos) {
     console.log(`[BG] Processing: ${video.title}`)
@@ -168,38 +170,47 @@ async function processVideosToPending(
         continue
       }
 
-      // 3. Save to pending scripts for review
-      let pendingScripts: any[] = []
-      if (fs.existsSync(pendingPath)) {
-        try {
-          pendingScripts = JSON.parse(fs.readFileSync(pendingPath, "utf-8"))
-        } catch {}
+      // 3. Get next video number and save to organized
+      const videoNumber = getNextVideoNumber(username)
+      const folderName = `video_${videoNumber}`
+      saveToOrganized(username, videoNumber, transcript, script, video.title)
+
+      // 4. Add directly to audio queue
+      const audioCounter = await getNextAudioCounter()
+      const job = {
+        id: randomUUID(),
+        script,
+        referenceAudio,
+        audioOnly: false,
+        aiImage: useAiImage,
+        enhanceAudio: true,
+        username,
+        videoId: video.videoId,
+        title: video.title,
+        folderName,
+        audioNumber: audioCounter,
+        channelId,
+        channelName,
+        source: "auto_create",
+        createdAt: new Date().toISOString()
       }
 
-      // Check if already pending
-      if (!pendingScripts.find(s => s.videoId === video.videoId)) {
-        pendingScripts.push({
-          id: randomUUID(),
-          videoId: video.videoId,
-          title: video.title,
-          channelId,
-          channelName,
-          transcript,
-          script,
-          transcriptChars: transcript.length,
-          scriptChars: script.length,
-          createdAt: new Date().toISOString(),
-          source: "auto_create",
-          prompt: channelPrompt
-        })
+      const result = await createAudioJob(job)
+      if (result.success) {
+        console.log(`[BG]   Added to queue as ${folderName}`)
 
-        const pendingDir = path.dirname(pendingPath)
-        if (!fs.existsSync(pendingDir)) {
-          fs.mkdirSync(pendingDir, { recursive: true })
+        // Mark as processed
+        processedIds.push(video.videoId)
+        const processedDir = path.dirname(processedPath)
+        if (!fs.existsSync(processedDir)) {
+          fs.mkdirSync(processedDir, { recursive: true })
         }
-        fs.writeFileSync(pendingPath, JSON.stringify(pendingScripts, null, 2))
+        fs.writeFileSync(processedPath, JSON.stringify({ processed: processedIds }, null, 2))
 
-        console.log(`[BG]   Added to pending for review`)
+        // Save to completed tracking
+        saveToCompleted(username, channelId, video.videoId, video.title, videoNumber, folderName, job.id)
+      } else {
+        console.log(`[BG]   Failed to add to queue`)
       }
 
       // Small delay between videos
@@ -209,7 +220,39 @@ async function processVideosToPending(
     }
   }
 
-  console.log(`[BG] Background processing complete - check Pending Scripts for review`)
+  console.log(`[BG] Background processing complete`)
+}
+
+// Save to completed tracking
+function saveToCompleted(
+  username: string,
+  channelId: string,
+  videoId: string,
+  title: string,
+  videoNumber: number,
+  folderName: string,
+  jobId: string
+) {
+  const completedPath = path.join(DATA_DIR, "users", username, "channel-automation", channelId, "completed.json")
+
+  let completed: any[] = []
+  if (fs.existsSync(completedPath)) {
+    try {
+      completed = JSON.parse(fs.readFileSync(completedPath, "utf-8"))
+    } catch {}
+  }
+
+  completed.push({
+    videoId,
+    title,
+    videoNumber,
+    folderName,
+    jobId,
+    processedAt: new Date().toISOString(),
+    status: "pending"
+  })
+
+  fs.writeFileSync(completedPath, JSON.stringify(completed, null, 2))
 }
 
 // Helper functions

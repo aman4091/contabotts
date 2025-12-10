@@ -1,10 +1,23 @@
 import { NextRequest, NextResponse } from "next/server"
 import { cookies } from "next/headers"
+import { randomUUID } from "crypto"
 import fs from "fs"
 import path from "path"
 
 const DATA_DIR = process.env.DATA_DIR || "/root/tts/data"
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY
+
+interface DelayedVideo {
+  id: string
+  videoId: string
+  title: string
+  channelId: string
+  channelName: string
+  thumbnail: string
+  scheduledFor: string
+  createdAt: string
+  status: "waiting" | "processing" | "completed" | "failed"
+}
 
 interface Channel {
   id: string
@@ -99,15 +112,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Channel already added" }, { status: 400 })
     }
 
-    // Fetch top 1000 videos
+    // Fetch last 10 days videos only
     const uploadsPlaylistId = await getUploadsPlaylistId(channelId)
     if (!uploadsPlaylistId) {
       return NextResponse.json({ error: "Could not find uploads playlist" }, { status: 400 })
     }
 
-    console.log(`Fetching videos for channel ${channelInfo.name}...`)
-    const videos = await fetchAllVideos(uploadsPlaylistId)
-    console.log(`Fetched ${videos.length} videos`)
+    console.log(`Fetching last 10 days videos for channel ${channelInfo.name}...`)
+    const videos = await fetchRecentVideos(uploadsPlaylistId, 10)
+    console.log(`Fetched ${videos.length} videos from last 10 days`)
 
     // Save videos to channel folder
     const channelDir = path.join(DATA_DIR, "users", username, "channel-automation", channelId)
@@ -130,6 +143,48 @@ export async function POST(request: NextRequest) {
       path.join(channelDir, "processed.json"),
       JSON.stringify({ processed: [] }, null, 2)
     )
+
+    // Add all fetched videos to delayed queue
+    // Each video will be scheduled for: publishedAt + 7 days
+    const delayedPath = path.join(DATA_DIR, "users", username, "channel-automation", "delayed-videos.json")
+    let delayedVideos: DelayedVideo[] = []
+    if (fs.existsSync(delayedPath)) {
+      try {
+        delayedVideos = JSON.parse(fs.readFileSync(delayedPath, "utf-8"))
+      } catch {}
+    }
+
+    let addedToDelayed = 0
+    for (const video of videos) {
+      // Skip if already in delayed queue
+      if (delayedVideos.find(d => d.videoId === video.videoId)) continue
+
+      // Calculate scheduled date: video publish date + 7 days
+      const publishDate = new Date(video.publishedAt)
+      const scheduledDate = new Date(publishDate)
+      scheduledDate.setDate(scheduledDate.getDate() + 7)
+
+      delayedVideos.push({
+        id: randomUUID(),
+        videoId: video.videoId,
+        title: video.title,
+        channelId,
+        channelName: channelInfo.name,
+        thumbnail: video.thumbnail,
+        scheduledFor: scheduledDate.toISOString(),
+        createdAt: new Date().toISOString(),
+        status: "waiting"
+      })
+      addedToDelayed++
+    }
+
+    // Save delayed videos
+    const delayedDir = path.dirname(delayedPath)
+    if (!fs.existsSync(delayedDir)) {
+      fs.mkdirSync(delayedDir, { recursive: true })
+    }
+    fs.writeFileSync(delayedPath, JSON.stringify(delayedVideos, null, 2))
+    console.log(`Added ${addedToDelayed} videos to delayed queue`)
 
     // Add channel to list
     const newChannel: Channel = {
@@ -288,29 +343,46 @@ async function getUploadsPlaylistId(channelId: string): Promise<string | null> {
   return data.items?.[0]?.contentDetails?.relatedPlaylists?.uploads || null
 }
 
-async function fetchAllVideos(playlistId: string): Promise<any[]> {
-  const allVideos: { videoId: string; title: string }[] = []
+// Fetch only videos from last N days
+async function fetchRecentVideos(playlistId: string, days: number): Promise<any[]> {
+  const cutoffDate = new Date()
+  cutoffDate.setDate(cutoffDate.getDate() - days)
+
+  const allVideos: { videoId: string; title: string; publishedAt: string }[] = []
   let pageToken = ""
 
-  // Fetch up to 1000 videos
-  while (allVideos.length < 1000) {
+  // Fetch videos until we hit videos older than cutoff date
+  while (true) {
     const url = `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=${playlistId}&maxResults=50&pageToken=${pageToken}&key=${YOUTUBE_API_KEY}`
     const res = await fetch(url)
     const data = await res.json()
 
-    if (!data.items) break
+    if (!data.items || data.items.length === 0) break
 
+    let foundOldVideo = false
     for (const item of data.items) {
-      if (allVideos.length >= 1000) break
+      const publishedAt = new Date(item.snippet.publishedAt)
+
+      // Stop if video is older than cutoff
+      if (publishedAt < cutoffDate) {
+        foundOldVideo = true
+        break
+      }
+
       allVideos.push({
         videoId: item.snippet.resourceId.videoId,
-        title: item.snippet.title
+        title: item.snippet.title,
+        publishedAt: item.snippet.publishedAt
       })
     }
 
+    // Stop fetching if we found old videos or no more pages
+    if (foundOldVideo) break
     pageToken = data.nextPageToken || ""
     if (!pageToken) break
   }
+
+  if (allVideos.length === 0) return []
 
   // Get video details (duration, views)
   const detailedVideos: any[] = []
@@ -325,7 +397,7 @@ async function fetchAllVideos(playlistId: string): Promise<any[]> {
         detailedVideos.push({
           videoId: item.id,
           title: item.snippet?.title || "",
-          thumbnail: `https://i.ytimg.com/vi/${item.id}/mqdefault.jpg`,
+          thumbnail: item.snippet?.thumbnails?.high?.url || `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`,
           duration: parseDuration(item.contentDetails?.duration),
           viewCount: parseInt(item.statistics?.viewCount || "0"),
           publishedAt: item.snippet?.publishedAt
@@ -334,8 +406,8 @@ async function fetchAllVideos(playlistId: string): Promise<any[]> {
     }
   }
 
-  // Sort by views (descending)
-  detailedVideos.sort((a, b) => b.viewCount - a.viewCount)
+  // Sort by publish date (newest first)
+  detailedVideos.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
 
   return detailedVideos
 }

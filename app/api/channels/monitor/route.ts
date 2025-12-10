@@ -24,6 +24,18 @@ interface Channel {
   lastChecked?: string
 }
 
+interface DelayedVideo {
+  id: string
+  videoId: string
+  title: string
+  channelId: string
+  channelName: string
+  thumbnail: string
+  scheduledFor: string
+  createdAt: string
+  status: "waiting" | "processing" | "completed" | "failed"
+}
+
 function getSettings(username: string) {
   const settingsPath = path.join(DATA_DIR, "users", username, "settings.json")
   try {
@@ -119,67 +131,62 @@ export async function GET(request: NextRequest) {
         }
 
         let processed = 0
-        const pendingPath = path.join(DATA_DIR, "users", username, "channel-automation", "pending-scripts.json")
+        const delayedPath = path.join(DATA_DIR, "users", username, "channel-automation", "delayed-videos.json")
 
-        // Process new videos (max 3 at a time to avoid overload)
-        // Save to pending for review instead of direct queue
-        for (const video of newVideos.slice(0, 3)) {
-          console.log(`   Processing: ${video.title}`)
+        // Process new videos (max 5 at a time)
+        // Save to delayed queue - will be processed 7 days later
+        for (const video of newVideos.slice(0, 5)) {
+          console.log(`   Adding to delayed queue: ${video.title}`)
 
           try {
-            // 1. Fetch transcript
-            const transcript = await fetchTranscript(video.videoId)
-            if (!transcript) {
-              console.log(`   No transcript found, skipping`)
-              continue
-            }
-
-            // 2. Process with Gemini
-            const script = await processWithGemini(transcript, channelPrompt, maxChunkSize)
-            if (!script) {
-              console.log(`   Gemini failed, skipping`)
-              continue
-            }
-
-            // 3. Save to pending scripts for review (instead of direct queue)
-            let pendingScripts: any[] = []
-            if (fs.existsSync(pendingPath)) {
+            // Load existing delayed videos
+            let delayedVideos: DelayedVideo[] = []
+            if (fs.existsSync(delayedPath)) {
               try {
-                pendingScripts = JSON.parse(fs.readFileSync(pendingPath, "utf-8"))
+                delayedVideos = JSON.parse(fs.readFileSync(delayedPath, "utf-8"))
               } catch {}
             }
 
-            // Check if already pending
-            if (!pendingScripts.find(s => s.videoId === video.videoId)) {
-              pendingScripts.push({
-                id: randomUUID(),
-                videoId: video.videoId,
-                title: video.title,
-                channelId: channel.channelId,
-                channelName: channel.name,
-                transcript,
-                script,
-                transcriptChars: transcript.length,
-                scriptChars: script.length,
-                createdAt: new Date().toISOString(),
-                source: "live_monitoring",
-                prompt: channelPrompt
-              })
-
-              const pendingDir = path.dirname(pendingPath)
-              if (!fs.existsSync(pendingDir)) {
-                fs.mkdirSync(pendingDir, { recursive: true })
-              }
-              fs.writeFileSync(pendingPath, JSON.stringify(pendingScripts, null, 2))
-
-              processed++
-              console.log(`   ✅ Added to pending for review`)
+            // Check if already in delayed queue
+            if (delayedVideos.find(d => d.videoId === video.videoId)) {
+              console.log(`   Already in delayed queue, skipping`)
+              continue
             }
 
-            // Delay between videos
-            await new Promise(r => setTimeout(r, 2000))
+            // Calculate scheduled date: video publish date + 7 days
+            const publishDate = new Date(video.publishedAt)
+            const scheduledDate = new Date(publishDate)
+            scheduledDate.setDate(scheduledDate.getDate() + 7)
+
+            // Add to delayed queue
+            delayedVideos.push({
+              id: randomUUID(),
+              videoId: video.videoId,
+              title: video.title,
+              channelId: channel.channelId,
+              channelName: channel.name,
+              thumbnail: video.thumbnail || `https://i.ytimg.com/vi/${video.videoId}/hqdefault.jpg`,
+              scheduledFor: scheduledDate.toISOString(),
+              createdAt: new Date().toISOString(),
+              status: "waiting"
+            })
+
+            const delayedDir = path.dirname(delayedPath)
+            if (!fs.existsSync(delayedDir)) {
+              fs.mkdirSync(delayedDir, { recursive: true })
+            }
+            fs.writeFileSync(delayedPath, JSON.stringify(delayedVideos, null, 2))
+
+            // Mark as processed so we don't add it again
+            processedIds.push(video.videoId)
+
+            processed++
+            console.log(`   ✅ Added to delayed queue (scheduled for ${scheduledDate.toLocaleDateString()})`)
+
+            // Small delay
+            await new Promise(r => setTimeout(r, 500))
           } catch (error) {
-            console.error(`   Error processing ${video.title}:`, error)
+            console.error(`   Error adding ${video.title}:`, error)
           }
         }
 
@@ -223,7 +230,7 @@ function updateLastChecked(channelsPath: string, channels: Channel[], channelId:
   }
 }
 
-async function fetchLatestVideos(channelId: string, count: number): Promise<{ videoId: string; title: string }[]> {
+async function fetchLatestVideos(channelId: string, count: number): Promise<{ videoId: string; title: string; thumbnail: string; publishedAt: string }[]> {
   try {
     // Get uploads playlist ID
     const channelUrl = `https://www.googleapis.com/youtube/v3/channels?part=contentDetails&id=${channelId}&key=${YOUTUBE_API_KEY}`
@@ -242,7 +249,9 @@ async function fetchLatestVideos(channelId: string, count: number): Promise<{ vi
 
     return playlistData.items.map((item: any) => ({
       videoId: item.snippet.resourceId.videoId,
-      title: item.snippet.title
+      title: item.snippet.title,
+      thumbnail: item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.medium?.url || `https://i.ytimg.com/vi/${item.snippet.resourceId.videoId}/hqdefault.jpg`,
+      publishedAt: item.snippet.publishedAt
     }))
   } catch (error) {
     console.error(`Error fetching videos for ${channelId}:`, error)

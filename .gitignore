@@ -46,3 +46,4 @@ Thumbs.db
 *.temp
 output/
 F5-TTS/
+p.py.backup
