@@ -47,6 +47,7 @@ interface VideoPopupProps {
   audioFiles: AudioFile[]
   defaultReferenceAudio: string
   prompt: string
+  initialTranscript?: string
   onClose: () => void
   onSkip: (videoId: string) => void
   onAddToQueue: (videoId: string) => void
@@ -76,6 +77,7 @@ export function VideoPopup({
   audioFiles,
   defaultReferenceAudio,
   prompt,
+  initialTranscript,
   onClose,
   onSkip,
   onAddToQueue
@@ -114,8 +116,14 @@ export function VideoPopup({
   const [enhanceAudio, setEnhanceAudio] = useState(true)
 
   useEffect(() => {
-    fetchTranscript()
-  }, [video.videoId])
+    // If initialTranscript is provided, use it instead of fetching
+    if (initialTranscript) {
+      setTranscript(initialTranscript)
+      setLoading(false)
+    } else {
+      fetchTranscript()
+    }
+  }, [video.videoId, initialTranscript])
 
   async function fetchTranscript() {
     setLoading(true)

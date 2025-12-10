@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { cookies } from "next/headers"
 import { getTranscript } from "@/lib/file-storage"
 
 export async function GET(
@@ -6,6 +7,9 @@ export async function GET(
   { params }: { params: { index: string } }
 ) {
   try {
+    const cookieStore = await cookies()
+    const username = cookieStore.get("user")?.value || "aman"
+
     const { searchParams } = new URL(request.url)
     const channel = searchParams.get("channel")
     const index = parseInt(params.index)
@@ -18,10 +22,22 @@ export async function GET(
       return NextResponse.json({ error: "Invalid index" }, { status: 400 })
     }
 
-    const content = getTranscript(channel, index)
-    if (!content) {
+    const rawContent = getTranscript(channel, index, username)
+    if (!rawContent) {
       return NextResponse.json({ error: "Transcript not found" }, { status: 404 })
     }
+
+    // Remove Title and Video ID lines, keep only transcript
+    const lines = rawContent.split('\n')
+    let transcriptStart = 0
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].startsWith('Title:') || lines[i].startsWith('Video ID:') || lines[i].trim() === '') {
+        transcriptStart = i + 1
+      } else {
+        break
+      }
+    }
+    const content = lines.slice(transcriptStart).join('\n').trim()
 
     return NextResponse.json({ content, index, channel })
   } catch (error) {

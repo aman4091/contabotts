@@ -9,6 +9,7 @@ import { toast } from "sonner"
 import { Loader2, RefreshCw, Settings, Youtube, Search, X, CheckSquare, Square, Play, ArrowUpDown, Menu } from "lucide-react"
 import { VideoPopup } from "@/components/video-popup"
 import { TranscriptPopup } from "@/components/transcript-popup"
+import { TranscriptReader } from "@/components/transcript-reader"
 import Link from "next/link"
 
 interface Video {
@@ -93,6 +94,9 @@ export default function HomePage() {
   // Mobile sidebar state
   const [showMobileSidebar, setShowMobileSidebar] = useState(false)
 
+  // Transcript reader state (for GS32 channel)
+  const [preloadedTranscript, setPreloadedTranscript] = useState("")
+
   useEffect(() => {
     loadInitialData()
   }, [])
@@ -100,7 +104,14 @@ export default function HomePage() {
   // Load videos and fetch latest when channel changes
   useEffect(() => {
     if (selectedChannel) {
-      fetchLatestAndLoadVideos()
+      // GS32 is transcript-only, skip video loading
+      if (selectedChannel === "GS32") {
+        setLoading(false)
+        setVideos([])
+        setChannelName("God Says 32")
+      } else {
+        fetchLatestAndLoadVideos()
+      }
     }
   }, [selectedChannel])
 
@@ -150,11 +161,21 @@ export default function HomePage() {
       const videoFetchData = await videoFetchRes.json()
 
       const channelsWithVids = videoFetchData.channels || []
-      setChannelsWithVideos(channelsWithVids)
 
-      // Select first channel that has videos
-      if (channelsWithVids.length > 0) {
-        setSelectedChannel(channelsWithVids[0].channelCode)
+      // Add GS32 as special transcript-only channel at the beginning
+      const gs32Channel: ChannelVideoStatus = {
+        channelCode: "GS32",
+        channelName: "God Says 32",
+        channelLogo: "",
+        totalVideos: 977,
+        fetchedAt: new Date().toISOString()
+      }
+      setChannelsWithVideos([gs32Channel, ...channelsWithVids])
+
+      // Select first channel (GS32 is first now)
+      if (channelsWithVids.length > 0 || true) {
+        // Default to first non-GS32 channel, or GS32 if no others
+        setSelectedChannel(channelsWithVids[0]?.channelCode || "GS32")
       } else {
         setLoading(false)
       }
@@ -402,7 +423,10 @@ export default function HomePage() {
     setSelectedVideo(null)
   }
 
-  if (loading) {
+  // For GS32, skip all loading/empty checks and go straight to main render
+  const isGS32 = selectedChannel === "GS32"
+
+  if (loading && !isGS32) {
     return (
       <div className="flex flex-col items-center justify-center py-20">
         <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
@@ -412,7 +436,8 @@ export default function HomePage() {
   }
 
   // No videos fetched yet - show setup message with URL input
-  if (videos.length === 0 && !channelName) {
+  // But skip this for GS32 (transcript-only channel)
+  if (videos.length === 0 && !channelName && !isGS32) {
     return (
       <div className="space-y-6">
         {/* YouTube URL Input */}
@@ -539,6 +564,23 @@ export default function HomePage() {
 
       {/* Main Content */}
       <div className="flex-1 space-y-4 overflow-y-auto pr-2">
+        {/* Show Transcript Reader for GS32 channel */}
+        {selectedChannel === "GS32" ? (
+          <TranscriptReader
+            channelCode="GS32"
+            onSelect={(videoId, title, transcript) => {
+              setPreloadedTranscript(transcript)
+              setSelectedVideo({
+                videoId,
+                title,
+                thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+                duration: 0,
+                viewCount: 0
+              })
+            }}
+          />
+        ) : (
+          <>
         {/* YouTube URL Input */}
         <div className="flex gap-2">
           <div className="relative flex-1">
@@ -769,6 +811,8 @@ export default function HomePage() {
           </Link>
         </div>
       )}
+          </>
+        )}
       </div>
 
       {/* Video Popup */}
@@ -778,7 +822,11 @@ export default function HomePage() {
           audioFiles={audioFiles}
           defaultReferenceAudio={defaultReferenceAudio}
           prompt={prompt}
-          onClose={handlePopupClose}
+          initialTranscript={preloadedTranscript}
+          onClose={() => {
+            handlePopupClose()
+            setPreloadedTranscript("")
+          }}
           onSkip={selectMode ? handleSkipWithSelection : handleSkip}
           onAddToQueue={selectMode ? handleAddToQueueWithSelection : handleAddToQueue}
         />
