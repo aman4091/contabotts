@@ -69,14 +69,20 @@ export async function GET(request: NextRequest) {
       continue
     }
 
-    // Find videos that are due (scheduledFor <= now and status is waiting)
-    const dueVideos = delayedVideos.filter(v =>
-      v.status === "waiting" && new Date(v.scheduledFor) <= now
-    )
+    // Only process videos scheduled for TODAY (exactly 7 days after publish)
+    // Videos from past dates are skipped - they missed their window
+    const today = new Date()
+    const todayStr = today.toISOString().split('T')[0] // YYYY-MM-DD
+
+    const dueVideos = delayedVideos.filter(v => {
+      if (v.status !== "waiting") return false
+      const scheduledStr = new Date(v.scheduledFor).toISOString().split('T')[0]
+      return scheduledStr === todayStr
+    })
 
     if (dueVideos.length === 0) continue
 
-    console.log(`📡 Processing ${dueVideos.length} due videos for ${username}...`)
+    console.log(`📡 Processing ${dueVideos.length} videos scheduled for today (${todayStr}) for ${username}...`)
 
     // Get settings
     const settings = getSettings(username)

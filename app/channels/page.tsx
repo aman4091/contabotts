@@ -87,8 +87,9 @@ export default function ChannelsPage() {
   const [numVideos, setNumVideos] = useState(6)
   const [minDuration, setMinDuration] = useState(600)
 
-  // Active tab
+  // Active tabs
   const [activeTab, setActiveTab] = useState("all")
+  const [scheduledTab, setScheduledTab] = useState("all-scheduled")
 
   // Prompt editing
   const [editingPrompt, setEditingPrompt] = useState<string | null>(null)
@@ -97,12 +98,12 @@ export default function ChannelsPage() {
 
   useEffect(() => {
     loadChannels()
-    loadDelayedVideos()
   }, [])
 
   useEffect(() => {
     if (channels.length > 0) {
       loadCompletedVideos()
+      loadDelayedVideos()
     }
   }, [channels])
 
@@ -544,94 +545,47 @@ export default function ChannelsPage() {
         </CardContent>
       </Card>
 
-      {/* Delayed Videos Section */}
-      {delayedVideos.length > 0 && (
+      {/* Delayed Videos Section with Tabs */}
+      {delayedVideos.length > 0 && channels.length > 0 && (
         <Card className="glass border-amber-500/30">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-lg">
               <Clock className="w-5 h-5 text-amber-400" />
               Scheduled Videos ({delayedVideos.filter(v => v.status === "waiting").length} waiting)
             </CardTitle>
-            <CardDescription>Videos from live monitoring - will be processed after 7 days</CardDescription>
+            <CardDescription>Videos will be processed 7 days after publish date</CardDescription>
           </CardHeader>
           <CardContent>
-            <ScrollArea className="h-[300px]">
-              <div className="space-y-2">
-                {delayedVideos.map(video => (
-                  <div
-                    key={video.id}
-                    className={`flex items-center gap-3 p-2 rounded-lg border ${
-                      video.status === "waiting"
-                        ? "bg-amber-500/5 border-amber-500/20"
-                        : video.status === "completed"
-                        ? "bg-emerald-500/5 border-emerald-500/20"
-                        : video.status === "failed"
-                        ? "bg-red-500/5 border-red-500/20"
-                        : "bg-blue-500/5 border-blue-500/20"
-                    }`}
-                  >
-                    {/* Thumbnail */}
-                    <img
-                      src={video.thumbnail}
-                      alt={video.title}
-                      className="w-16 h-10 rounded object-cover shrink-0"
-                    />
+            <Tabs value={scheduledTab} onValueChange={setScheduledTab}>
+              <TabsList className="flex flex-wrap h-auto gap-1 mb-4">
+                <TabsTrigger value="all-scheduled" className="text-xs sm:text-sm">
+                  All ({delayedVideos.filter(v => v.status === "waiting").length})
+                </TabsTrigger>
+                {channels.map(channel => {
+                  const count = delayedVideos.filter(v => v.channelId === channel.channelId && v.status === "waiting").length
+                  if (count === 0) return null
+                  return (
+                    <TabsTrigger key={`scheduled-${channel.channelId}`} value={`scheduled-${channel.channelId}`} className="text-xs sm:text-sm">
+                      {channel.name} ({count})
+                    </TabsTrigger>
+                  )
+                })}
+              </TabsList>
 
-                    {/* Info */}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{video.title}</p>
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <span>{video.channelName}</span>
-                        <span>•</span>
-                        <span>
-                          {video.status === "waiting"
-                            ? `Scheduled: ${formatDateLocal(video.scheduledFor)}`
-                            : video.status === "processing"
-                            ? "Processing..."
-                            : video.status === "completed"
-                            ? "Completed"
-                            : "Failed"}
-                        </span>
-                      </div>
-                    </div>
+              <TabsContent value="all-scheduled">
+                <ScheduledVideoList videos={delayedVideos.filter(v => v.status === "waiting")} formatDate={formatDateLocal} removeVideo={removeDelayedVideo} />
+              </TabsContent>
 
-                    {/* Status Badge */}
-                    <Badge
-                      variant="outline"
-                      className={`shrink-0 ${
-                        video.status === "waiting"
-                          ? "text-amber-400 border-amber-500/30"
-                          : video.status === "completed"
-                          ? "text-emerald-400 border-emerald-500/30"
-                          : video.status === "failed"
-                          ? "text-red-400 border-red-500/30"
-                          : "text-blue-400 border-blue-500/30"
-                      }`}
-                    >
-                      {video.status === "waiting" ? (
-                        <>
-                          <Clock className="w-3 h-3 mr-1" />
-                          {Math.ceil((new Date(video.scheduledFor).getTime() - Date.now()) / (1000 * 60 * 60 * 24))}d
-                        </>
-                      ) : (
-                        video.status
-                      )}
-                    </Badge>
-
-                    {/* Remove Button */}
-                    {video.status === "waiting" && (
-                      <button
-                        onClick={() => removeDelayedVideo(video.videoId)}
-                        className="p-1.5 text-red-400 hover:bg-red-500/10 rounded"
-                        title="Remove from queue"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </ScrollArea>
+              {channels.map(channel => (
+                <TabsContent key={`scheduled-${channel.channelId}`} value={`scheduled-${channel.channelId}`}>
+                  <ScheduledVideoList
+                    videos={delayedVideos.filter(v => v.channelId === channel.channelId && v.status === "waiting")}
+                    formatDate={formatDateLocal}
+                    removeVideo={removeDelayedVideo}
+                  />
+                </TabsContent>
+              ))}
+            </Tabs>
           </CardContent>
         </Card>
       )}
@@ -752,6 +706,70 @@ function VideoList({
             </CardContent>
           </Card>
         ))}
+      </div>
+    </ScrollArea>
+  )
+}
+
+// Scheduled Video List Component
+function ScheduledVideoList({
+  videos,
+  formatDate,
+  removeVideo
+}: {
+  videos: DelayedVideo[]
+  formatDate: (date: string) => string
+  removeVideo: (videoId: string) => void
+}) {
+  if (videos.length === 0) {
+    return (
+      <div className="text-center py-8 text-muted-foreground">
+        <Clock className="w-10 h-10 mx-auto mb-3 opacity-30" />
+        <p>No scheduled videos</p>
+      </div>
+    )
+  }
+
+  // Sort by scheduledFor date
+  const sorted = [...videos].sort((a, b) =>
+    new Date(a.scheduledFor).getTime() - new Date(b.scheduledFor).getTime()
+  )
+
+  return (
+    <ScrollArea className="h-[300px]">
+      <div className="space-y-2">
+        {sorted.map(video => {
+          const daysLeft = Math.ceil((new Date(video.scheduledFor).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+          return (
+            <div
+              key={video.id}
+              className="flex items-center gap-3 p-2 rounded-lg border bg-amber-500/5 border-amber-500/20"
+            >
+              <img
+                src={video.thumbnail}
+                alt={video.title}
+                className="w-16 h-10 rounded object-cover shrink-0"
+              />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">{video.title}</p>
+                <p className="text-xs text-muted-foreground">
+                  Scheduled: {formatDate(video.scheduledFor)}
+                </p>
+              </div>
+              <Badge variant="outline" className="shrink-0 text-amber-400 border-amber-500/30">
+                <Clock className="w-3 h-3 mr-1" />
+                {daysLeft <= 0 ? "Today" : `${daysLeft}d`}
+              </Badge>
+              <button
+                onClick={() => removeVideo(video.videoId)}
+                className="p-1.5 text-red-400 hover:bg-red-500/10 rounded"
+                title="Remove from queue"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          )
+        })}
       </div>
     </ScrollArea>
   )
