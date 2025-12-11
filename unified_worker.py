@@ -279,14 +279,34 @@ async def upload_to_pixeldrain(file_path: str) -> Optional[str]:
         print(f"Pixeldrain error: {e}")
         return None
 
-async def upload_file(file_path: str) -> Optional[str]:
-    """Upload file to Gofile, fallback to Pixeldrain"""
+async def upload_to_contabo(file_path: str, username: str, video_number: int, file_type: str = "video") -> Optional[str]:
+    """Upload file to Contabo file server and return download URL"""
+    try:
+        ext = os.path.splitext(file_path)[1] or (".mp4" if file_type == "video" else ".wav")
+        remote_path = f"users/{username}/organized/video_{video_number}/{file_type}{ext}"
+
+        if queue.upload_file(file_path, remote_path):
+            # Generate download URL
+            download_url = f"{FILE_SERVER_URL}/files/{remote_path}"
+            print(f"✅ Uploaded to Contabo: {download_url}")
+            return download_url
+        return None
+    except Exception as e:
+        print(f"Contabo upload error: {e}")
+        return None
+
+async def upload_file(file_path: str, username: str = "default", video_number: int = 0, file_type: str = "video") -> Optional[str]:
+    """Upload file to Gofile, fallback to Pixeldrain, then Contabo"""
     print(f"📤 Uploading to Gofile...")
     link = await upload_to_gofile(file_path)
     if link:
         return link
     print(f"⚠️ Gofile failed, trying Pixeldrain...")
     link = await upload_to_pixeldrain(file_path)
+    if link:
+        return link
+    print(f"⚠️ Pixeldrain failed, trying Contabo...")
+    link = await upload_to_contabo(file_path, username, video_number, file_type)
     if link:
         return link
     print(f"❌ All upload methods failed")
@@ -741,41 +761,57 @@ async def process_job(job: Dict) -> bool:
             print(f"✅ Audio downloaded successfully")
 
         else:
-            # NORMAL MODE: Generate TTS audio
+            # NORMAL MODE: Generate TTS audio (or reuse from Contabo if exists)
             print("🎧 STEP 1: Audio Generation")
             print("="*50)
 
-            script = job.get('script_text') or queue.get_script(org_path)
-            if not script: raise Exception("Script fetch failed")
-            if not queue.get_reference_audio(ref_audio_file, local_ref_audio): raise Exception(f"Ref audio failed: {ref_audio_file}")
-
-            if not generate_audio_f5tts(script, local_ref_audio, local_audio_out):
-                raise Exception("TTS failed")
-
-            audio_gofile = await upload_file(local_audio_out)
-            if not audio_gofile:
-                raise Exception("Audio upload failed")
-
-            print(f"✅ Audio uploaded: {audio_gofile}")
-
-            print("📤 Uploading audio to Contabo...")
             username = job.get("username", "default")
             audio_remote_path = f"users/{username}/organized/video_{video_number}/audio.wav"
-            if queue.upload_file(local_audio_out, audio_remote_path):
-                print(f"✅ Audio uploaded to Contabo: {audio_remote_path}")
-            else:
-                print("⚠️ Contabo audio upload failed (non-critical)")
+            script = job.get('script_text') or queue.get_script(org_path)
+            audio_reused = False
 
-            script_filename = f"{channel}_V{video_number}_{job.get('date', 'unknown')}_script.txt"
-            send_telegram_document(
-                script_text=script,
-                caption=f"🎵 <b>Audio Complete</b>\n"
-                        f"<b>Channel:</b> {channel} | <b>Video:</b> #{video_number}\n"
-                        f"<b>Date:</b> {job.get('date', 'N/A')}\n\n"
-                        f"<b>🔗 Audio:</b> {audio_gofile}",
-                filename=script_filename,
-                username=job.get("username")
-            )
+            # Check if audio already exists on Contabo (retry scenario)
+            print("   Checking if audio already exists on Contabo...")
+            if queue.download_file(audio_remote_path, local_audio_out):
+                print(f"✅ Found existing audio on Contabo - reusing!")
+                audio_gofile = f"{FILE_SERVER_URL}/files/{audio_remote_path}"
+                audio_reused = True
+            else:
+                # Generate new audio
+                print("   No existing audio found, generating new...")
+                if not script: raise Exception("Script fetch failed")
+                if not queue.get_reference_audio(ref_audio_file, local_ref_audio): raise Exception(f"Ref audio failed: {ref_audio_file}")
+
+                if not generate_audio_f5tts(script, local_ref_audio, local_audio_out):
+                    raise Exception("TTS failed")
+
+                # Upload audio (will try Gofile, Pixeldrain, then Contabo)
+                audio_gofile = await upload_file(local_audio_out, username, video_number, "audio")
+                if not audio_gofile:
+                    raise Exception("Audio upload failed")
+
+                print(f"✅ Audio uploaded: {audio_gofile}")
+
+                # Also upload to Contabo as backup (if not already there from fallback)
+                if "gofile.io" in audio_gofile or "pixeldrain.com" in audio_gofile:
+                    print("📤 Uploading audio backup to Contabo...")
+                    if queue.upload_file(local_audio_out, audio_remote_path):
+                        print(f"✅ Audio backup uploaded to Contabo")
+                    else:
+                        print("⚠️ Contabo audio backup failed (non-critical)")
+
+            # Only send audio notification if not reusing (avoid duplicate notifications on retry)
+            if not audio_reused and script:
+                script_filename = f"{channel}_V{video_number}_{job.get('date', 'unknown')}_script.txt"
+                send_telegram_document(
+                    script_text=script,
+                    caption=f"🎵 <b>Audio Complete</b>\n"
+                            f"<b>Channel:</b> {channel} | <b>Video:</b> #{video_number}\n"
+                            f"<b>Date:</b> {job.get('date', 'N/A')}\n\n"
+                            f"<b>🔗 Audio:</b> {audio_gofile}",
+                    filename=script_filename,
+                    username=job.get("username")
+                )
 
         # ========== AUDIO ONLY: Skip Video Generation ==========
         if is_audio_only:
@@ -916,7 +952,8 @@ async def process_job(job: Dict) -> bool:
         if ass_path and os.path.exists(ass_path):
             os.remove(ass_path)
 
-        video_gofile = await upload_file(local_video_out)
+        username = job.get("username", "default")
+        video_gofile = await upload_file(local_video_out, username, video_number, "video")
         if not video_gofile:
             raise Exception("Video upload failed")
 
@@ -944,15 +981,25 @@ async def process_job(job: Dict) -> bool:
             )
         else:
             # Normal job - send with script document
-            send_telegram_document(
-                script_text=script,
-                caption=f"{video_type} <b>Complete</b>\n"
-                        f"<b>Channel:</b> {channel} | <b>Video:</b> #{video_number}\n"
-                        f"<b>Date:</b> {job.get('date', 'N/A')}\n\n"
-                        f"<b>🔗 Video:</b> {video_gofile}",
-                filename=script_filename,
-                username=job.get("username")
-            )
+            script_filename = f"{channel}_V{video_number}_{job.get('date', 'unknown')}_script.txt"
+            if script:
+                send_telegram_document(
+                    script_text=script,
+                    caption=f"{video_type} <b>Complete</b>\n"
+                            f"<b>Channel:</b> {channel} | <b>Video:</b> #{video_number}\n"
+                            f"<b>Date:</b> {job.get('date', 'N/A')}\n\n"
+                            f"<b>🔗 Video:</b> {video_gofile}",
+                    filename=script_filename,
+                    username=job.get("username")
+                )
+            else:
+                send_telegram(
+                    f"{video_type} <b>Complete</b>\n"
+                    f"<b>Channel:</b> {channel} | <b>Video:</b> #{video_number}\n"
+                    f"<b>Date:</b> {job.get('date', 'N/A')}\n\n"
+                    f"<b>🔗 Video:</b> {video_gofile}",
+                    username=job.get("username")
+                )
 
         print("\n" + "="*50)
         print(f"✅ JOB COMPLETE: {job_id[:8]} {'(SHORT)' if is_short else ''} {'(VIDEO-ONLY)' if is_video_only else ''}")
