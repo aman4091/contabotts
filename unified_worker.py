@@ -1018,6 +1018,9 @@ async def process_job(job: Dict) -> bool:
         try:
             for f in [local_audio_out, local_video_out, local_image, local_ref_audio]:
                 if f and os.path.exists(f): os.remove(f)
+            # Also cleanup multiple custom images
+            for img in local_images:
+                if img and os.path.exists(img): os.remove(img)
         except: pass
 
 
