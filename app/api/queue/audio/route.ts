@@ -157,7 +157,8 @@ export async function POST(request: NextRequest) {
       customImages,
       audioOnly = false,
       aiImageMode = false,
-      enhanceAudio = true
+      enhanceAudio = true,
+      priorityQueue = false
     } = body
 
     if (!script) {
@@ -196,8 +197,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Create audio job
-    // Priority: anu = 10 (high), aman = 5 (normal)
-    const priority = username === "anu" ? 10 : 5
+    // Priority: priorityQueue = 100 (highest), anu = 10 (high), aman = 5 (normal)
+    const priority = priorityQueue ? 100 : (username === "anu" ? 10 : 5)
     const jobId = randomUUID()
     const result = await createAudioJob({
       job_id: jobId,

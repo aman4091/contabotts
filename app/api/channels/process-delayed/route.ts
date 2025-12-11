@@ -32,6 +32,23 @@ function getSettings(username: string) {
   return { prompts: {} }
 }
 
+// Processing status tracker
+function updateProcessingStatus(username: string, status: {
+  isProcessing: boolean
+  currentVideo?: string
+  currentStep?: string
+  totalVideos?: number
+  completedVideos?: number
+  failedVideos?: number
+  startedAt?: string
+  videos?: { title: string; status: string; step?: string }[]
+}) {
+  const statusPath = path.join(DATA_DIR, "users", username, "channel-automation", "processing-status.json")
+  const dir = path.dirname(statusPath)
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(statusPath, JSON.stringify({ ...status, updatedAt: new Date().toISOString() }, null, 2))
+}
+
 // GET - Process delayed videos that are due (called by cron)
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
@@ -84,6 +101,19 @@ export async function GET(request: NextRequest) {
 
     console.log(`📡 Processing ${dueVideos.length} videos scheduled for today (${todayStr}) for ${username}...`)
 
+    // Initialize processing status
+    const videoStatuses = dueVideos.map(v => ({ title: v.title, status: "pending", step: "" }))
+    let completedCount = 0
+    let failedCount = 0
+    updateProcessingStatus(username, {
+      isProcessing: true,
+      totalVideos: dueVideos.length,
+      completedVideos: 0,
+      failedVideos: 0,
+      startedAt: new Date().toISOString(),
+      videos: videoStatuses
+    })
+
     // Get settings
     const settings = getSettings(username)
     const referenceAudio = settings.defaultReferenceAudio
@@ -104,11 +134,22 @@ export async function GET(request: NextRequest) {
       } catch {}
     }
 
-    for (const video of dueVideos) {
+    for (let i = 0; i < dueVideos.length; i++) {
+      const video = dueVideos[i]
       console.log(`   Processing: ${video.title}`)
 
       // Update status to processing
       video.status = "processing"
+      videoStatuses[i] = { title: video.title, status: "processing", step: "Starting..." }
+      updateProcessingStatus(username, {
+        isProcessing: true,
+        currentVideo: video.title,
+        currentStep: "Starting...",
+        totalVideos: dueVideos.length,
+        completedVideos: completedCount,
+        failedVideos: failedCount,
+        videos: videoStatuses
+      })
       fs.writeFileSync(delayedPath, JSON.stringify(delayedVideos, null, 2))
 
       try {
@@ -119,6 +160,9 @@ export async function GET(request: NextRequest) {
         if (!channelPrompt) {
           console.log(`   No prompt for channel ${video.channelName}, skipping`)
           video.status = "failed"
+          failedCount++
+          videoStatuses[i] = { title: video.title, status: "failed", step: "No prompt configured" }
+          updateProcessingStatus(username, { isProcessing: true, totalVideos: dueVideos.length, completedVideos: completedCount, failedVideos: failedCount, videos: videoStatuses })
           fs.writeFileSync(delayedPath, JSON.stringify(delayedVideos, null, 2))
           results.push({ username, channel: video.channelName, video: video.title, status: "failed - no prompt" })
           continue
@@ -126,10 +170,16 @@ export async function GET(request: NextRequest) {
 
         // 1. Fetch transcript
         console.log(`   Fetching transcript...`)
+        videoStatuses[i] = { title: video.title, status: "processing", step: "Fetching transcript..." }
+        updateProcessingStatus(username, { isProcessing: true, currentVideo: video.title, currentStep: "Fetching transcript...", totalVideos: dueVideos.length, completedVideos: completedCount, failedVideos: failedCount, videos: videoStatuses })
+
         const transcript = await fetchTranscript(video.videoId)
         if (!transcript) {
           console.log(`   No transcript found`)
           video.status = "failed"
+          failedCount++
+          videoStatuses[i] = { title: video.title, status: "failed", step: "No transcript found" }
+          updateProcessingStatus(username, { isProcessing: true, totalVideos: dueVideos.length, completedVideos: completedCount, failedVideos: failedCount, videos: videoStatuses })
           fs.writeFileSync(delayedPath, JSON.stringify(delayedVideos, null, 2))
           results.push({ username, channel: video.channelName, video: video.title, status: "failed - no transcript" })
           continue
@@ -137,10 +187,16 @@ export async function GET(request: NextRequest) {
 
         // 2. Process with Gemini
         console.log(`   Processing with Gemini...`)
+        videoStatuses[i] = { title: video.title, status: "processing", step: "Processing with Gemini..." }
+        updateProcessingStatus(username, { isProcessing: true, currentVideo: video.title, currentStep: "Processing with Gemini...", totalVideos: dueVideos.length, completedVideos: completedCount, failedVideos: failedCount, videos: videoStatuses })
+
         const script = await processWithGemini(transcript, channelPrompt, maxChunkSize)
         if (!script) {
           console.log(`   Gemini failed`)
           video.status = "failed"
+          failedCount++
+          videoStatuses[i] = { title: video.title, status: "failed", step: "Gemini processing failed" }
+          updateProcessingStatus(username, { isProcessing: true, totalVideos: dueVideos.length, completedVideos: completedCount, failedVideos: failedCount, videos: videoStatuses })
           fs.writeFileSync(delayedPath, JSON.stringify(delayedVideos, null, 2))
           results.push({ username, channel: video.channelName, video: video.title, status: "failed - gemini error" })
           continue
@@ -148,53 +204,69 @@ export async function GET(request: NextRequest) {
 
         // 3. Generate 100 titles (5 calls x 20 titles each)
         console.log(`   Generating titles...`)
+        videoStatuses[i] = { title: video.title, status: "processing", step: "Generating 100 titles..." }
+        updateProcessingStatus(username, { isProcessing: true, currentVideo: video.title, currentStep: "Generating 100 titles...", totalVideos: dueVideos.length, completedVideos: completedCount, failedVideos: failedCount, videos: videoStatuses })
+
         const titlePrompt = settings.prompts?.title || "give me 20 clickbait titles for the below script"
         const titles = await generateTitles(script, titlePrompt)
         console.log(`   Generated ${titles.length} titles`)
 
         // 4. Get next video number and save to organized
+        videoStatuses[i] = { title: video.title, status: "processing", step: "Saving files..." }
+        updateProcessingStatus(username, { isProcessing: true, currentVideo: video.title, currentStep: "Saving files...", totalVideos: dueVideos.length, completedVideos: completedCount, failedVideos: failedCount, videos: videoStatuses })
+
         const videoNumber = getNextVideoNumber(username)
         const folderName = `video_${videoNumber}`
         saveToOrganized(username, videoNumber, transcript, script, video.title, titles)
 
         // 6. Download and save thumbnail
         console.log(`   Downloading thumbnail...`)
+        videoStatuses[i] = { title: video.title, status: "processing", step: "Downloading thumbnail..." }
+        updateProcessingStatus(username, { isProcessing: true, currentVideo: video.title, currentStep: "Downloading thumbnail...", totalVideos: dueVideos.length, completedVideos: completedCount, failedVideos: failedCount, videos: videoStatuses })
+
         await downloadThumbnail(username, videoNumber, video.thumbnail, video.videoId)
 
         // 7. Add to audio queue
         const audioCounter = await getNextAudioCounter()
+        const organizedPath = path.join(DATA_DIR, "users", username, "organized", folderName)
         const job = {
-          id: randomUUID(),
-          script,
-          referenceAudio,
-          audioOnly: false,
-          aiImage: useAiImage,
-          enhanceAudio: true,
+          job_id: randomUUID(),
+          script_text: script,
+          channel_code: video.channelName.substring(0, 10).replace(/[^a-zA-Z0-9]/g, ""),
+          video_number: videoNumber,
+          date: new Date().toISOString().split("T")[0],
+          audio_counter: audioCounter,
+          organized_path: organizedPath,
+          priority: 1,
           username,
-          videoId: video.videoId,
-          title: video.title,
-          folderName,
-          audioNumber: audioCounter,
-          channelId: video.channelId,
-          channelName: video.channelName,
-          source: "delayed_processing",
-          createdAt: new Date().toISOString()
+          reference_audio: referenceAudio,
+          audio_only: false,
+          use_ai_image: useAiImage,
+          enhance_audio: true
         }
+
+        videoStatuses[i] = { title: video.title, status: "processing", step: "Adding to audio queue..." }
+        updateProcessingStatus(username, { isProcessing: true, currentVideo: video.title, currentStep: "Adding to audio queue...", totalVideos: dueVideos.length, completedVideos: completedCount, failedVideos: failedCount, videos: videoStatuses })
 
         const result = await createAudioJob(job)
         if (result.success) {
           console.log(`   ✅ Added to queue as ${folderName}`)
           video.status = "completed"
+          completedCount++
+          videoStatuses[i] = { title: video.title, status: "completed", step: `Done - ${folderName}` }
           results.push({ username, channel: video.channelName, video: video.title, status: "completed" })
 
           // Save to completed tracking
-          saveToCompleted(username, video.channelId, video.videoId, video.title, videoNumber, folderName, job.id)
+          saveToCompleted(username, video.channelId, video.videoId, video.title, videoNumber, folderName, job.job_id)
         } else {
           console.log(`   Failed to add to queue`)
           video.status = "failed"
+          failedCount++
+          videoStatuses[i] = { title: video.title, status: "failed", step: "Queue error" }
           results.push({ username, channel: video.channelName, video: video.title, status: "failed - queue error" })
         }
 
+        updateProcessingStatus(username, { isProcessing: true, totalVideos: dueVideos.length, completedVideos: completedCount, failedVideos: failedCount, videos: videoStatuses })
         fs.writeFileSync(delayedPath, JSON.stringify(delayedVideos, null, 2))
 
         // Delay between videos
@@ -202,10 +274,22 @@ export async function GET(request: NextRequest) {
       } catch (error) {
         console.error(`   Error processing ${video.title}:`, error)
         video.status = "failed"
+        failedCount++
+        videoStatuses[i] = { title: video.title, status: "failed", step: "Error occurred" }
+        updateProcessingStatus(username, { isProcessing: true, totalVideos: dueVideos.length, completedVideos: completedCount, failedVideos: failedCount, videos: videoStatuses })
         fs.writeFileSync(delayedPath, JSON.stringify(delayedVideos, null, 2))
         results.push({ username, channel: video.channelName, video: video.title, status: "failed - error" })
       }
     }
+
+    // Processing complete for this user
+    updateProcessingStatus(username, {
+      isProcessing: false,
+      totalVideos: dueVideos.length,
+      completedVideos: completedCount,
+      failedVideos: failedCount,
+      videos: videoStatuses
+    })
 
     // Clean up completed/failed videos older than 7 days
     const cleanupDate = new Date()

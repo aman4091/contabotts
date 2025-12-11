@@ -98,9 +98,33 @@ export default function ChannelsPage() {
   const [promptValue, setPromptValue] = useState("")
   const [savingPrompt, setSavingPrompt] = useState(false)
 
+  // Processing status
+  const [processingStatus, setProcessingStatus] = useState<{
+    isProcessing: boolean
+    currentVideo?: string
+    currentStep?: string
+    totalVideos?: number
+    completedVideos?: number
+    failedVideos?: number
+    videos?: { title: string; status: string; step?: string }[]
+    updatedAt?: string
+  } | null>(null)
+
   useEffect(() => {
     loadChannels()
+    loadProcessingStatus()
+    // Poll processing status every 3 seconds
+    const interval = setInterval(loadProcessingStatus, 3000)
+    return () => clearInterval(interval)
   }, [])
+
+  async function loadProcessingStatus() {
+    try {
+      const res = await fetch("/api/channels/processing-status")
+      const data = await res.json()
+      setProcessingStatus(data)
+    } catch {}
+  }
 
   useEffect(() => {
     if (channels.length > 0) {
@@ -370,6 +394,59 @@ export default function ChannelsPage() {
         </Button>
       </div>
 
+      {/* Live Processing Status */}
+      {processingStatus?.isProcessing && (
+        <Card className="glass border-green-500/50 bg-green-500/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-lg text-green-400">
+              <Loader2 className="w-5 h-5 animate-spin" />
+              Processing Videos
+              <Badge className="ml-2 bg-green-500/20 text-green-300">
+                {processingStatus.completedVideos || 0}/{processingStatus.totalVideos || 0} Done
+              </Badge>
+              {(processingStatus.failedVideos || 0) > 0 && (
+                <Badge className="bg-red-500/20 text-red-300">
+                  {processingStatus.failedVideos} Failed
+                </Badge>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {/* Current video */}
+              {processingStatus.currentVideo && (
+                <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/20">
+                  <p className="text-sm font-medium text-green-300 truncate">{processingStatus.currentVideo}</p>
+                  <p className="text-xs text-green-400/70 mt-1 flex items-center gap-2">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    {processingStatus.currentStep}
+                  </p>
+                </div>
+              )}
+              {/* Video list */}
+              {processingStatus.videos && processingStatus.videos.length > 0 && (
+                <ScrollArea className="h-[150px] mt-2">
+                  <div className="space-y-1">
+                    {processingStatus.videos.map((v, idx) => (
+                      <div key={idx} className={`flex items-center gap-2 p-2 rounded text-xs ${
+                        v.status === "completed" ? "bg-green-500/10 text-green-300" :
+                        v.status === "failed" ? "bg-red-500/10 text-red-300" :
+                        v.status === "processing" ? "bg-amber-500/10 text-amber-300" :
+                        "bg-zinc-500/10 text-zinc-400"
+                      }`}>
+                        {v.status === "completed" ? "✅" : v.status === "failed" ? "❌" : v.status === "processing" ? "⏳" : "⏸️"}
+                        <span className="flex-1 truncate">{v.title}</span>
+                        <span className="text-[10px] opacity-70">{v.step}</span>
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Add Channel Card */}
       <Card className="glass border-cyan-500/30">
         <CardHeader>
@@ -578,6 +655,12 @@ export default function ChannelsPage() {
                 <CardTitle className="flex items-center gap-2 text-lg">
                   <Clock className="w-5 h-5 text-amber-400" />
                   Scheduled Videos ({filterByDate(delayedVideos.filter(v => v.status === "waiting")).length} {scheduledDateFilter !== "all" ? `on ${new Date(scheduledDateFilter).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}` : "waiting"})
+                  {delayedVideos.filter(v => v.status === "processing").length > 0 && (
+                    <Badge className="ml-2 bg-green-500/20 text-green-400 border-green-500/30 animate-pulse">
+                      <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                      {delayedVideos.filter(v => v.status === "processing").length} Processing
+                    </Badge>
+                  )}
                 </CardTitle>
                 <CardDescription>Videos will be processed 7 days after publish date</CardDescription>
               </div>

@@ -26,7 +26,8 @@ import {
   Trash2,
   Upload,
   Volume2,
-  Mic2
+  Mic2,
+  Zap
 } from "lucide-react"
 
 interface Video {
@@ -114,6 +115,9 @@ export function VideoPopup({
 
   // Audio enhancement mode (default: on)
   const [enhanceAudio, setEnhanceAudio] = useState(true)
+
+  // Priority queue mode (process this job first)
+  const [priorityQueue, setPriorityQueue] = useState(false)
 
   useEffect(() => {
     // If initialTranscript is provided, use it instead of fetching
@@ -426,7 +430,8 @@ export function VideoPopup({
           audioOnly,
           customImages: uploadedImagePaths.length > 0 ? uploadedImagePaths : undefined,
           aiImageMode,
-          enhanceAudio
+          enhanceAudio,
+          priorityQueue
         })
       })
 
@@ -882,6 +887,16 @@ export function VideoPopup({
               />
               <Mic2 className="w-4 h-4 text-amber-400" />
               <span className="text-sm text-muted-foreground">Enhance Audio</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={priorityQueue}
+                onChange={e => setPriorityQueue(e.target.checked)}
+                className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-red-500 focus:ring-red-500"
+              />
+              <Zap className="w-4 h-4 text-red-400" />
+              <span className="text-sm text-muted-foreground">Priority</span>
             </label>
             <Button
               onClick={handleAddToQueue}
