@@ -22,7 +22,9 @@ import {
   RotateCcw,
   ChevronDown,
   ChevronUp,
-  Volume2
+  Volume2,
+  Mic2,
+  Zap
 } from "lucide-react"
 
 interface AudioFile {
@@ -70,6 +72,15 @@ export function TranscriptPopup({
 
   // AI Image generation mode
   const [aiImageMode, setAiImageMode] = useState(false)
+
+  // Video only mode (wait for external audio link)
+  const [videoOnlyMode, setVideoOnlyMode] = useState(false)
+
+  // Enhance audio (ON by default)
+  const [enhanceAudio, setEnhanceAudio] = useState(true)
+
+  // Priority queue
+  const [priorityQueue, setPriorityQueue] = useState(false)
 
   async function handleCopy() {
     if (!transcript) {
@@ -326,7 +337,10 @@ export function TranscriptPopup({
           referenceAudio: selectedAudio,
           audioEnabled: true,
           audioOnly,
-          aiImageMode
+          aiImageMode,
+          videoOnlyMode,
+          enhanceAudio,
+          priorityQueue
         })
       })
 
@@ -649,11 +663,29 @@ export function TranscriptPopup({
               <input
                 type="checkbox"
                 checked={audioOnly}
-                onChange={e => setAudioOnly(e.target.checked)}
+                onChange={e => {
+                  setAudioOnly(e.target.checked)
+                  if (e.target.checked) setVideoOnlyMode(false)
+                }}
+                disabled={videoOnlyMode}
                 className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-cyan-500 focus:ring-cyan-500"
               />
               <Volume2 className="w-4 h-4 text-muted-foreground" />
               <span className="text-sm text-muted-foreground">Audio Only</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={videoOnlyMode}
+                onChange={e => {
+                  setVideoOnlyMode(e.target.checked)
+                  if (e.target.checked) setAudioOnly(false)
+                }}
+                disabled={audioOnly}
+                className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-orange-500 focus:ring-orange-500"
+              />
+              <Mic2 className="w-4 h-4 text-orange-400" />
+              <span className="text-sm text-muted-foreground">Video Only</span>
             </label>
             <label className="flex items-center gap-2 cursor-pointer select-none">
               <input
@@ -664,6 +696,26 @@ export function TranscriptPopup({
               />
               <Sparkles className="w-4 h-4 text-violet-400" />
               <span className="text-sm text-muted-foreground">AI Images</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={enhanceAudio}
+                onChange={e => setEnhanceAudio(e.target.checked)}
+                className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-emerald-500 focus:ring-emerald-500"
+              />
+              <Mic2 className="w-4 h-4 text-emerald-400" />
+              <span className="text-sm text-muted-foreground">Enhance</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={priorityQueue}
+                onChange={e => setPriorityQueue(e.target.checked)}
+                className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-yellow-500 focus:ring-yellow-500"
+              />
+              <Zap className="w-4 h-4 text-yellow-400" />
+              <span className="text-sm text-muted-foreground">Priority</span>
             </label>
             <Button
               onClick={handleAddToQueue}
