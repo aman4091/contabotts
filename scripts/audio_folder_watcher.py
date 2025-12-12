@@ -17,7 +17,7 @@ from datetime import datetime
 # Config
 WATCH_FOLDER = "/root/tts/data/external-audio"
 FILE_SERVER_URL = "http://localhost:8000"  # For API calls
-FILE_SERVER_EXTERNAL_URL = "http://69.62.157.161:8000"  # For audio URLs (Vast.ai access)
+FILE_SERVER_EXTERNAL_URL = "http://38.242.144.132:8000"  # For audio URLs (Vast.ai access)
 FILE_SERVER_API_KEY = "tts-secret-key-2024"
 POLL_INTERVAL = 5  # Check every 5 seconds
 
