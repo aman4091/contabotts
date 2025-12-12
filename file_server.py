@@ -196,6 +196,38 @@ async def upload_file(
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 
+@app.post("/upload/external-audio")
+async def upload_external_audio(
+    file: UploadFile = File(...),
+    x_api_key: Optional[str] = Header(None)
+):
+    """
+    Upload audio file to external-audio folder for processing
+    """
+    verify_api_key(x_api_key)
+
+    # Save to external-audio folder
+    dest_folder = BASE_PATH / "external-audio"
+    dest_folder.mkdir(parents=True, exist_ok=True)
+
+    file_path = dest_folder / file.filename
+
+    try:
+        with open(file_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+
+        file_size = os.path.getsize(file_path)
+
+        return {
+            "success": True,
+            "path": f"external-audio/{file.filename}",
+            "size": file_size,
+            "filename": file.filename
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+
 @app.delete("/files/{path:path}")
 async def delete_file(
     path: str,
