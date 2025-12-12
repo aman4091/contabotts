@@ -207,7 +207,7 @@ async def upload_external_audio(
     verify_api_key(x_api_key)
 
     # Save to external-audio folder
-    dest_folder = BASE_PATH / "external-audio"
+    dest_folder = Path(BASE_PATH) / "external-audio"
     dest_folder.mkdir(parents=True, exist_ok=True)
 
     file_path = dest_folder / file.filename
