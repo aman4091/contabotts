@@ -713,6 +713,17 @@ def render_video_shorts(image_path: str, audio_path: str, ass_path: str, output_
 async def process_job(job: Dict) -> bool:
     """Process Audio + Video in single job"""
     job_id = job["job_id"]
+
+    # Check for video_only_waiting jobs that need audio link
+    video_only_waiting = job.get("video_only_waiting", False)
+    existing_audio_link = job.get("existing_audio_link")
+
+    if video_only_waiting and not existing_audio_link:
+        print(f"\n⏸️ Job {job_id[:8]} is waiting for audio link - returning to queue")
+        # Fail the job so it goes back to pending for retry
+        queue.fail_audio_job(job_id, WORKER_ID, "Waiting for audio link to be added")
+        return True  # Return True so we don't count this as a failure
+
     is_video_only = job.get("videoOnly", False)
     is_audio_only = job.get("audio_only", False)
 
@@ -722,7 +733,11 @@ async def process_job(job: Dict) -> bool:
     ref_audio_file = job.get("reference_audio") or f"{channel}.wav"
     video_number = job.get("video_number", 0)
 
-    if is_video_only:
+    if video_only_waiting and existing_audio_link:
+        # Has audio link now - process as priority
+        print(f"\n🎯 Processing Video-Only-Waiting Job (audio link ready): {job_id[:8]}")
+        print(f"   Audio Link: {existing_audio_link[:50]}...")
+    elif is_video_only:
         print(f"\n🎯 Processing Video-Only Job: {job_id[:8]}")
         print(f"   Audio Link: {job.get('audioLink', 'N/A')[:50]}...")
     elif is_audio_only:

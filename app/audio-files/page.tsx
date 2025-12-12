@@ -50,6 +50,7 @@ interface Job {
   audio_link?: string
   video_link?: string
   existing_audio_link?: string
+  video_only_waiting?: boolean
   error_message?: string
   created_at: string
   completed_at?: string
@@ -442,6 +443,11 @@ export default function AudioFilesPage() {
                                   {job.existing_audio_link && (
                                     <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/30 text-xs">
                                       Audio Ready
+                                    </Badge>
+                                  )}
+                                  {job.video_only_waiting && !job.existing_audio_link && (
+                                    <Badge className="bg-orange-500/20 text-orange-400 border-orange-500/30 text-xs animate-pulse">
+                                      Waiting for Audio
                                     </Badge>
                                   )}
                                 </div>

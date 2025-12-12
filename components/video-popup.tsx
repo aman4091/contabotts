@@ -110,6 +110,9 @@ export function VideoPopup({
   // Audio only mode
   const [audioOnly, setAudioOnly] = useState(false)
 
+  // Video Only mode (wait for external audio link)
+  const [videoOnlyMode, setVideoOnlyMode] = useState(false)
+
   // AI Image generation mode
   const [aiImageMode, setAiImageMode] = useState(false)
 
@@ -428,6 +431,7 @@ export function VideoPopup({
           referenceAudio: selectedAudio,
           audioEnabled: true,
           audioOnly,
+          videoOnlyMode,
           customImages: uploadedImagePaths.length > 0 ? uploadedImagePaths : undefined,
           aiImageMode,
           enhanceAudio,
@@ -862,11 +866,29 @@ export function VideoPopup({
               <input
                 type="checkbox"
                 checked={audioOnly}
-                onChange={e => setAudioOnly(e.target.checked)}
-                className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-cyan-500 focus:ring-cyan-500"
+                onChange={e => {
+                  setAudioOnly(e.target.checked)
+                  if (e.target.checked) setVideoOnlyMode(false)
+                }}
+                disabled={videoOnlyMode}
+                className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-cyan-500 focus:ring-cyan-500 disabled:opacity-50"
               />
               <Volume2 className="w-4 h-4 text-muted-foreground" />
               <span className="text-sm text-muted-foreground">Audio Only</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer select-none" title="Wait for external audio link before processing">
+              <input
+                type="checkbox"
+                checked={videoOnlyMode}
+                onChange={e => {
+                  setVideoOnlyMode(e.target.checked)
+                  if (e.target.checked) setAudioOnly(false)
+                }}
+                disabled={audioOnly}
+                className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-purple-500 focus:ring-purple-500 disabled:opacity-50"
+              />
+              <ExternalLink className="w-4 h-4 text-purple-400" />
+              <span className="text-sm text-muted-foreground">Video Only</span>
             </label>
             <label className="flex items-center gap-2 cursor-pointer select-none">
               <input
