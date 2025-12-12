@@ -934,6 +934,73 @@ async def resume_all_jobs(
     return {"success": True, "resumed_count": resumed_count}
 
 
+@app.post("/queue/{queue_type}/jobs/{job_id}/update")
+async def update_job(
+    queue_type: str,
+    job_id: str,
+    updates: dict = Body(...),
+    x_api_key: Optional[str] = Header(None)
+):
+    """
+    Update job fields (like existing_audio_link)
+    Searches all folders to find the job
+
+    Args:
+        queue_type: 'audio' or 'video'
+        job_id: Job ID
+        updates: Dictionary of fields to update
+
+    Returns:
+        Success status
+    """
+    verify_api_key(x_api_key)
+    paths = get_queue_paths(queue_type)
+
+    # Find the job in any folder
+    source_file = None
+    current_status = None
+
+    for status, folder in paths.items():
+        # Check direct match
+        job_file = folder / f"{job_id}.json"
+        if job_file.exists():
+            source_file = job_file
+            current_status = status
+            break
+        # Check processing folder with worker prefix
+        if status == "processing":
+            for f in folder.glob(f"*_{job_id}.json"):
+                source_file = f
+                current_status = status
+                break
+
+    if not source_file:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    # Read and update job data
+    with open(source_file) as f:
+        job_data = json.load(f)
+
+    # Update only allowed fields
+    allowed_fields = ["existing_audio_link", "audio_link", "video_link", "notes"]
+    for key, value in updates.items():
+        if key in allowed_fields:
+            job_data[key] = value
+
+    job_data["updated_at"] = datetime.now().isoformat()
+
+    # Save back to same location
+    with open(source_file, "w") as f:
+        json.dump(job_data, f, indent=2)
+
+    return {
+        "success": True,
+        "job_id": job_id,
+        "status": current_status,
+        "updated_fields": [k for k in updates.keys() if k in allowed_fields]
+    }
+
+
 @app.get("/queue/{queue_type}/jobs")
 async def list_jobs(
     queue_type: str,

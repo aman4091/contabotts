@@ -6,6 +6,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import {
   RefreshCw,
   Download,
@@ -19,8 +29,13 @@ import {
   ExternalLink,
   Trash2,
   Pause,
-  Play
+  Play,
+  Link2,
+  FileText,
+  Video,
+  FileAudio
 } from "lucide-react"
+import { toast } from "sonner"
 
 interface Job {
   job_id: string
@@ -32,9 +47,13 @@ interface Job {
   organized_path?: string
   status: string
   gofile_link?: string
+  audio_link?: string
+  video_link?: string
+  existing_audio_link?: string
   error_message?: string
   created_at: string
   completed_at?: string
+  username?: string
 }
 
 export default function AudioFilesPage() {
@@ -44,6 +63,12 @@ export default function AudioFilesPage() {
   const [updating, setUpdating] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [pausing, setPausing] = useState<string | null>(null)
+
+  // GoFile Link Dialog
+  const [gofileLinkDialog, setGofileLinkDialog] = useState(false)
+  const [selectedJob, setSelectedJob] = useState<Job | null>(null)
+  const [gofileLink, setGofileLink] = useState("")
+  const [submittingLink, setSubmittingLink] = useState(false)
 
   useEffect(() => {
     loadJobs()
@@ -134,6 +159,98 @@ export default function AudioFilesPage() {
     }
   }
 
+  function openGofileLinkDialog(job: Job) {
+    setSelectedJob(job)
+    setGofileLink(job.existing_audio_link || "")
+    setGofileLinkDialog(true)
+  }
+
+  async function submitGofileLink() {
+    if (!selectedJob || !gofileLink.trim()) {
+      toast.error("Please enter a GoFile link")
+      return
+    }
+
+    // Validate GoFile link format
+    if (!gofileLink.includes("gofile.io")) {
+      toast.error("Please enter a valid GoFile link")
+      return
+    }
+
+    setSubmittingLink(true)
+    try {
+      const res = await fetch("/api/queue-status", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          queue_type: "audio",
+          job_id: selectedJob.job_id,
+          existing_audio_link: gofileLink.trim()
+        })
+      })
+      const data = await res.json()
+      if (data.success) {
+        toast.success("Audio link added! Job will skip audio generation.")
+        setGofileLinkDialog(false)
+        setGofileLink("")
+        setSelectedJob(null)
+        await loadJobs()
+      } else {
+        toast.error("Failed to add link: " + (data.error || "Unknown error"))
+      }
+    } catch (error) {
+      toast.error("Error adding link")
+    } finally {
+      setSubmittingLink(false)
+    }
+  }
+
+  async function downloadFile(job: Job, fileType: "script" | "transcript" | "audio" | "video") {
+    try {
+      let url = ""
+      let filename = ""
+
+      if (fileType === "script" || fileType === "transcript") {
+        // Download from organized path
+        url = `/api/queue/download?job_id=${job.job_id}&type=${fileType}`
+        filename = `video_${job.video_number}_${fileType}.txt`
+      } else if (fileType === "audio" && job.audio_link) {
+        window.open(job.audio_link, "_blank")
+        return
+      } else if (fileType === "video" && job.video_link) {
+        window.open(job.video_link, "_blank")
+        return
+      } else if (fileType === "audio" || fileType === "video") {
+        // Fallback to gofile_link
+        if (job.gofile_link) {
+          window.open(job.gofile_link, "_blank")
+        } else {
+          toast.error(`No ${fileType} link available`)
+        }
+        return
+      }
+
+      const res = await fetch(url)
+      if (!res.ok) {
+        toast.error(`Failed to download ${fileType}`)
+        return
+      }
+
+      const blob = await res.blob()
+      const downloadUrl = window.URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = downloadUrl
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(downloadUrl)
+      document.body.removeChild(a)
+      toast.success(`${fileType} downloaded`)
+    } catch (error) {
+      toast.error(`Error downloading ${fileType}`)
+    }
+  }
+
   const filteredJobs = jobs.filter(job => {
     if (statusFilter === "all") return true
     return job.status === statusFilter
@@ -183,7 +300,6 @@ export default function AudioFilesPage() {
 
   function formatDate(dateStr: string) {
     const date = new Date(dateStr)
-    // Convert to Indian Standard Time (IST = UTC+5:30)
     return date.toLocaleString("en-IN", {
       timeZone: "Asia/Kolkata",
       day: "2-digit",
@@ -309,113 +425,189 @@ export default function AudioFilesPage() {
                     {filteredJobs.map(job => (
                       <Card key={job.job_id} className="border border-border">
                         <CardContent className="pt-4">
-                          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
-                            <div className="space-y-1 min-w-0 flex-1">
-                              <div className="flex flex-wrap items-center gap-1 sm:gap-2 text-sm sm:text-base">
-                                {getStatusIcon(job.status)}
-                                {job.audio_counter && (
-                                  <span className="font-bold text-foreground">#{job.audio_counter}</span>
+                          <div className="flex flex-col gap-3">
+                            {/* Job Info Row */}
+                            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                              <div className="space-y-1 min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-1 sm:gap-2 text-sm sm:text-base">
+                                  {getStatusIcon(job.status)}
+                                  {job.audio_counter && (
+                                    <span className="font-bold text-foreground">#{job.audio_counter}</span>
+                                  )}
+                                  <span className="text-muted-foreground hidden sm:inline">|</span>
+                                  <span className="font-medium text-foreground">{job.channel_code}</span>
+                                  <span className="text-muted-foreground text-xs sm:text-sm">V{job.video_number}</span>
+                                  <span className="text-muted-foreground hidden sm:inline">|</span>
+                                  <span className="text-xs sm:text-sm text-muted-foreground">{job.date}</span>
+                                  {job.existing_audio_link && (
+                                    <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/30 text-xs">
+                                      Audio Ready
+                                    </Badge>
+                                  )}
+                                </div>
+                                {job.script_text && (
+                                  <div className="text-xs sm:text-sm text-muted-foreground line-clamp-2">
+                                    {job.script_text.substring(0, 100)}...
+                                  </div>
                                 )}
-                                <span className="text-muted-foreground hidden sm:inline">|</span>
-                                <span className="font-medium text-foreground">{job.channel_code}</span>
-                                <span className="text-muted-foreground text-xs sm:text-sm">V{job.video_number}</span>
-                                <span className="text-muted-foreground hidden sm:inline">|</span>
-                                <span className="text-xs sm:text-sm text-muted-foreground">{job.date}</span>
-                              </div>
-                              {job.script_text && (
-                                <div className="text-xs sm:text-sm text-muted-foreground line-clamp-2">
-                                  {job.script_text.substring(0, 100)}...
+                                <div className="text-xs text-muted-foreground/70">
+                                  Created: {formatDate(job.created_at)}
+                                  {job.completed_at && <span className="hidden sm:inline"> | Completed: {formatDate(job.completed_at)}</span>}
                                 </div>
-                              )}
-                              <div className="text-xs text-muted-foreground/70">
-                                Created: {formatDate(job.created_at)}
-                                {job.completed_at && <span className="hidden sm:inline"> | Completed: {formatDate(job.completed_at)}</span>}
+                                {job.error_message && (
+                                  <div className="text-xs sm:text-sm text-red-500">
+                                    Error: {job.error_message}
+                                  </div>
+                                )}
                               </div>
-                              {job.error_message && (
-                                <div className="text-xs sm:text-sm text-red-500">
-                                  Error: {job.error_message}
-                                </div>
-                              )}
+                              <div className="flex flex-col items-end gap-2">
+                                {getStatusBadge(job.status)}
+                              </div>
                             </div>
-                            <div className="flex flex-row sm:flex-col items-center sm:items-end gap-2 self-end sm:self-auto">
-                              {getStatusBadge(job.status)}
-                              <div className="flex gap-2">
-                                {job.status === "completed" && job.gofile_link && (
-                                  <a
-                                    href={job.gofile_link}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="flex items-center gap-1 text-xs sm:text-sm px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 transition-colors"
-                                  >
-                                    <ExternalLink className="w-3 h-3 sm:w-4 sm:h-4" />
-                                    Download
-                                  </a>
-                                )}
-                                {(job.status === "completed" || job.status === "failed") && (
+
+                            {/* Action Buttons Row */}
+                            <div className="flex flex-wrap gap-2 pt-2 border-t border-border/50">
+                              {/* Download buttons for completed jobs */}
+                              {job.status === "completed" && (
+                                <>
                                   <Button
                                     size="sm"
                                     variant="outline"
-                                    onClick={() => updateJobStatus(job.job_id, "pending")}
-                                    disabled={updating === job.job_id}
-                                    className="flex items-center gap-1 text-xs px-2 py-1 h-auto bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 border-orange-500/30"
+                                    onClick={() => downloadFile(job, "script")}
+                                    className="flex items-center gap-1 text-xs px-2 py-1 h-auto border-violet-500/30 text-violet-400 hover:bg-violet-500/10"
                                   >
-                                    {updating === job.job_id ? (
-                                      <Loader2 className="w-3 h-3 animate-spin" />
-                                    ) : (
-                                      <RotateCcw className="w-3 h-3" />
-                                    )}
-                                    Reprocess
+                                    <FileText className="w-3 h-3" />
+                                    Script
                                   </Button>
-                                )}
-                                {job.status === "pending" && (
                                   <Button
                                     size="sm"
                                     variant="outline"
-                                    onClick={() => pauseResumeJob(job.job_id, "pause")}
-                                    disabled={pausing === job.job_id}
-                                    className="flex items-center gap-1 text-xs px-2 py-1 h-auto bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 border-orange-500/30"
+                                    onClick={() => downloadFile(job, "transcript")}
+                                    className="flex items-center gap-1 text-xs px-2 py-1 h-auto border-blue-500/30 text-blue-400 hover:bg-blue-500/10"
                                   >
-                                    {pausing === job.job_id ? (
-                                      <Loader2 className="w-3 h-3 animate-spin" />
-                                    ) : (
-                                      <Pause className="w-3 h-3" />
-                                    )}
-                                    Pause
+                                    <FileText className="w-3 h-3" />
+                                    Transcript
                                   </Button>
-                                )}
-                                {job.status === "paused" && (
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => pauseResumeJob(job.job_id, "resume")}
-                                    disabled={pausing === job.job_id}
-                                    className="flex items-center gap-1 text-xs px-2 py-1 h-auto bg-green-500/10 text-green-400 hover:bg-green-500/20 border-green-500/30"
-                                  >
-                                    {pausing === job.job_id ? (
-                                      <Loader2 className="w-3 h-3 animate-spin" />
-                                    ) : (
-                                      <Play className="w-3 h-3" />
-                                    )}
-                                    Resume
-                                  </Button>
-                                )}
-                                {(job.status === "pending" || job.status === "processing" || job.status === "paused") && (
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => deleteJob(job.job_id)}
-                                    disabled={deleting === job.job_id}
-                                    className="flex items-center gap-1 text-xs px-2 py-1 h-auto bg-red-500/10 text-red-400 hover:bg-red-500/20 border-red-500/30"
-                                  >
-                                    {deleting === job.job_id ? (
-                                      <Loader2 className="w-3 h-3 animate-spin" />
-                                    ) : (
-                                      <Trash2 className="w-3 h-3" />
-                                    )}
-                                    Remove
-                                  </Button>
-                                )}
-                              </div>
+                                  {(job.audio_link || job.gofile_link) && (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => downloadFile(job, "audio")}
+                                      className="flex items-center gap-1 text-xs px-2 py-1 h-auto border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10"
+                                    >
+                                      <FileAudio className="w-3 h-3" />
+                                      Audio
+                                    </Button>
+                                  )}
+                                  {(job.video_link || job.gofile_link) && (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => downloadFile(job, "video")}
+                                      className="flex items-center gap-1 text-xs px-2 py-1 h-auto border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10"
+                                    >
+                                      <Video className="w-3 h-3" />
+                                      Video
+                                    </Button>
+                                  )}
+                                  {job.gofile_link && (
+                                    <a
+                                      href={job.gofile_link}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="flex items-center gap-1 text-xs px-2 py-1.5 rounded-lg bg-pink-500/10 text-pink-400 hover:bg-pink-500/20 transition-colors border border-pink-500/30"
+                                    >
+                                      <ExternalLink className="w-3 h-3" />
+                                      GoFile
+                                    </a>
+                                  )}
+                                </>
+                              )}
+
+                              {/* GoFile Link button for pending/paused jobs */}
+                              {(job.status === "pending" || job.status === "paused") && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => openGofileLinkDialog(job)}
+                                  className="flex items-center gap-1 text-xs px-2 py-1 h-auto border-purple-500/30 text-purple-400 hover:bg-purple-500/10"
+                                >
+                                  <Link2 className="w-3 h-3" />
+                                  {job.existing_audio_link ? "Update Audio Link" : "Add Audio Link"}
+                                </Button>
+                              )}
+
+                              {/* Reprocess button */}
+                              {(job.status === "completed" || job.status === "failed") && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => updateJobStatus(job.job_id, "pending")}
+                                  disabled={updating === job.job_id}
+                                  className="flex items-center gap-1 text-xs px-2 py-1 h-auto bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 border-orange-500/30"
+                                >
+                                  {updating === job.job_id ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    <RotateCcw className="w-3 h-3" />
+                                  )}
+                                  Reprocess
+                                </Button>
+                              )}
+
+                              {/* Pause button */}
+                              {job.status === "pending" && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => pauseResumeJob(job.job_id, "pause")}
+                                  disabled={pausing === job.job_id}
+                                  className="flex items-center gap-1 text-xs px-2 py-1 h-auto bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 border-orange-500/30"
+                                >
+                                  {pausing === job.job_id ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    <Pause className="w-3 h-3" />
+                                  )}
+                                  Pause
+                                </Button>
+                              )}
+
+                              {/* Resume button */}
+                              {job.status === "paused" && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => pauseResumeJob(job.job_id, "resume")}
+                                  disabled={pausing === job.job_id}
+                                  className="flex items-center gap-1 text-xs px-2 py-1 h-auto bg-green-500/10 text-green-400 hover:bg-green-500/20 border-green-500/30"
+                                >
+                                  {pausing === job.job_id ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    <Play className="w-3 h-3" />
+                                  )}
+                                  Resume
+                                </Button>
+                              )}
+
+                              {/* Delete button */}
+                              {(job.status === "pending" || job.status === "processing" || job.status === "paused") && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => deleteJob(job.job_id)}
+                                  disabled={deleting === job.job_id}
+                                  className="flex items-center gap-1 text-xs px-2 py-1 h-auto bg-red-500/10 text-red-400 hover:bg-red-500/20 border-red-500/30"
+                                >
+                                  {deleting === job.job_id ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="w-3 h-3" />
+                                  )}
+                                  Remove
+                                </Button>
+                              )}
                             </div>
                           </div>
                         </CardContent>
@@ -428,6 +620,68 @@ export default function AudioFilesPage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* GoFile Link Dialog */}
+      <Dialog open={gofileLinkDialog} onOpenChange={setGofileLinkDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Link2 className="w-5 h-5 text-purple-400" />
+              Add Audio GoFile Link
+            </DialogTitle>
+            <DialogDescription>
+              Enter the GoFile link where audio is already uploaded. Worker will skip audio generation and use this audio directly for video.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="gofile-link">GoFile Link</Label>
+              <Input
+                id="gofile-link"
+                placeholder="https://gofile.io/d/xxxxx"
+                value={gofileLink}
+                onChange={(e) => setGofileLink(e.target.value)}
+                className="font-mono text-sm"
+              />
+              <p className="text-xs text-muted-foreground">
+                The audio file will be downloaded from this link when processing.
+              </p>
+            </div>
+            {selectedJob && (
+              <div className="p-3 bg-muted/50 rounded-lg text-sm">
+                <p><strong>Job:</strong> #{selectedJob.audio_counter} - V{selectedJob.video_number}</p>
+                <p className="text-muted-foreground truncate">{selectedJob.script_text?.substring(0, 50)}...</p>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setGofileLinkDialog(false)}
+              disabled={submittingLink}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={submitGofileLink}
+              disabled={submittingLink || !gofileLink.trim()}
+              className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500"
+            >
+              {submittingLink ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Link2 className="w-4 h-4 mr-2" />
+                  Save Link
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

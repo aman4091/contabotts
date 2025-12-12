@@ -761,7 +761,7 @@ async def process_job(job: Dict) -> bool:
             print(f"✅ Audio downloaded successfully")
 
         else:
-            # NORMAL MODE: Generate TTS audio (or reuse from Contabo if exists)
+            # NORMAL MODE: Generate TTS audio (or reuse existing)
             print("🎧 STEP 1: Audio Generation")
             print("="*50)
 
@@ -770,13 +770,26 @@ async def process_job(job: Dict) -> bool:
             script = job.get('script_text') or queue.get_script(org_path)
             audio_reused = False
 
+            # Check if existing_audio_link is provided (user uploaded audio separately)
+            existing_audio_link = job.get('existing_audio_link')
+            if existing_audio_link:
+                print(f"📥 Using existing audio from GoFile: {existing_audio_link[:50]}...")
+                if await download_from_gofile(existing_audio_link, local_audio_out):
+                    print(f"✅ Audio downloaded from existing link!")
+                    audio_gofile = existing_audio_link
+                    audio_reused = True
+                else:
+                    print(f"⚠️ Failed to download from existing link, will generate new audio")
+
             # Check if audio already exists on Contabo (retry scenario)
-            print("   Checking if audio already exists on Contabo...")
-            if queue.download_file(audio_remote_path, local_audio_out):
-                print(f"✅ Found existing audio on Contabo - reusing!")
-                audio_gofile = f"{FILE_SERVER_URL}/files/{audio_remote_path}"
-                audio_reused = True
-            else:
+            if not audio_reused:
+                print("   Checking if audio already exists on Contabo...")
+                if queue.download_file(audio_remote_path, local_audio_out):
+                    print(f"✅ Found existing audio on Contabo - reusing!")
+                    audio_gofile = f"{FILE_SERVER_URL}/files/{audio_remote_path}"
+                    audio_reused = True
+
+            if not audio_reused:
                 # Generate new audio
                 print("   No existing audio found, generating new...")
                 if not script: raise Exception("Script fetch failed")
