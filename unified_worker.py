@@ -312,6 +312,37 @@ async def upload_file(file_path: str, username: str = "default", video_number: i
     print(f"❌ All upload methods failed")
     return None
 
+async def download_from_direct_url(url: str, output_path: str) -> bool:
+    """Download audio file from direct HTTP URL"""
+    try:
+        import httpx
+        print(f"📥 Downloading from direct URL...")
+
+        async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client:
+            response = await client.get(url, headers={"x-api-key": "tts-secret-key-2024"})
+
+            if response.status_code != 200:
+                print(f"❌ Failed to download: {response.status_code}")
+                return False
+
+            with open(output_path, "wb") as f:
+                f.write(response.content)
+
+            print(f"✅ Downloaded {len(response.content)} bytes")
+            return True
+    except Exception as e:
+        print(f"❌ Direct download error: {e}")
+        return False
+
+
+async def download_audio_from_url(url: str, output_path: str) -> bool:
+    """Download audio from URL - handles both GoFile and direct HTTP URLs"""
+    if "gofile.io" in url:
+        return await download_from_gofile(url, output_path)
+    else:
+        return await download_from_direct_url(url, output_path)
+
+
 async def download_from_gofile(gofile_link: str, output_path: str) -> bool:
     """Download audio file from Gofile link"""
     try:
@@ -788,8 +819,8 @@ async def process_job(job: Dict) -> bool:
             # Check if existing_audio_link is provided (user uploaded audio separately)
             existing_audio_link = job.get('existing_audio_link')
             if existing_audio_link:
-                print(f"📥 Using existing audio from GoFile: {existing_audio_link[:50]}...")
-                if await download_from_gofile(existing_audio_link, local_audio_out):
+                print(f"📥 Using existing audio: {existing_audio_link[:50]}...")
+                if await download_audio_from_url(existing_audio_link, local_audio_out):
                     print(f"✅ Audio downloaded from existing link!")
                     audio_gofile = existing_audio_link
                     audio_reused = True
@@ -841,8 +872,9 @@ async def process_job(job: Dict) -> bool:
                     username=job.get("username")
                 )
 
-        # ========== AUDIO ONLY: Skip Video Generation ==========
-        if is_audio_only:
+        # ========== AUDIO ONLY: Skip Video Generation (only if no existing audio link) ==========
+        # If audio_only + existing_audio_link → make video with provided audio
+        if is_audio_only and not existing_audio_link:
             print("\n" + "="*50)
             print("🎧 AUDIO ONLY MODE: Skipping video generation")
             print("="*50)

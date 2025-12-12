@@ -527,6 +527,10 @@ async def claim_job(
         if job_data.get("video_only_waiting") and not job_data.get("existing_audio_link"):
             continue
 
+        # Skip audio_only jobs - telegram bot will handle them and convert to video_only_waiting
+        if job_data.get("audio_only") and not job_data.get("existing_audio_link"):
+            continue
+
         try:
             # Atomic move: pending -> processing
             new_name = f"{request.worker_id}_{job_file.name}"
@@ -986,7 +990,7 @@ async def update_job(
         job_data = json.load(f)
 
     # Update only allowed fields
-    allowed_fields = ["existing_audio_link", "audio_link", "video_link", "notes"]
+    allowed_fields = ["existing_audio_link", "audio_link", "video_link", "notes", "use_ai_image", "image_folder", "audio_only", "video_only_waiting", "telegram_sent"]
     for key, value in updates.items():
         if key in allowed_fields:
             job_data[key] = value

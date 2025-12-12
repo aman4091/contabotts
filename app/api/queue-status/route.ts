@@ -114,17 +114,30 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// PATCH - Update job fields (like existing_audio_link)
+// PATCH - Update job fields (like existing_audio_link, image_source)
 export async function PATCH(request: NextRequest) {
   try {
     const body = await request.json()
-    const { queue_type = "audio", job_id, existing_audio_link } = body
+    const { queue_type = "audio", job_id, existing_audio_link, image_source } = body
 
     if (!job_id) {
       return NextResponse.json({ error: "job_id required" }, { status: 400 })
     }
 
-    // Update job with existing_audio_link
+    // Build update payload
+    const updates: Record<string, any> = {}
+    if (existing_audio_link) updates.existing_audio_link = existing_audio_link
+    if (image_source) {
+      // Convert "ai" to use_ai_image flag, otherwise set image_folder
+      if (image_source === "ai") {
+        updates.use_ai_image = true
+      } else {
+        updates.use_ai_image = false
+        updates.image_folder = image_source
+      }
+    }
+
+    // Update job
     const response = await fetch(
       `${FILE_SERVER_URL}/queue/${queue_type}/jobs/${job_id}/update`,
       {
@@ -133,7 +146,7 @@ export async function PATCH(request: NextRequest) {
           "Content-Type": "application/json",
           "x-api-key": FILE_SERVER_API_KEY
         },
-        body: JSON.stringify({ existing_audio_link })
+        body: JSON.stringify(updates)
       }
     )
 

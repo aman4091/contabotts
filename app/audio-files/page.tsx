@@ -9,6 +9,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -69,6 +76,7 @@ export default function AudioFilesPage() {
   const [gofileLinkDialog, setGofileLinkDialog] = useState(false)
   const [selectedJob, setSelectedJob] = useState<Job | null>(null)
   const [gofileLink, setGofileLink] = useState("")
+  const [imageSource, setImageSource] = useState("nature")
   const [submittingLink, setSubmittingLink] = useState(false)
 
   useEffect(() => {
@@ -163,6 +171,7 @@ export default function AudioFilesPage() {
   function openGofileLinkDialog(job: Job) {
     setSelectedJob(job)
     setGofileLink(job.existing_audio_link || "")
+    setImageSource("nature")
     setGofileLinkDialog(true)
   }
 
@@ -186,7 +195,8 @@ export default function AudioFilesPage() {
         body: JSON.stringify({
           queue_type: "audio",
           job_id: selectedJob.job_id,
-          existing_audio_link: gofileLink.trim()
+          existing_audio_link: gofileLink.trim(),
+          image_source: imageSource
         })
       })
       const data = await res.json()
@@ -651,6 +661,23 @@ export default function AudioFilesPage() {
               />
               <p className="text-xs text-muted-foreground">
                 The audio file will be downloaded from this link when processing.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="image-source">Image Source</Label>
+              <Select value={imageSource} onValueChange={setImageSource}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select image source" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ai">AI Generated</SelectItem>
+                  <SelectItem value="nature">Nature (folder)</SelectItem>
+                  <SelectItem value="jesus">Jesus (folder)</SelectItem>
+                  <SelectItem value="shorts">Shorts (folder)</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Choose where to get images for video generation.
               </p>
             </div>
             {selectedJob && (
