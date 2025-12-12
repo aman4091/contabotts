@@ -56,6 +56,7 @@ async function createAudioJob(job: {
   video_only_waiting?: boolean
   use_ai_image?: boolean
   enhance_audio?: boolean
+  save_local?: boolean
 }): Promise<{ success: boolean; job_id?: string; error?: string }> {
   try {
     const response = await fetch(`${FILE_SERVER_URL}/queue/audio/jobs`, {
@@ -217,7 +218,8 @@ export async function POST(request: NextRequest) {
       audio_only: audioOnly,
       video_only_waiting: videoOnlyMode, // Wait for external audio link
       use_ai_image: aiImageMode, // ON = AI images, OFF = nature folder
-      enhance_audio: enhanceAudio // ON = enhance, OFF = no enhancement
+      enhance_audio: enhanceAudio, // ON = enhance, OFF = no enhancement
+      save_local: priorityQueue // Priority = save video locally instead of GoFile
     })
 
     if (!result.success) {

@@ -1013,11 +1013,21 @@ async def process_job(job: Dict) -> bool:
             os.remove(ass_path)
 
         username = job.get("username", "default")
-        video_gofile = await upload_file(local_video_out, username, video_number, "video")
-        if not video_gofile:
-            raise Exception("Video upload failed")
+        save_local = job.get("save_local", False)
 
-        print(f"✅ Video uploaded: {video_gofile}")
+        if save_local:
+            # Save video locally instead of uploading to GoFile
+            local_save_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "local_videos")
+            os.makedirs(local_save_dir, exist_ok=True)
+            local_save_path = os.path.join(local_save_dir, f"video_{video_number}_{job_id[:8]}.mp4")
+            shutil.copy2(local_video_out, local_save_path)
+            video_gofile = f"LOCAL:{local_save_path}"
+            print(f"✅ Video saved locally: {local_save_path}")
+        else:
+            video_gofile = await upload_file(local_video_out, username, video_number, "video")
+            if not video_gofile:
+                raise Exception("Video upload failed")
+            print(f"✅ Video uploaded: {video_gofile}")
 
         if server_image_path:
             if queue.delete_file(server_image_path):
