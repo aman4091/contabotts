@@ -11,14 +11,9 @@ import {
   Subtitles,
   LogOut,
   User,
-  Calendar,
   Youtube,
   Mic2,
-  ImageIcon,
-  History,
-  Film,
-  Tv2,
-  Video
+  Film
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -37,13 +32,8 @@ const LayoutContext = createContext<{
 
 const navItems = [
   { title: "Videos", href: "/", icon: Youtube },
-  { title: "Channels", href: "/channels", icon: Tv2 },
   { title: "Shorts", href: "/shorts", icon: Film },
-  { title: "History", href: "/history", icon: History },
-  { title: "Calendar", href: "/calendar", icon: Calendar },
-  { title: "Thumbnails", href: "/titles-thumbnails", icon: ImageIcon },
   { title: "Queue", href: "/audio-files", icon: FileAudio },
-  { title: "A2V", href: "/audio-to-video", icon: Video },
   { title: "Subtitles", href: "/subtitle-settings", icon: Subtitles },
   { title: "Settings", href: "/settings", icon: Settings }
 ]

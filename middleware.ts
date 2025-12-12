@@ -23,16 +23,6 @@ export function middleware(request: NextRequest) {
     }
   }
 
-  // Allow delayed video processing cron API
-  if (pathname === "/api/channels/process-delayed") {
-    return NextResponse.next()
-  }
-
-  // Allow channel monitor cron API
-  if (pathname === "/api/channels/monitor") {
-    return NextResponse.next()
-  }
-
   // Check if user is authenticated
   if (!user) {
     return NextResponse.redirect(new URL("/login", request.url))

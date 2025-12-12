@@ -9,7 +9,6 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { toast } from "sonner"
 import {
@@ -20,8 +19,6 @@ import {
   Upload,
   FolderPlus,
   Image as ImageIcon,
-  Edit2,
-  X,
   Music,
   Check,
   AlertTriangle,
@@ -29,7 +26,6 @@ import {
   Youtube,
   RefreshCw
 } from "lucide-react"
-import { ThumbnailEditor } from "@/components/thumbnail-editor"
 
 interface Settings {
   prompts: {
@@ -64,43 +60,12 @@ interface AudioFile {
   sizeFormatted: string
 }
 
-interface ThumbnailTemplate {
-  id: string
-  name: string
-  backgroundImageFolder: string
-  overlayImage: string
-  overlayPosition: { x: number; y: number }
-  overlaySize: { width: number; height: number }
-  textBox: {
-    x: number
-    y: number
-    width: number
-    height: number
-    fontFamily: string
-    fontSize: number
-    fontColor: string
-    textAlign: "left" | "center" | "right"
-    padding: { top: number; right: number; bottom: number; left: number }
-    shadow: { enabled: boolean; color: string; offsetX: number; offsetY: number; blur: number }
-    outline: { enabled: boolean; color: string; width: number }
-  }
-}
-
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null)
   const [imageFolders, setImageFolders] = useState<ImageFolder[]>([])
   const [audioFiles, setAudioFiles] = useState<AudioFile[]>([])
-  const [templates, setTemplates] = useState<ThumbnailTemplate[]>([])
-  const [overlayImages, setOverlayImages] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-
-  // Template editor state
-  const [editingTemplate, setEditingTemplate] = useState<ThumbnailTemplate | null>(null)
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  const [generatingPreview, setGeneratingPreview] = useState(false)
-  const [savingTemplate, setSavingTemplate] = useState(false)
-  const overlayInputRef = useRef<HTMLInputElement>(null)
 
   // Image folder states
   const [newFolderName, setNewFolderName] = useState("")
@@ -142,27 +107,21 @@ export default function SettingsPage() {
   async function loadAll() {
     setLoading(true)
     try {
-      const [settingsRes, foldersRes, audioRes, templatesRes, overlaysRes, videoFetchRes] = await Promise.all([
+      const [settingsRes, foldersRes, audioRes, videoFetchRes] = await Promise.all([
         fetch("/api/settings"),
         fetch("/api/images/folders"),
         fetch("/api/reference-audio"),
-        fetch("/api/thumbnail-templates"),
-        fetch("/api/images?type=overlays"),
         fetch("/api/videos/fetch")
       ])
 
       const settingsData = await settingsRes.json()
       const foldersData = await foldersRes.json()
       const audioData = await audioRes.json()
-      const templatesData = await templatesRes.json()
-      const overlaysData = await overlaysRes.json()
       const videoFetchData = await videoFetchRes.json()
 
       setSettings(settingsData)
       setImageFolders(foldersData.folders || [])
       setAudioFiles(audioData.files || [])
-      setTemplates(templatesData.templates || [])
-      setOverlayImages(overlaysData.overlays || [])
 
       // Build channel video status map
       const statusMap: { [key: string]: { channelName: string; channelUrl: string; totalVideos: number; fetchedAt: string } } = {}
@@ -333,140 +292,6 @@ export default function SettingsPage() {
     } finally {
       setUploadingAudio(false)
       if (audioInputRef.current) audioInputRef.current.value = ""
-    }
-  }
-
-  // Template functions
-  function createNewTemplate() {
-    setEditingTemplate({
-      id: `template_${Date.now()}`,
-      name: "New Template",
-      backgroundImageFolder: imageFolders[0]?.name || "nature",
-      overlayImage: "",
-      overlayPosition: { x: 0, y: 0 },
-      overlaySize: { width: 300, height: 300 },
-      textBox: {
-        x: 50,
-        y: 480,
-        width: 1180,
-        height: 200,
-        fontFamily: "Impact",
-        fontSize: 72,
-        fontColor: "#FFFFFF",
-        textAlign: "center",
-        padding: { top: 10, right: 20, bottom: 10, left: 20 },
-        shadow: { enabled: true, color: "#000000", offsetX: 3, offsetY: 3, blur: 6 },
-        outline: { enabled: true, color: "#000000", width: 3 }
-      }
-    })
-    setPreviewUrl(null)
-  }
-
-  async function saveTemplate() {
-    if (!editingTemplate) return
-
-    setSavingTemplate(true)
-    try {
-      const res = await fetch("/api/thumbnail-templates", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(editingTemplate)
-      })
-
-      if (res.ok) {
-        toast.success("Template saved!")
-        setEditingTemplate(null)
-        setPreviewUrl(null)
-        loadAll()
-      } else {
-        const data = await res.json()
-        toast.error(data.error || "Failed to save template")
-      }
-    } catch (error) {
-      toast.error("Failed to save template")
-    } finally {
-      setSavingTemplate(false)
-    }
-  }
-
-  async function deleteTemplate(id: string) {
-    if (!confirm("Delete this template?")) return
-
-    try {
-      const res = await fetch(`/api/thumbnail-templates?id=${id}`, {
-        method: "DELETE"
-      })
-
-      if (res.ok) {
-        toast.success("Template deleted")
-        loadAll()
-      } else {
-        toast.error("Failed to delete template")
-      }
-    } catch (error) {
-      toast.error("Failed to delete template")
-    }
-  }
-
-  async function generatePreview() {
-    if (!editingTemplate) return
-
-    setGeneratingPreview(true)
-    try {
-      const res = await fetch("/api/thumbnail-templates/preview", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          template: editingTemplate,
-          title: "Sample Preview Title Here"
-        })
-      })
-
-      if (res.ok) {
-        const blob = await res.blob()
-        const url = URL.createObjectURL(blob)
-        setPreviewUrl(url)
-      } else {
-        toast.error("Failed to generate preview")
-      }
-    } catch (error) {
-      toast.error("Failed to generate preview")
-    } finally {
-      setGeneratingPreview(false)
-    }
-  }
-
-  async function handleOverlayUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
-
-    const formData = new FormData()
-    formData.append("file", file)
-
-    try {
-      const res = await fetch("/api/images", {
-        method: "POST",
-        body: formData
-      })
-
-      const data = await res.json()
-      if (res.ok) {
-        toast.success("Overlay uploaded!")
-        // Reload overlays
-        const overlaysRes = await fetch("/api/images?type=overlays")
-        const overlaysData = await overlaysRes.json()
-        setOverlayImages(overlaysData.overlays || [])
-        // Select it in the template
-        if (editingTemplate) {
-          setEditingTemplate({ ...editingTemplate, overlayImage: data.filename })
-        }
-      } else {
-        toast.error(data.error || "Upload failed")
-      }
-    } catch (error) {
-      toast.error("Upload failed")
-    } finally {
-      if (overlayInputRef.current) overlayInputRef.current.value = ""
     }
   }
 
@@ -649,19 +474,11 @@ export default function SettingsPage() {
         accept=".wav,.mp3,audio/*"
         onChange={handleAudioUpload}
       />
-      <input
-        type="file"
-        ref={overlayInputRef}
-        className="hidden"
-        accept="image/*"
-        onChange={handleOverlayUpload}
-      />
 
       <Tabs defaultValue="videos" className="space-y-4">
         <TabsList className="flex flex-wrap h-auto gap-1">
           <TabsTrigger value="videos" className="text-xs sm:text-sm">Video Grid</TabsTrigger>
           <TabsTrigger value="images" className="text-xs sm:text-sm">Images</TabsTrigger>
-          <TabsTrigger value="thumbnails" className="text-xs sm:text-sm">Thumbnails</TabsTrigger>
           <TabsTrigger value="prompts" className="text-xs sm:text-sm">Prompts</TabsTrigger>
           <TabsTrigger value="ai" className="text-xs sm:text-sm">AI</TabsTrigger>
           <TabsTrigger value="danger" className="text-xs sm:text-sm text-red-400">Reset</TabsTrigger>
@@ -997,104 +814,6 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
-        {/* Thumbnails Tab */}
-        <TabsContent value="thumbnails" className="space-y-4">
-          {editingTemplate ? (
-            <Card className="glass border-white/10">
-              <CardContent className="pt-6">
-                <ThumbnailEditor
-                  template={editingTemplate}
-                  imageFolders={imageFolders}
-                  overlayImages={overlayImages}
-                  onSave={async (template) => {
-                    try {
-                      const res = await fetch("/api/thumbnail-templates", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify(template)
-                      })
-                      if (res.ok) {
-                        toast.success("Template saved!")
-                        setEditingTemplate(null)
-                        loadAll()
-                      } else {
-                        toast.error("Failed to save template")
-                      }
-                    } catch {
-                      toast.error("Failed to save template")
-                    }
-                  }}
-                  onClose={() => setEditingTemplate(null)}
-                />
-              </CardContent>
-            </Card>
-          ) : (
-            <Card className="glass border-white/10">
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full bg-orange-500" />
-                      Thumbnail Templates
-                    </CardTitle>
-                    <CardDescription>Create and manage thumbnail templates with live editor</CardDescription>
-                  </div>
-                  <Button
-                    onClick={createNewTemplate}
-                    className="bg-gradient-to-r from-orange-600 to-pink-600 hover:from-orange-500 hover:to-pink-500"
-                  >
-                    <Plus className="w-4 h-4 mr-2" />
-                    New Template
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {/* Template List */}
-                <div className="space-y-2">
-                  {templates.length === 0 && (
-                    <div className="text-center text-muted-foreground py-8">
-                      <ImageIcon className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                      No templates yet. Create one to get started.
-                    </div>
-                  )}
-                  {templates.map(template => (
-                    <div key={template.id} className="flex items-center justify-between p-3 border border-border rounded hover:border-orange-500/30 transition-colors">
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-lg bg-orange-500/10">
-                          <ImageIcon className="w-5 h-5 text-orange-500" />
-                        </div>
-                        <div>
-                          <div className="font-medium text-foreground">{template.name}</div>
-                          <div className="text-sm text-muted-foreground">
-                            BG: {template.backgroundImageFolder} | Font: {template.textBox.fontFamily}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setEditingTemplate({ ...template })}
-                          className="border-blue-500/30 text-blue-400 hover:bg-blue-500/10"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => deleteTemplate(template.id)}
-                        >
-                          <Trash2 className="w-4 h-4 text-red-500" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </TabsContent>
-
         {/* Prompts Tab */}
         <TabsContent value="prompts" className="space-y-4">
           <Card className="glass border-white/10">
@@ -1293,7 +1012,6 @@ export default function SettingsPage() {
                 <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
                   <li>All organized folders (transcripts, scripts)</li>
                   <li>All queue jobs (pending, processing, completed, failed)</li>
-                  <li>Entire calendar (all scheduled videos for all channels)</li>
                   <li>Video number counters (will restart from 1)</li>
                 </ul>
                 <p className="text-xs text-red-400 mt-3">This action cannot be undone!</p>
