@@ -991,6 +991,10 @@ async def update_job(
         if key in allowed_fields:
             job_data[key] = value
 
+    # If existing_audio_link is added, set high priority for immediate processing
+    if "existing_audio_link" in updates and updates["existing_audio_link"]:
+        job_data["priority"] = 100  # High priority
+
     job_data["updated_at"] = datetime.now().isoformat()
 
     # Save back to same location
