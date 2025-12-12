@@ -523,6 +523,10 @@ async def claim_job(
 
     # Try to claim each job atomically
     for job_file, job_data in jobs_with_files:
+        # Skip video_only_waiting jobs that don't have audio link yet
+        if job_data.get("video_only_waiting") and not job_data.get("existing_audio_link"):
+            continue
+
         try:
             # Atomic move: pending -> processing
             new_name = f"{request.worker_id}_{job_file.name}"

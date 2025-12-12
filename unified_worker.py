@@ -719,10 +719,10 @@ async def process_job(job: Dict) -> bool:
     existing_audio_link = job.get("existing_audio_link")
 
     if video_only_waiting and not existing_audio_link:
-        print(f"\n⏸️ Job {job_id[:8]} is waiting for audio link - returning to queue")
-        # Fail the job so it goes back to pending for retry
-        queue.fail_audio_job(job_id, WORKER_ID, "Waiting for audio link to be added")
-        return True  # Return True so we don't count this as a failure
+        # This should never happen as file_server filters these out during claim
+        # But just in case, skip without failing
+        print(f"\n⏸️ Job {job_id[:8]} is video_only_waiting without audio link - skipping")
+        return True
 
     is_video_only = job.get("videoOnly", False)
     is_audio_only = job.get("audio_only", False)
