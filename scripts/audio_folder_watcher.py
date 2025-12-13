@@ -98,8 +98,8 @@ def find_matching_job(audio_file: Path, jobs: list) -> dict:
     return jobs[0] if jobs else None
 
 
-def update_job_with_audio(job_id: str, audio_url: str, image_folder: str = "nature"):
-    """Update job with audio link"""
+def update_job_with_audio(job_id: str, audio_url: str):
+    """Update job with audio link and set AI images"""
     try:
         response = requests.post(
             f"{FILE_SERVER_URL}/queue/audio/jobs/{job_id}/update",
@@ -109,7 +109,7 @@ def update_job_with_audio(job_id: str, audio_url: str, image_folder: str = "natu
             },
             json={
                 "existing_audio_link": audio_url,
-                "image_folder": image_folder
+                "use_ai_image": True  # Always use AI images
             },
             timeout=30
         )
