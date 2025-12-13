@@ -232,7 +232,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
         events = []
         max_chars = box.get("maxChars", 50)
-        max_lines = 2  # Max 2 lines per subtitle
+        max_lines = 1  # Max 1 line per subtitle
 
         # Collect all words with timestamps
         all_words = []
