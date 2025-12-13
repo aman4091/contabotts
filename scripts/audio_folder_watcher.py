@@ -72,6 +72,32 @@ def get_audio_files():
     return files
 
 
+def extract_number_from_filename(filename: str) -> int:
+    """Extract job number from filename like '432.wav' or 'audio_432.mp3'"""
+    import re
+    # Find all numbers in filename
+    numbers = re.findall(r'\d+', filename)
+    if numbers:
+        # Return the first number found
+        return int(numbers[0])
+    return None
+
+
+def find_matching_job(audio_file: Path, jobs: list) -> dict:
+    """Find job that matches the audio file by number in filename"""
+    # Try to extract number from filename
+    file_number = extract_number_from_filename(audio_file.stem)
+
+    if file_number:
+        # Look for job with matching audio_counter
+        for job in jobs:
+            if job.get("audio_counter") == file_number:
+                return job
+
+    # Fallback: return oldest job (first in list)
+    return jobs[0] if jobs else None
+
+
 def update_job_with_audio(job_id: str, audio_url: str, image_folder: str = "nature"):
     """Update job with audio link"""
     try:
@@ -94,23 +120,26 @@ def update_job_with_audio(job_id: str, audio_url: str, image_folder: str = "natu
 
 
 def move_audio_to_job_folder(audio_file: Path, job: dict):
-    """Move audio file to job's organized folder and return the URL"""
+    """Rename audio with job number and move to ready folder"""
     try:
         username = job.get("username", "default")
         video_number = job.get("video_number", 0)
+        audio_counter = job.get("audio_counter", 0)
 
-        # Destination path
-        dest_folder = Path(f"/root/tts/data/users/{username}/organized/video_{video_number}")
-        dest_folder.mkdir(parents=True, exist_ok=True)
+        # Create ready folder for processed audio files
+        ready_folder = Path("/root/tts/data/audio-ready")
+        ready_folder.mkdir(parents=True, exist_ok=True)
 
-        # Keep original extension or convert name
-        dest_file = dest_folder / f"external_audio{audio_file.suffix}"
+        # Rename with job number: e.g., "432_video_15.wav"
+        new_filename = f"{audio_counter}_video_{video_number}{audio_file.suffix}"
+        ready_file = ready_folder / new_filename
 
-        # Copy file (not move, so we can delete after confirmation)
-        shutil.copy2(audio_file, dest_file)
+        # MOVE the file (not copy) - this removes it from watch folder
+        shutil.move(str(audio_file), str(ready_file))
+        logger.info(f"📁 Renamed & moved: {audio_file.name} -> {new_filename}")
 
         # Return the EXTERNAL file server URL (for Vast.ai worker access)
-        relative_path = f"users/{username}/organized/video_{video_number}/external_audio{audio_file.suffix}"
+        relative_path = f"audio-ready/{new_filename}"
         return f"{FILE_SERVER_EXTERNAL_URL}/files/{relative_path}"
     except Exception as e:
         logger.error(f"Error moving audio: {e}")
@@ -118,12 +147,24 @@ def move_audio_to_job_folder(audio_file: Path, job: dict):
 
 
 def delete_audio_file(audio_file: Path):
-    """Delete audio file after processing"""
+    """Delete audio file after processing - MUST succeed to prevent reuse"""
     try:
         audio_file.unlink()
         logger.info(f"Deleted: {audio_file.name}")
+        return True
     except Exception as e:
         logger.error(f"Error deleting file: {e}")
+        # If delete fails, move to a "processed" folder to prevent reuse
+        try:
+            processed_folder = Path(WATCH_FOLDER) / "processed"
+            processed_folder.mkdir(exist_ok=True)
+            new_path = processed_folder / f"done_{audio_file.name}"
+            audio_file.rename(new_path)
+            logger.info(f"Moved to processed: {new_path}")
+            return True
+        except Exception as e2:
+            logger.error(f"CRITICAL: Could not delete or move file: {e2}")
+            return False
 
 
 def main_loop():
@@ -146,6 +187,12 @@ def main_loop():
                 # Get pending audio_only jobs
                 jobs = get_pending_audio_only_jobs()
 
+                # Log all pending jobs for debugging
+                if jobs:
+                    logger.info(f"=== Pending audio_only jobs ({len(jobs)}) ===")
+                    for idx, j in enumerate(jobs):
+                        logger.info(f"  {idx+1}. #{j.get('audio_counter')} - {j.get('job_id', '')[:8]} - created: {j.get('created_at', 'N/A')}")
+
                 if jobs:
                     # Match oldest audio file with oldest job
                     audio_file = audio_files[0]
@@ -154,24 +201,21 @@ def main_loop():
                     job_id = job.get("job_id", "")[:8]
                     audio_counter = job.get("audio_counter", 0)
 
-                    logger.info(f"Found audio: {audio_file.name}")
-                    logger.info(f"Matching with job #{audio_counter} ({job_id})")
+                    logger.info(f">>> Found audio: {audio_file.name}")
+                    logger.info(f">>> Matching with job #{audio_counter} ({job_id})")
 
                     # Move audio to job folder and get URL
                     audio_url = move_audio_to_job_folder(audio_file, job)
 
                     if audio_url:
-                        # Update job with audio link
+                        # File already moved by move_audio_to_job_folder, now update job
                         if update_job_with_audio(job.get("job_id"), audio_url):
-                            logger.info(f"Job #{audio_counter} updated with audio!")
-                            logger.info(f"Audio URL: {audio_url}")
-
-                            # Delete original file
-                            delete_audio_file(audio_file)
+                            logger.info(f"✅ Job #{audio_counter} ready for processing!")
+                            logger.info(f"   Audio: {audio_url}")
                         else:
-                            logger.error(f"Failed to update job #{audio_counter}")
+                            logger.error(f"❌ Failed to update job #{audio_counter}")
                     else:
-                        logger.error(f"Failed to move audio file")
+                        logger.error(f"❌ Failed to move/rename audio file")
                 else:
                     logger.debug("Audio files found but no matching jobs waiting")
 
