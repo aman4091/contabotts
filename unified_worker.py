@@ -30,7 +30,7 @@ import requests
 import shutil
 
 # Import from l.py (same directory)
-from l import LandscapeGenerator, enhance_audio
+from l import LandscapeGenerator
 
 # Import AI image generator
 try:
@@ -851,31 +851,20 @@ async def process_job(job: Dict) -> bool:
                 raise Exception("Shorts render failed")
         else:
             # Landscape: use l.py's LandscapeGenerator
-            # First enhance audio (from l.py) - if enabled
-            if job.get('enhance_audio', True):
-                mastered_audio = enhance_audio(local_audio_out)
-            else:
-                print("   Skipping audio enhancement (disabled)")
-                mastered_audio = local_audio_out
-
             # Generate subtitles using l.py
-            ass_path = landscape_gen.generate_subtitles(mastered_audio)
+            ass_path = landscape_gen.generate_subtitles(local_audio_out)
             if not ass_path: raise Exception("Subtitle generation failed")
 
             # Render video using l.py
             if len(local_images) > 1:
                 # Multiple images: use fade transition
                 print(f"   Using {len(local_images)} images with fade transitions")
-                if not landscape_gen.render_with_fade(mastered_audio, local_images, ass_path, local_video_out):
+                if not landscape_gen.render_with_fade(local_audio_out, local_images, ass_path, local_video_out):
                     raise Exception("Video render with fade failed")
             else:
                 # Single image: use regular render
-                if not landscape_gen.render(mastered_audio, local_images[0], ass_path, local_video_out):
+                if not landscape_gen.render(local_audio_out, local_images[0], ass_path, local_video_out):
                     raise Exception("Video render failed")
-
-            # Cleanup mastered audio if different
-            if mastered_audio != local_audio_out and os.path.exists(mastered_audio):
-                os.remove(mastered_audio)
 
         # Cleanup ASS file
         if ass_path and os.path.exists(ass_path):
