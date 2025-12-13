@@ -559,8 +559,9 @@ async def claim_job(
         if job_data.get("video_only_waiting") and not job_data.get("existing_audio_link"):
             continue
 
-        # Skip audio_only jobs - telegram bot will handle them and convert to video_only_waiting
-        if job_data.get("audio_only") and not job_data.get("existing_audio_link"):
+        # Skip ALL jobs sent to telegram that don't have audio yet
+        # Bot sends script to telegram, user uploads audio, then worker processes
+        if job_data.get("telegram_sent") and not job_data.get("existing_audio_link"):
             continue
 
         try:

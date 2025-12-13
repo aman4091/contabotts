@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_pending_jobs():
-    """Fetch pending jobs from file server"""
+    """Fetch ALL pending jobs from file server (not just audio_only)"""
     try:
         response = requests.get(
             f"{FILE_SERVER_URL}/queue/audio/jobs",
@@ -45,7 +45,9 @@ def get_pending_jobs():
             timeout=30
         )
         if response.status_code == 200:
-            return response.json().get("jobs", [])
+            jobs = response.json().get("jobs", [])
+            # Filter: only jobs that haven't been sent to telegram yet
+            return [j for j in jobs if not j.get("telegram_sent", False)]
         else:
             logger.error(f"Failed to fetch jobs: {response.status_code}")
             return []
@@ -187,9 +189,8 @@ def main_loop():
                 if job_id in processed_jobs:
                     continue
 
-                # Check if audio_only job (and not already sent to telegram)
-                if job.get("audio_only", False) and not job.get("telegram_sent", False):
-                    process_audio_only_job(job)
+                # Process ALL jobs (send script to telegram)
+                process_audio_only_job(job)
 
             # Clean up processed jobs set (keep last 1000)
             if len(processed_jobs) > 1000:

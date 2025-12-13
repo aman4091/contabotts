@@ -29,8 +29,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def get_pending_audio_only_jobs():
-    """Get audio_only jobs that are waiting for audio (telegram_sent=true, no existing_audio_link)"""
+def get_pending_jobs_for_audio():
+    """Get ALL jobs waiting for audio (telegram_sent=true, no existing_audio_link)"""
     try:
         response = requests.get(
             f"{FILE_SERVER_URL}/queue/audio/jobs",
@@ -40,14 +40,14 @@ def get_pending_audio_only_jobs():
         )
         if response.status_code == 200:
             jobs = response.json().get("jobs", [])
-            # Filter: audio_only=true, telegram_sent=true, no existing_audio_link
-            audio_only_jobs = [
+            # Filter: telegram_sent=true, no existing_audio_link (ALL jobs, not just audio_only)
+            waiting_jobs = [
                 j for j in jobs
-                if j.get("audio_only") and j.get("telegram_sent") and not j.get("existing_audio_link")
+                if j.get("telegram_sent") and not j.get("existing_audio_link")
             ]
             # Sort by created_at (oldest first)
-            audio_only_jobs.sort(key=lambda x: x.get("created_at", ""))
-            return audio_only_jobs
+            waiting_jobs.sort(key=lambda x: x.get("created_at", ""))
+            return waiting_jobs
         return []
     except Exception as e:
         logger.error(f"Error fetching jobs: {e}")
@@ -184,12 +184,12 @@ def main_loop():
             audio_files = get_audio_files()
 
             if audio_files:
-                # Get pending audio_only jobs
-                jobs = get_pending_audio_only_jobs()
+                # Get ALL pending jobs waiting for audio
+                jobs = get_pending_jobs_for_audio()
 
                 # Log all pending jobs for debugging
                 if jobs:
-                    logger.info(f"=== Pending audio_only jobs ({len(jobs)}) ===")
+                    logger.info(f"=== Pending jobs waiting for audio ({len(jobs)}) ===")
                     for idx, j in enumerate(jobs):
                         logger.info(f"  {idx+1}. #{j.get('audio_counter')} - {j.get('job_id', '')[:8]} - created: {j.get('created_at', 'N/A')}")
 
