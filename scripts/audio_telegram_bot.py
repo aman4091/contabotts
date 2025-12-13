@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """
-Telegram Bot for Audio-Only Jobs
-Monitors queue for audio_only jobs, sends script to Telegram, converts to video_only_waiting
+Telegram Bot for Audio Queue
+Sends ONE script at a time to Telegram. Waits for audio upload before sending next script.
+
+Flow:
+1. Send oldest pending job's script to Telegram
+2. Wait until that job gets audio (existing_audio_link set by folder watcher)
+3. Only then send the next script
 """
 
 import os
@@ -35,8 +40,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def get_pending_jobs():
-    """Fetch ALL pending jobs from file server (not just audio_only)"""
+def get_all_pending_jobs():
+    """Fetch ALL pending jobs from file server"""
     try:
         response = requests.get(
             f"{FILE_SERVER_URL}/queue/audio/jobs",
@@ -45,15 +50,33 @@ def get_pending_jobs():
             timeout=30
         )
         if response.status_code == 200:
-            jobs = response.json().get("jobs", [])
-            # Filter: only jobs that haven't been sent to telegram yet
-            return [j for j in jobs if not j.get("telegram_sent", False)]
+            return response.json().get("jobs", [])
         else:
             logger.error(f"Failed to fetch jobs: {response.status_code}")
             return []
     except Exception as e:
         logger.error(f"Error fetching jobs: {e}")
         return []
+
+
+def is_waiting_for_audio(jobs: list) -> bool:
+    """Check if any job is waiting for audio (telegram_sent but no existing_audio_link)"""
+    for job in jobs:
+        if job.get("telegram_sent") and not job.get("existing_audio_link"):
+            audio_counter = job.get("audio_counter", 0)
+            logger.debug(f"Job #{audio_counter} waiting for audio...")
+            return True
+    return False
+
+
+def get_next_job_to_send(jobs: list) -> dict:
+    """Get the oldest job that hasn't been sent to Telegram yet"""
+    unsent = [j for j in jobs if not j.get("telegram_sent", False)]
+    if unsent:
+        # Sort by created_at (oldest first)
+        unsent.sort(key=lambda x: x.get("created_at", ""))
+        return unsent[0]
+    return None
 
 
 def mark_job_as_sent(job_id: str):
@@ -167,34 +190,49 @@ def process_audio_only_job(job: dict):
 
 
 def main_loop():
-    """Main polling loop"""
+    """Main polling loop - sends ONE script at a time, waits for audio before next"""
     logger.info("=" * 50)
     logger.info("Audio Telegram Bot Started")
+    logger.info("Mode: ONE script at a time (wait for audio before next)")
     logger.info(f"Polling interval: {POLL_INTERVAL}s")
     logger.info(f"File Server: {FILE_SERVER_URL}")
     logger.info(f"Chat ID: {CHAT_ID}")
     logger.info("=" * 50)
 
     # Send startup message
-    send_telegram_message("Audio Telegram Bot started and monitoring queue...")
+    send_telegram_message("🎙️ Audio Bot started\nMode: One script at a time")
 
     while True:
         try:
-            jobs = get_pending_jobs()
+            # Get ALL pending jobs
+            jobs = get_all_pending_jobs()
 
-            for job in jobs:
-                job_id = job.get("job_id", "")
+            if not jobs:
+                logger.debug("No pending jobs")
+                time.sleep(POLL_INTERVAL)
+                continue
 
-                # Skip already processed jobs
-                if job_id in processed_jobs:
-                    continue
+            # Check if any job is waiting for audio
+            if is_waiting_for_audio(jobs):
+                # Don't send new script - wait for current one's audio
+                logger.debug("Waiting for audio upload before sending next script...")
+                time.sleep(POLL_INTERVAL)
+                continue
 
-                # Process ALL jobs (send script to telegram)
-                process_audio_only_job(job)
+            # No job waiting for audio - send the next script
+            next_job = get_next_job_to_send(jobs)
+
+            if next_job:
+                job_id = next_job.get("job_id", "")
+
+                # Skip already processed jobs (in-memory cache)
+                if job_id not in processed_jobs:
+                    audio_counter = next_job.get("audio_counter", 0)
+                    logger.info(f"📤 Sending script #{audio_counter} to Telegram...")
+                    process_audio_only_job(next_job)
 
             # Clean up processed jobs set (keep last 1000)
             if len(processed_jobs) > 1000:
-                # Convert to list, keep last 500
                 processed_list = list(processed_jobs)
                 processed_jobs.clear()
                 processed_jobs.update(processed_list[-500:])

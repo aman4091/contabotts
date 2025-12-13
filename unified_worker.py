@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
-Unified Worker (Audio + Video in Single Job)
-Runs on Vast.ai - Generates Audio then Video in one go
+Video Worker (External Audio + Video)
+Runs on Vast.ai - Downloads external audio and creates video
 
 Flow:
-1. Claim Audio Job
-2. Generate Audio -> Upload to Gofile
+1. Claim Job (must have existing_audio_link set by folder watcher)
+2. Download Audio from existing_audio_link
 3. Generate Video (using l.py) -> Upload to Gofile
 4. Send Telegram notifications
 5. Loop back
+
+Note: Audio generation removed - all audio comes from external uploads via folder watcher
 """
 
 import os
@@ -25,10 +27,7 @@ from datetime import datetime
 from typing import Optional, Dict
 
 import requests
-import torch
-import numpy as np
-import soundfile as sf
-from f5_tts.api import F5TTS
+import shutil
 
 # Import from l.py (same directory)
 from l import LandscapeGenerator, enhance_audio
@@ -106,14 +105,10 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Load Models Globally
 print("🔄 Loading Models...")
-f5_model = None
 landscape_gen = None
 
 try:
-    f5_model = F5TTS()
-    print("✅ F5-TTS model loaded")
-
-    # Load LandscapeGenerator from l.py (includes Whisper)
+    # Load LandscapeGenerator from l.py (includes Whisper for subtitles)
     landscape_gen = LandscapeGenerator()
     print("✅ LandscapeGenerator loaded (with Whisper)")
 except Exception as e:
@@ -184,16 +179,6 @@ class FileServerQueue:
             r = requests.get(f"{self.base_url}/files{organized_path}/script.txt", headers=self.file_headers, timeout=60)
             return r.text if r.status_code == 200 else None
         except: return None
-
-    def get_reference_audio(self, reference_audio: str, local_path: str) -> bool:
-        if self.download_file(f"reference-audio/{reference_audio}", local_path):
-            return True
-        base_name = reference_audio.rsplit('.', 1)[0] if '.' in reference_audio else reference_audio
-        if self.download_file(f"reference-audio/{base_name}.wav", local_path):
-            return True
-        if self.download_file(f"reference-audio/{base_name}.mp3", local_path):
-            return True
-        return False
 
     def get_random_image(self, image_folder: str = "nature") -> tuple:
         try:
@@ -438,52 +423,6 @@ async def download_from_gofile(gofile_link: str, output_path: str) -> bool:
 
     except Exception as e:
         print(f"❌ Gofile download error: {e}")
-        traceback.print_exc()
-        return False
-
-def generate_audio_f5tts(script_text: str, ref_audio: str, out_path: str, chunk_size=500) -> bool:
-    try:
-        print(f"🎙️ Generating Audio (Len: {len(script_text)})...")
-        if f5_model is None: return False
-
-        chunks = []
-        curr = ""
-        for s in script_text.replace("।", ".").split("."):
-            if len(curr) + len(s) > chunk_size: chunks.append(curr); curr = s + "."
-            else: curr += s + ". "
-        if curr: chunks.append(curr)
-
-        total_chunks = len(chunks)
-        print(f"   Total Chunks: {total_chunks}")
-
-        all_audio = []
-        rate = 24000
-        for i, chk in enumerate(chunks):
-            percent = int(((i + 1) / total_chunks) * 100)
-            print(f"\r   🎙️ Audio Progress: {percent}% (Chunk {i+1}/{total_chunks})", end="", flush=True)
-
-            if torch.cuda.is_available(): torch.cuda.empty_cache()
-            with torch.inference_mode():
-                res = f5_model.infer(
-                    ref_file=ref_audio,
-                    ref_text="",
-                    gen_text=chk,
-                    remove_silence=True,
-                    speed=0.8,             # Slower, natural pace
-                    nfe_step=64,           # Premium quality (default 32)
-                    cfg_strength=2.0,      # Classifier-free guidance
-                    sway_sampling_coef=-1.0  # Sway sampling enabled
-                )
-            audio_data = res[0] if isinstance(res, tuple) else res
-            all_audio.append(audio_data)
-
-        print(f"\r   🎙️ Audio Progress: 100%                    ")
-
-        if not all_audio: return False
-        sf.write(out_path, np.concatenate(all_audio), rate)
-        return os.path.exists(out_path)
-    except Exception as e:
-        print(f"\n❌ TTS Error: {e}")
         traceback.print_exc()
         return False
 
@@ -761,27 +700,20 @@ async def process_job(job: Dict) -> bool:
     # For videoOnly jobs, we don't need channel/org_path
     channel = job.get("channel_code", "MANUAL")
     org_path = job.get("organized_path", "")
-    ref_audio_file = job.get("reference_audio") or f"{channel}.wav"
     video_number = job.get("video_number", 0)
 
     if video_only_waiting and existing_audio_link:
         # Has audio link now - process as priority
-        print(f"\n🎯 Processing Video-Only-Waiting Job (audio link ready): {job_id[:8]}")
+        print(f"\n🎯 Processing Job (audio link ready): {job_id[:8]}")
         print(f"   Audio Link: {existing_audio_link[:50]}...")
     elif is_video_only:
         print(f"\n🎯 Processing Video-Only Job: {job_id[:8]}")
         print(f"   Audio Link: {job.get('audioLink', 'N/A')[:50]}...")
-    elif is_audio_only:
-        print(f"\n🎯 Processing Audio-Only Job: {job_id[:8]} ({channel} #{video_number})")
-        print(f"   Reference Audio: {ref_audio_file}")
-        print(f"   ⚠️ Video generation will be skipped")
     else:
         print(f"\n🎯 Processing Job: {job_id[:8]} ({channel} #{video_number})")
-        print(f"   Reference Audio: {ref_audio_file}")
 
     queue.send_heartbeat(WORKER_ID, status="busy", current_job=job_id)
 
-    local_ref_audio = os.path.join(TEMP_DIR, f"{channel}_ref.wav")
     local_audio_out = os.path.join(OUTPUT_DIR, f"audio_{job_id}.wav")
     local_video_out = os.path.join(OUTPUT_DIR, f"video_{job_id}.mp4")
     local_image = None
@@ -807,87 +739,24 @@ async def process_job(job: Dict) -> bool:
             print(f"✅ Audio downloaded successfully")
 
         else:
-            # NORMAL MODE: Generate TTS audio (or reuse existing)
-            print("🎧 STEP 1: Audio Generation")
+            # NORMAL MODE: Download audio from existing_audio_link (set by folder watcher)
+            print("🎧 STEP 1: Download External Audio")
             print("="*50)
 
             username = job.get("username", "default")
-            audio_remote_path = f"users/{username}/organized/video_{video_number}/audio.wav"
             script = job.get('script_text') or queue.get_script(org_path)
-            audio_reused = False
 
-            # Check if existing_audio_link is provided (user uploaded audio separately)
+            # Require existing_audio_link (set by folder watcher after user uploads audio)
             existing_audio_link = job.get('existing_audio_link')
-            if existing_audio_link:
-                print(f"📥 Using existing audio: {existing_audio_link[:50]}...")
-                if await download_audio_from_url(existing_audio_link, local_audio_out):
-                    print(f"✅ Audio downloaded from existing link!")
-                    audio_gofile = existing_audio_link
-                    audio_reused = True
-                else:
-                    print(f"⚠️ Failed to download from existing link, will generate new audio")
+            if not existing_audio_link:
+                raise Exception("No existing_audio_link - audio must be uploaded first via folder watcher")
 
-            # Check if audio already exists on Contabo (retry scenario)
-            if not audio_reused:
-                print("   Checking if audio already exists on Contabo...")
-                if queue.download_file(audio_remote_path, local_audio_out):
-                    print(f"✅ Found existing audio on Contabo - reusing!")
-                    audio_gofile = f"{FILE_SERVER_URL}/files/{audio_remote_path}"
-                    audio_reused = True
-
-            if not audio_reused:
-                # Generate new audio
-                print("   No existing audio found, generating new...")
-                if not script: raise Exception("Script fetch failed")
-                if not queue.get_reference_audio(ref_audio_file, local_ref_audio): raise Exception(f"Ref audio failed: {ref_audio_file}")
-
-                if not generate_audio_f5tts(script, local_ref_audio, local_audio_out):
-                    raise Exception("TTS failed")
-
-                # Upload audio (will try Gofile, Pixeldrain, then Contabo)
-                audio_gofile = await upload_file(local_audio_out, username, video_number, "audio")
-                if not audio_gofile:
-                    raise Exception("Audio upload failed")
-
-                print(f"✅ Audio uploaded: {audio_gofile}")
-
-                # Also upload to Contabo as backup (if not already there from fallback)
-                if "gofile.io" in audio_gofile or "pixeldrain.com" in audio_gofile:
-                    print("📤 Uploading audio backup to Contabo...")
-                    if queue.upload_file(local_audio_out, audio_remote_path):
-                        print(f"✅ Audio backup uploaded to Contabo")
-                    else:
-                        print("⚠️ Contabo audio backup failed (non-critical)")
-
-            # Only send audio notification if not reusing (avoid duplicate notifications on retry)
-            if not audio_reused and script:
-                script_filename = f"{channel}_V{video_number}_{job.get('date', 'unknown')}_script.txt"
-                send_telegram_document(
-                    script_text=script,
-                    caption=f"🎵 <b>Audio Complete</b>\n"
-                            f"<b>Channel:</b> {channel} | <b>Video:</b> #{video_number}\n"
-                            f"<b>Date:</b> {job.get('date', 'N/A')}\n\n"
-                            f"<b>🔗 Audio:</b> {audio_gofile}",
-                    filename=script_filename,
-                    username=job.get("username")
-                )
-
-        # ========== AUDIO ONLY: Skip Video Generation (only if no existing audio link) ==========
-        # If audio_only + existing_audio_link → make video with provided audio
-        if is_audio_only and not existing_audio_link:
-            print("\n" + "="*50)
-            print("🎧 AUDIO ONLY MODE: Skipping video generation")
-            print("="*50)
-
-            queue.complete_audio_job(job_id, WORKER_ID, audio_gofile)
-            queue.increment_worker_stat(WORKER_ID, "jobs_completed")
-
-            print("\n" + "="*50)
-            print(f"✅ JOB COMPLETE (AUDIO ONLY): {job_id[:8]}")
-            print(f"   Audio: {audio_gofile}")
-            print("="*50)
-
-            return True
+            print(f"📥 Downloading audio: {existing_audio_link[:60]}...")
+            if await download_audio_from_url(existing_audio_link, local_audio_out):
+                print(f"✅ Audio downloaded successfully!")
+                audio_gofile = existing_audio_link
+            else:
+                raise Exception(f"Failed to download audio from: {existing_audio_link}")
 
         # ========== STEP 2: VIDEO GENERATION ==========
         print("\n" + "="*50)
@@ -1086,7 +955,7 @@ async def process_job(job: Dict) -> bool:
         return False
     finally:
         try:
-            for f in [local_audio_out, local_video_out, local_image, local_ref_audio]:
+            for f in [local_audio_out, local_video_out, local_image]:
                 if f and os.path.exists(f): os.remove(f)
             # Also cleanup multiple custom images
             for img in local_images:
@@ -1099,7 +968,8 @@ async def process_job(job: Dict) -> bool:
 # ============================================================================
 
 async def main():
-    print(f"🚀 UNIFIED WORKER STARTED (Audio + Video using l.py)")
+    print(f"🚀 VIDEO WORKER STARTED (External Audio + Video using l.py)")
+    print(f"   Audio: Downloaded from existing_audio_link (no TTS generation)")
     print(f"Worker ID: {WORKER_ID}")
     print(f"Poll Interval: {POLL_INTERVAL}s")
 
