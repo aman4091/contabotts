@@ -21,6 +21,11 @@ FILE_SERVER_EXTERNAL_URL = "http://38.242.144.132:8000"  # For audio URLs (Vast.
 FILE_SERVER_API_KEY = "tts-secret-key-2024"
 POLL_INTERVAL = 5  # Check every 5 seconds
 
+# Track processed files to avoid reprocessing
+processed_files = set()
+# Track watcher start time - ignore files older than this
+WATCHER_START_TIME = None
+
 # Logging
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -55,7 +60,8 @@ def get_pending_jobs_for_audio():
 
 
 def get_audio_files():
-    """Get audio files from watch folder"""
+    """Get NEW audio files from watch folder (ignore old files and already processed)"""
+    global WATCHER_START_TIME
     audio_extensions = {'.wav', '.mp3', '.m4a', '.ogg', '.flac'}
     files = []
 
@@ -65,9 +71,18 @@ def get_audio_files():
 
     for f in watch_path.iterdir():
         if f.is_file() and f.suffix.lower() in audio_extensions:
+            # Skip already processed files
+            if str(f) in processed_files:
+                continue
+
+            # Skip files older than watcher start time (prevents picking up old files)
+            if WATCHER_START_TIME and f.stat().st_mtime < WATCHER_START_TIME:
+                logger.debug(f"Skipping old file: {f.name}")
+                continue
+
             files.append(f)
 
-    # Sort by modification time (oldest first)
+    # Sort by modification time (oldest first among new files)
     files.sort(key=lambda x: x.stat().st_mtime)
     return files
 
@@ -169,10 +184,16 @@ def delete_audio_file(audio_file: Path):
 
 def main_loop():
     """Main watching loop"""
+    global WATCHER_START_TIME
+
+    # Set start time - ignore all files older than this
+    WATCHER_START_TIME = time.time()
+
     logger.info("=" * 50)
     logger.info("Audio Folder Watcher Started")
     logger.info(f"Watching: {WATCH_FOLDER}")
     logger.info(f"Poll interval: {POLL_INTERVAL}s")
+    logger.info(f"⚠️ Ignoring files older than: {datetime.now().strftime('%H:%M:%S')}")
     logger.info("=" * 50)
 
     # Ensure watch folder exists
@@ -212,6 +233,8 @@ def main_loop():
                         if update_job_with_audio(job.get("job_id"), audio_url):
                             logger.info(f"✅ Job #{audio_counter} ready for processing!")
                             logger.info(f"   Audio: {audio_url}")
+                            # Mark file as processed (path before move)
+                            processed_files.add(str(audio_file))
                         else:
                             logger.error(f"❌ Failed to update job #{audio_counter}")
                     else:
