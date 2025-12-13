@@ -114,7 +114,7 @@ def find_matching_job(audio_file: Path, jobs: list) -> dict:
 
 
 def update_job_with_audio(job_id: str, audio_url: str):
-    """Update job with audio link and set AI images"""
+    """Update job with audio link (use_ai_image is set when job is created via popup)"""
     try:
         response = requests.post(
             f"{FILE_SERVER_URL}/queue/audio/jobs/{job_id}/update",
@@ -123,8 +123,7 @@ def update_job_with_audio(job_id: str, audio_url: str):
                 "x-api-key": FILE_SERVER_API_KEY
             },
             json={
-                "existing_audio_link": audio_url,
-                "use_ai_image": True  # Always use AI images
+                "existing_audio_link": audio_url
             },
             timeout=30
         )
