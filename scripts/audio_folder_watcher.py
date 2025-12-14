@@ -24,8 +24,6 @@ POLL_INTERVAL = 5  # Check every 5 seconds
 
 # Track processed files to avoid reprocessing
 processed_files = set()
-# Track watcher start time - ignore files older than this
-WATCHER_START_TIME = None
 
 # Logging
 logging.basicConfig(
@@ -44,22 +42,9 @@ def get_active_job():
         with open(ACTIVE_JOB_FILE) as f:
             active_data = json.load(f)
 
-        job_id = active_data.get("job_id")
-        if not job_id:
-            return None
-
-        # Fetch full job details from file server
-        response = requests.get(
-            f"{FILE_SERVER_URL}/queue/audio/jobs/{job_id}",
-            headers={"x-api-key": FILE_SERVER_API_KEY},
-            timeout=30
-        )
-
-        if response.status_code == 200:
-            job = response.json().get("job")
-            # Only return if job doesn't have audio yet
-            if job and not job.get("existing_audio_link"):
-                return job
+        # active_job.json has all info we need
+        if active_data.get("job_id"):
+            return active_data
         return None
     except Exception as e:
         logger.error(f"Error getting active job: {e}")
@@ -77,8 +62,7 @@ def clear_active_job():
 
 
 def get_audio_files():
-    """Get NEW audio files from watch folder (ignore old files and already processed)"""
-    global WATCHER_START_TIME
+    """Get audio files from watch folder"""
     audio_extensions = {'.wav', '.mp3', '.m4a', '.ogg', '.flac'}
     files = []
 
@@ -91,15 +75,9 @@ def get_audio_files():
             # Skip already processed files
             if str(f) in processed_files:
                 continue
-
-            # Skip files older than watcher start time (prevents picking up old files)
-            if WATCHER_START_TIME and f.stat().st_mtime < WATCHER_START_TIME:
-                logger.debug(f"Skipping old file: {f.name}")
-                continue
-
             files.append(f)
 
-    # Sort by modification time (oldest first among new files)
+    # Sort by modification time (oldest first)
     files.sort(key=lambda x: x.stat().st_mtime)
     return files
 
@@ -174,16 +152,11 @@ def delete_audio_file(audio_file: Path):
 
 def main_loop():
     """Main watching loop"""
-    global WATCHER_START_TIME
-
-    # Set start time - ignore all files older than this
-    WATCHER_START_TIME = time.time()
-
     logger.info("=" * 50)
     logger.info("Audio Folder Watcher Started")
     logger.info(f"Watching: {WATCH_FOLDER}")
+    logger.info(f"Active job file: {ACTIVE_JOB_FILE}")
     logger.info(f"Poll interval: {POLL_INTERVAL}s")
-    logger.info(f"⚠️ Ignoring files older than: {datetime.now().strftime('%H:%M:%S')}")
     logger.info("=" * 50)
 
     # Ensure watch folder exists
