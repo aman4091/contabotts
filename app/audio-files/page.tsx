@@ -525,18 +525,20 @@ export default function AudioFilesPage() {
 
                             {/* Action Buttons Row */}
                             <div className="flex flex-wrap gap-2 pt-2 border-t border-border/50">
-                              {/* Download buttons for completed jobs */}
+                              {/* Script download - available for all jobs */}
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => downloadFile(job, "script")}
+                                className="flex items-center gap-1 text-xs px-2 py-1 h-auto border-violet-500/30 text-violet-400 hover:bg-violet-500/10"
+                              >
+                                <FileText className="w-3 h-3" />
+                                Script
+                              </Button>
+
+                              {/* Other download buttons for completed jobs */}
                               {job.status === "completed" && (
                                 <>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => downloadFile(job, "script")}
-                                    className="flex items-center gap-1 text-xs px-2 py-1 h-auto border-violet-500/30 text-violet-400 hover:bg-violet-500/10"
-                                  >
-                                    <FileText className="w-3 h-3" />
-                                    Script
-                                  </Button>
                                   <Button
                                     size="sm"
                                     variant="outline"

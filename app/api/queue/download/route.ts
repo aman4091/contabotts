@@ -66,6 +66,16 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 })
     }
 
+    // For script, check if script_text is available in job data (pending jobs)
+    if (fileType === "script" && job.script_text) {
+      return new NextResponse(job.script_text, {
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Content-Disposition": `attachment; filename="video_${job.video_number}_script.txt"`
+        }
+      })
+    }
+
     // Build file path
     const fileName = fileType === "script" ? "script.txt" : "transcript.txt"
 
