@@ -49,14 +49,9 @@ async function createAudioJob(job: {
   organized_path: string
   priority: number
   username?: string
-  image_folder?: string
   reference_audio?: string
   custom_images?: string[]
-  audio_only?: boolean
-  video_only_waiting?: boolean
   use_ai_image?: boolean
-  enhance_audio?: boolean
-  save_local?: boolean
 }): Promise<{ success: boolean; job_id?: string; error?: string }> {
   try {
     const response = await fetch(`${FILE_SERVER_URL}/queue/audio/jobs`, {
@@ -157,11 +152,7 @@ export async function POST(request: NextRequest) {
       audioEnabled = true,
       referenceAudio: customReferenceAudio,
       customImages,
-      audioOnly = false,
-      videoOnlyMode = false,
-      aiImageMode = false,
-      enhanceAudio = true,
-      priorityQueue = false
+      aiImageMode = false
     } = body
 
     if (!script) {
@@ -200,8 +191,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Create audio job
-    // Priority: priorityQueue = 100 (highest), anu = 10 (high), aman = 5 (normal)
-    const priority = priorityQueue ? 100 : (username === "anu" ? 10 : 5)
+    // Priority: anu = 10 (high), others = 5 (normal)
+    const priority = username === "anu" ? 10 : 5
     const jobId = randomUUID()
     const result = await createAudioJob({
       job_id: jobId,
@@ -214,12 +205,8 @@ export async function POST(request: NextRequest) {
       priority,
       username,
       reference_audio: referenceAudio,
-      custom_images: customImages, // Array of image paths for fade transition
-      audio_only: audioOnly,
-      video_only_waiting: videoOnlyMode, // Wait for external audio link
-      use_ai_image: aiImageMode, // ON = AI images, OFF = nature folder
-      enhance_audio: enhanceAudio, // ON = enhance, OFF = no enhancement
-      save_local: priorityQueue // Priority = save video locally instead of GoFile
+      custom_images: customImages,
+      use_ai_image: aiImageMode
     })
 
     if (!result.success) {

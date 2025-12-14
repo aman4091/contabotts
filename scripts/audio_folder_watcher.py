@@ -134,14 +134,14 @@ def update_job_with_audio(job_id: str, audio_url: str):
 
 
 def move_audio_to_job_folder(audio_file: Path, job: dict):
-    """Rename audio with job number and move to ready folder"""
+    """Rename audio with job number and move to user-specific folder"""
     try:
         username = job.get("username", "default")
         video_number = job.get("video_number", 0)
         audio_counter = job.get("audio_counter", 0)
 
-        # Create ready folder for processed audio files
-        ready_folder = Path("/root/tts/data/audio-ready")
+        # Create user-specific ready folder: /audio-ready/{username}/
+        ready_folder = Path(f"/root/tts/data/audio-ready/{username}")
         ready_folder.mkdir(parents=True, exist_ok=True)
 
         # Rename with job number: e.g., "432_video_15.wav"
@@ -150,10 +150,10 @@ def move_audio_to_job_folder(audio_file: Path, job: dict):
 
         # MOVE the file (not copy) - this removes it from watch folder
         shutil.move(str(audio_file), str(ready_file))
-        logger.info(f"📁 Renamed & moved: {audio_file.name} -> {new_filename}")
+        logger.info(f"📁 Moved: {audio_file.name} -> {username}/{new_filename}")
 
         # Return the EXTERNAL file server URL (for Vast.ai worker access)
-        relative_path = f"audio-ready/{new_filename}"
+        relative_path = f"audio-ready/{username}/{new_filename}"
         return f"{FILE_SERVER_EXTERNAL_URL}/files/{relative_path}"
     except Exception as e:
         logger.error(f"Error moving audio: {e}")

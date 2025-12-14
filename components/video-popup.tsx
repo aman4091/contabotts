@@ -24,10 +24,7 @@ import {
   RotateCcw,
   ImageIcon,
   Trash2,
-  Upload,
-  Volume2,
-  Mic2,
-  Zap
+  Upload
 } from "lucide-react"
 
 interface Video {
@@ -107,20 +104,8 @@ export function VideoPopup({
   const [showImageSection, setShowImageSection] = useState(false)
   const [uploadingImages, setUploadingImages] = useState(false)
 
-  // Audio only mode
-  const [audioOnly, setAudioOnly] = useState(false)
-
-  // Video Only mode (wait for external audio link)
-  const [videoOnlyMode, setVideoOnlyMode] = useState(false)
-
   // AI Image generation mode
   const [aiImageMode, setAiImageMode] = useState(false)
-
-  // Audio enhancement mode (default: on)
-  const [enhanceAudio, setEnhanceAudio] = useState(true)
-
-  // Priority queue mode (process this job first)
-  const [priorityQueue, setPriorityQueue] = useState(false)
 
   useEffect(() => {
     // If initialTranscript is provided, use it instead of fetching
@@ -429,13 +414,8 @@ export function VideoPopup({
           videoTitle: video.title,
           videoId: video.videoId,
           referenceAudio: selectedAudio,
-          audioEnabled: true,
-          audioOnly,
-          videoOnlyMode,
           customImages: uploadedImagePaths.length > 0 ? uploadedImagePaths : undefined,
-          aiImageMode,
-          enhanceAudio,
-          priorityQueue
+          aiImageMode
         })
       })
 
@@ -865,60 +845,12 @@ export function VideoPopup({
             <label className="flex items-center gap-2 cursor-pointer select-none">
               <input
                 type="checkbox"
-                checked={audioOnly}
-                onChange={e => {
-                  setAudioOnly(e.target.checked)
-                  if (e.target.checked) setVideoOnlyMode(false)
-                }}
-                disabled={videoOnlyMode}
-                className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-cyan-500 focus:ring-cyan-500 disabled:opacity-50"
-              />
-              <Volume2 className="w-4 h-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">Audio Only</span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer select-none" title="Wait for external audio link before processing">
-              <input
-                type="checkbox"
-                checked={videoOnlyMode}
-                onChange={e => {
-                  setVideoOnlyMode(e.target.checked)
-                  if (e.target.checked) setAudioOnly(false)
-                }}
-                disabled={audioOnly}
-                className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-purple-500 focus:ring-purple-500 disabled:opacity-50"
-              />
-              <ExternalLink className="w-4 h-4 text-purple-400" />
-              <span className="text-sm text-muted-foreground">Video Only</span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
                 checked={aiImageMode}
                 onChange={e => setAiImageMode(e.target.checked)}
                 className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-violet-500 focus:ring-violet-500"
               />
               <Sparkles className="w-4 h-4 text-violet-400" />
               <span className="text-sm text-muted-foreground">AI Images</span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={enhanceAudio}
-                onChange={e => setEnhanceAudio(e.target.checked)}
-                className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-amber-500 focus:ring-amber-500"
-              />
-              <Mic2 className="w-4 h-4 text-amber-400" />
-              <span className="text-sm text-muted-foreground">Enhance Audio</span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={priorityQueue}
-                onChange={e => setPriorityQueue(e.target.checked)}
-                className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-red-500 focus:ring-red-500"
-              />
-              <Zap className="w-4 h-4 text-red-400" />
-              <span className="text-sm text-muted-foreground">Priority</span>
             </label>
             <Button
               onClick={handleAddToQueue}

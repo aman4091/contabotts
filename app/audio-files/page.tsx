@@ -71,6 +71,7 @@ export default function AudioFilesPage() {
   const [updating, setUpdating] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [pausing, setPausing] = useState<string | null>(null)
+  const [skipping, setSkipping] = useState<string | null>(null)
 
   // GoFile Link Dialog
   const [gofileLinkDialog, setGofileLinkDialog] = useState(false)
@@ -165,6 +166,36 @@ export default function AudioFilesPage() {
       alert(`Error ${action}ing job`)
     } finally {
       setPausing(null)
+    }
+  }
+
+  async function skipJob(job: Job) {
+    if (!confirm(`Skip job #${job.audio_counter}?\n\nThis will:\n- Delete audio file if exists\n- Mark job as completed\n\nVideo will NOT be created for this job.`)) {
+      return
+    }
+
+    setSkipping(job.job_id)
+    try {
+      const res = await fetch("/api/queue/skip-job", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          job_id: job.job_id,
+          audio_counter: job.audio_counter,
+          username: job.username
+        })
+      })
+      const data = await res.json()
+      if (data.success) {
+        toast.success(`Job #${job.audio_counter} skipped`)
+        await loadJobs()
+      } else {
+        toast.error("Failed to skip job: " + (data.error || "Unknown error"))
+      }
+    } catch (error) {
+      toast.error("Error skipping job")
+    } finally {
+      setSkipping(null)
     }
   }
 
@@ -630,6 +661,24 @@ export default function AudioFilesPage() {
                                     <Pause className="w-3 h-3" />
                                   )}
                                   Pause
+                                </Button>
+                              )}
+
+                              {/* Skip Job button - mark as completed without creating video */}
+                              {job.status === "pending" && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => skipJob(job)}
+                                  disabled={skipping === job.job_id}
+                                  className="flex items-center gap-1 text-xs px-2 py-1 h-auto bg-gray-500/10 text-gray-400 hover:bg-gray-500/20 border-gray-500/30"
+                                >
+                                  {skipping === job.job_id ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    <CheckCircle2 className="w-3 h-3" />
+                                  )}
+                                  Skip Job
                                 </Button>
                               )}
 
