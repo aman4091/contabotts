@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Audio Folder Watcher
-Watches external-audio folder, matches with oldest audio_only job, triggers processing
+Watches external-audio folder, matches with ACTIVE job from telegram bot
 """
 
 import os
@@ -16,6 +16,7 @@ from datetime import datetime
 
 # Config
 WATCH_FOLDER = "/root/tts/data/external-audio"
+ACTIVE_JOB_FILE = Path("/root/tts/data/active_job.json")
 FILE_SERVER_URL = "http://localhost:8000"  # For API calls
 FILE_SERVER_EXTERNAL_URL = "http://38.242.144.132:8000"  # For audio URLs (Vast.ai access)
 FILE_SERVER_API_KEY = "tts-secret-key-2024"
@@ -34,29 +35,45 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def get_pending_jobs_for_audio():
-    """Get ALL jobs waiting for audio (telegram_sent=true, no existing_audio_link)"""
+def get_active_job():
+    """Get the active job from active_job.json (set by telegram bot)"""
     try:
+        if not ACTIVE_JOB_FILE.exists():
+            return None
+
+        with open(ACTIVE_JOB_FILE) as f:
+            active_data = json.load(f)
+
+        job_id = active_data.get("job_id")
+        if not job_id:
+            return None
+
+        # Fetch full job details from file server
         response = requests.get(
-            f"{FILE_SERVER_URL}/queue/audio/jobs",
-            params={"status": "pending"},
+            f"{FILE_SERVER_URL}/queue/audio/jobs/{job_id}",
             headers={"x-api-key": FILE_SERVER_API_KEY},
             timeout=30
         )
+
         if response.status_code == 200:
-            jobs = response.json().get("jobs", [])
-            # Filter: telegram_sent=true, no existing_audio_link (ALL jobs, not just audio_only)
-            waiting_jobs = [
-                j for j in jobs
-                if j.get("telegram_sent") and not j.get("existing_audio_link")
-            ]
-            # Sort by created_at (oldest first)
-            waiting_jobs.sort(key=lambda x: x.get("created_at", ""))
-            return waiting_jobs
-        return []
+            job = response.json().get("job")
+            # Only return if job doesn't have audio yet
+            if job and not job.get("existing_audio_link"):
+                return job
+        return None
     except Exception as e:
-        logger.error(f"Error fetching jobs: {e}")
-        return []
+        logger.error(f"Error getting active job: {e}")
+        return None
+
+
+def clear_active_job():
+    """Clear the active job file after matching"""
+    try:
+        if ACTIVE_JOB_FILE.exists():
+            ACTIVE_JOB_FILE.unlink()
+            logger.info("📌 Active job cleared")
+    except Exception as e:
+        logger.error(f"Error clearing active job: {e}")
 
 
 def get_audio_files():
@@ -85,32 +102,6 @@ def get_audio_files():
     # Sort by modification time (oldest first among new files)
     files.sort(key=lambda x: x.stat().st_mtime)
     return files
-
-
-def extract_number_from_filename(filename: str) -> int:
-    """Extract job number from filename like '432.wav' or 'audio_432.mp3'"""
-    import re
-    # Find all numbers in filename
-    numbers = re.findall(r'\d+', filename)
-    if numbers:
-        # Return the first number found
-        return int(numbers[0])
-    return None
-
-
-def find_matching_job(audio_file: Path, jobs: list) -> dict:
-    """Find job that matches the audio file by number in filename"""
-    # Try to extract number from filename
-    file_number = extract_number_from_filename(audio_file.stem)
-
-    if file_number:
-        # Look for job with matching audio_counter
-        for job in jobs:
-            if job.get("audio_counter") == file_number:
-                return job
-
-    # Fallback: return oldest job (first in list)
-    return jobs[0] if jobs else None
 
 
 def update_job_with_audio(job_id: str, audio_url: str):
@@ -204,42 +195,34 @@ def main_loop():
             audio_files = get_audio_files()
 
             if audio_files:
-                # Get ALL pending jobs waiting for audio
-                jobs = get_pending_jobs_for_audio()
+                # Get the ACTIVE job (from telegram bot)
+                job = get_active_job()
 
-                # Log all pending jobs for debugging
-                if jobs:
-                    logger.info(f"=== Pending jobs waiting for audio ({len(jobs)}) ===")
-                    for idx, j in enumerate(jobs):
-                        logger.info(f"  {idx+1}. #{j.get('audio_counter')} - {j.get('job_id', '')[:8]} - created: {j.get('created_at', 'N/A')}")
-
-                if jobs:
-                    # Match oldest audio file with oldest job
+                if job:
                     audio_file = audio_files[0]
-                    job = jobs[0]
-
                     job_id = job.get("job_id", "")[:8]
                     audio_counter = job.get("audio_counter", 0)
+                    video_number = job.get("video_number", 0)
 
-                    logger.info(f">>> Found audio: {audio_file.name}")
-                    logger.info(f">>> Matching with job #{audio_counter} ({job_id})")
+                    logger.info(f">>> Audio: {audio_file.name}")
+                    logger.info(f">>> Active job: #{audio_counter} V{video_number} ({job_id})")
 
                     # Move audio to job folder and get URL
                     audio_url = move_audio_to_job_folder(audio_file, job)
 
                     if audio_url:
-                        # File already moved by move_audio_to_job_folder, now update job
+                        # Update job with audio link
                         if update_job_with_audio(job.get("job_id"), audio_url):
-                            logger.info(f"✅ Job #{audio_counter} ready for processing!")
-                            logger.info(f"   Audio: {audio_url}")
-                            # Mark file as processed (path before move)
+                            logger.info(f"✅ Job #{audio_counter} ready!")
+                            # Clear active job so telegram sends next script
+                            clear_active_job()
                             processed_files.add(str(audio_file))
                         else:
                             logger.error(f"❌ Failed to update job #{audio_counter}")
                     else:
-                        logger.error(f"❌ Failed to move/rename audio file")
+                        logger.error(f"❌ Failed to move audio file")
                 else:
-                    logger.debug("Audio files found but no matching jobs waiting")
+                    logger.debug("Audio found but no active job")
 
         except Exception as e:
             logger.error(f"Error in main loop: {e}")

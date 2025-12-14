@@ -4,9 +4,9 @@ Telegram Bot for Audio Queue
 Sends ONE script at a time to Telegram. Waits for audio upload before sending next script.
 
 Flow:
-1. Send oldest pending job's script to Telegram
+1. Send script to Telegram and save job ID to active_job.json
 2. Wait until that job gets audio (existing_audio_link set by folder watcher)
-3. Only then send the next script
+3. Only then send the next script (don't wait for video)
 """
 
 import os
@@ -17,6 +17,7 @@ import logging
 import requests
 import tempfile
 from datetime import datetime
+from pathlib import Path
 
 # Telegram Bot setup
 BOT_TOKEN = "7865909076:AAElJmFN2awcf-4v_jJ53aJJEls1N0tZNSQ"
@@ -25,6 +26,9 @@ CHAT_ID = "-1002498893774"
 # File server config
 FILE_SERVER_URL = os.getenv("FILE_SERVER_URL", "http://localhost:8000")
 FILE_SERVER_API_KEY = os.getenv("FILE_SERVER_API_KEY", "tts-secret-key-2024")
+
+# Active job tracking file - folder watcher reads this
+ACTIVE_JOB_FILE = Path("/root/tts/data/active_job.json")
 
 # Polling interval in seconds
 POLL_INTERVAL = 10
@@ -38,6 +42,24 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+
+def save_active_job(job: dict):
+    """Save the currently active job to file - folder watcher reads this"""
+    try:
+        ACTIVE_JOB_FILE.parent.mkdir(parents=True, exist_ok=True)
+        active_data = {
+            "job_id": job.get("job_id"),
+            "audio_counter": job.get("audio_counter"),
+            "video_number": job.get("video_number"),
+            "username": job.get("username"),
+            "sent_at": datetime.now().isoformat()
+        }
+        with open(ACTIVE_JOB_FILE, "w") as f:
+            json.dump(active_data, f, indent=2)
+        logger.info(f"📌 Active job set: #{active_data['audio_counter']} (V{active_data['video_number']})")
+    except Exception as e:
+        logger.error(f"Error saving active job: {e}")
 
 
 def get_all_pending_jobs():
@@ -142,8 +164,8 @@ def send_telegram_document(file_path: str, caption: str = ""):
         return False
 
 
-def process_audio_only_job(job: dict):
-    """Process a single audio_only job"""
+def send_script_to_telegram(job: dict):
+    """Send job script to Telegram"""
     job_id = job.get("job_id", "")
     script_text = job.get("script_text", "")
     channel_code = job.get("channel_code", "VIDEO")
@@ -154,7 +176,7 @@ def process_audio_only_job(job: dict):
         logger.warning(f"Job {job_id[:8]} has no script text, skipping")
         return False
 
-    logger.info(f"Processing audio_only job: #{audio_counter} - {channel_code} V{video_number}")
+    logger.info(f"Sending script: #{audio_counter} - {channel_code} V{video_number}")
 
     # Create temp file with script
     with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
@@ -163,10 +185,8 @@ def process_audio_only_job(job: dict):
 
     try:
         # Prepare caption
-        caption = f"<b>Audio Only Job</b>\n\n"
-        caption += f"<b>#{audio_counter}</b> | {channel_code} V{video_number}\n"
-        caption += f"<b>Job ID:</b> <code>{job_id[:8]}</code>\n\n"
-        caption += f"<i>Add audio link on queue page when ready</i>"
+        caption = f"<b>#{audio_counter}</b> | {channel_code} V{video_number}\n"
+        caption += f"<b>Job ID:</b> <code>{job_id[:8]}</code>"
 
         # Send script file
         filename = f"script_{audio_counter}_{channel_code}_V{video_number}.txt"
@@ -175,6 +195,9 @@ def process_audio_only_job(job: dict):
 
         if send_telegram_document(temp_file, caption):
             logger.info(f"Script sent to Telegram for job #{audio_counter}")
+
+            # Save as active job - folder watcher will match audio to this job
+            save_active_job(job)
 
             # Mark as sent so we don't send again
             mark_job_as_sent(job_id)
@@ -229,7 +252,7 @@ def main_loop():
                 if job_id not in processed_jobs:
                     audio_counter = next_job.get("audio_counter", 0)
                     logger.info(f"📤 Sending script #{audio_counter} to Telegram...")
-                    process_audio_only_job(next_job)
+                    send_script_to_telegram(next_job)
 
             # Clean up processed jobs set (keep last 1000)
             if len(processed_jobs) > 1000:

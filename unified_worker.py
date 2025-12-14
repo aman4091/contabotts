@@ -681,36 +681,20 @@ def render_video_shorts(image_path: str, audio_path: str, ass_path: str, output_
 # ============================================================================
 
 async def process_job(job: Dict) -> bool:
-    """Process Audio + Video in single job"""
+    """Process Audio + Video job"""
     job_id = job["job_id"]
-
-    # Check for video_only_waiting jobs that need audio link
-    video_only_waiting = job.get("video_only_waiting", False)
     existing_audio_link = job.get("existing_audio_link")
 
-    if video_only_waiting and not existing_audio_link:
-        # This should never happen as file_server filters these out during claim
-        # But just in case, skip without failing
-        print(f"\n⏸️ Job {job_id[:8]} is video_only_waiting without audio link - skipping")
+    # Require audio link (set by folder watcher)
+    if not existing_audio_link:
+        print(f"\n⏸️ Job {job_id[:8]} has no audio - skipping")
         return True
 
-    is_video_only = job.get("videoOnly", False)
-    is_audio_only = job.get("audio_only", False)
-
-    # For videoOnly jobs, we don't need channel/org_path
-    channel = job.get("channel_code", "MANUAL")
+    channel = job.get("channel_code", "VIDEO")
     org_path = job.get("organized_path", "")
     video_number = job.get("video_number", 0)
 
-    if video_only_waiting and existing_audio_link:
-        # Has audio link now - process as priority
-        print(f"\n🎯 Processing Job (audio link ready): {job_id[:8]}")
-        print(f"   Audio Link: {existing_audio_link[:50]}...")
-    elif is_video_only:
-        print(f"\n🎯 Processing Video-Only Job: {job_id[:8]}")
-        print(f"   Audio Link: {job.get('audioLink', 'N/A')[:50]}...")
-    else:
-        print(f"\n🎯 Processing Job: {job_id[:8]} ({channel} #{video_number})")
+    print(f"\n🎯 Processing Job: {job_id[:8]} ({channel} #{video_number})")
 
     queue.send_heartbeat(WORKER_ID, status="busy", current_job=job_id)
 
@@ -720,43 +704,17 @@ async def process_job(job: Dict) -> bool:
     audio_gofile = None
 
     try:
-        # ========== STEP 1: AUDIO (Generate or Download) ==========
+        # ========== STEP 1: DOWNLOAD AUDIO ==========
         print("\n" + "="*50)
+        print("🎧 STEP 1: Download Audio")
+        print("="*50)
 
-        if is_video_only:
-            # VIDEO-ONLY MODE: Download audio from Gofile
-            print("📥 STEP 1: Download Audio from Gofile")
-            print("="*50)
-
-            audio_link = job.get("audioLink")
-            if not audio_link:
-                raise Exception("No audioLink provided for videoOnly job")
-
-            if not await download_from_gofile(audio_link, local_audio_out):
-                raise Exception("Failed to download audio from Gofile")
-
-            audio_gofile = audio_link  # Use original link for reference
-            print(f"✅ Audio downloaded successfully")
-
+        print(f"📥 Downloading: {existing_audio_link[:60]}...")
+        if await download_audio_from_url(existing_audio_link, local_audio_out):
+            print(f"✅ Audio downloaded!")
+            audio_gofile = existing_audio_link
         else:
-            # NORMAL MODE: Download audio from existing_audio_link (set by folder watcher)
-            print("🎧 STEP 1: Download External Audio")
-            print("="*50)
-
-            username = job.get("username", "default")
-            script = job.get('script_text') or queue.get_script(org_path)
-
-            # Require existing_audio_link (set by folder watcher after user uploads audio)
-            existing_audio_link = job.get('existing_audio_link')
-            if not existing_audio_link:
-                raise Exception("No existing_audio_link - audio must be uploaded first via folder watcher")
-
-            print(f"📥 Downloading audio: {existing_audio_link[:60]}...")
-            if await download_audio_from_url(existing_audio_link, local_audio_out):
-                print(f"✅ Audio downloaded successfully!")
-                audio_gofile = existing_audio_link
-            else:
-                raise Exception(f"Failed to download audio from: {existing_audio_link}")
+            raise Exception(f"Failed to download audio from: {existing_audio_link}")
 
         # ========== STEP 2: VIDEO GENERATION ==========
         print("\n" + "="*50)
@@ -809,13 +767,8 @@ async def process_job(job: Dict) -> bool:
             else:
                 print("🤖 Using AI Image Generation...")
 
-            # Get script text for analysis
-            ai_script = None
-            if is_video_only:
-                # For video-only, we don't have script - use fallback
-                ai_script = job.get('videoTitle', 'A beautiful cinematic scene')
-            else:
-                ai_script = job.get('script_text') or queue.get_script(org_path)
+            # Get script text for AI image
+            ai_script = job.get('script_text') or queue.get_script(org_path)
 
             if ai_script:
                 local_image = os.path.join(TEMP_DIR, f"ai_image_{job_id}.jpg")
@@ -898,39 +851,31 @@ async def process_job(job: Dict) -> bool:
         queue.increment_worker_stat(WORKER_ID, "jobs_completed")
 
         video_type = "📱 Shorts" if is_short else "🎬 Video"
+        script = job.get('script_text') or queue.get_script(org_path)
 
-        if is_video_only:
-            # For videoOnly jobs, send simple telegram message
-            send_telegram(
-                f"{video_type} <b>Complete (Manual Audio)</b>\n"
-                f"<b>Title:</b> {job.get('videoTitle', 'Unknown')}\n\n"
-                f"<b>🔗 Video:</b> {video_gofile}",
+        # Send completion telegram
+        script_filename = f"{channel}_V{video_number}_{job.get('date', 'unknown')}_script.txt"
+        if script:
+            send_telegram_document(
+                script_text=script,
+                caption=f"{video_type} <b>Complete</b>\n"
+                        f"<b>Channel:</b> {channel} | <b>Video:</b> #{video_number}\n"
+                        f"<b>Date:</b> {job.get('date', 'N/A')}\n\n"
+                        f"<b>🔗 Video:</b> {video_gofile}",
+                filename=script_filename,
                 username=job.get("username")
             )
         else:
-            # Normal job - send with script document
-            script_filename = f"{channel}_V{video_number}_{job.get('date', 'unknown')}_script.txt"
-            if script:
-                send_telegram_document(
-                    script_text=script,
-                    caption=f"{video_type} <b>Complete</b>\n"
-                            f"<b>Channel:</b> {channel} | <b>Video:</b> #{video_number}\n"
-                            f"<b>Date:</b> {job.get('date', 'N/A')}\n\n"
-                            f"<b>🔗 Video:</b> {video_gofile}",
-                    filename=script_filename,
-                    username=job.get("username")
-                )
-            else:
-                send_telegram(
-                    f"{video_type} <b>Complete</b>\n"
-                    f"<b>Channel:</b> {channel} | <b>Video:</b> #{video_number}\n"
-                    f"<b>Date:</b> {job.get('date', 'N/A')}\n\n"
-                    f"<b>🔗 Video:</b> {video_gofile}",
-                    username=job.get("username")
-                )
+            send_telegram(
+                f"{video_type} <b>Complete</b>\n"
+                f"<b>Channel:</b> {channel} | <b>Video:</b> #{video_number}\n"
+                f"<b>Date:</b> {job.get('date', 'N/A')}\n\n"
+                f"<b>🔗 Video:</b> {video_gofile}",
+                username=job.get("username")
+            )
 
         print("\n" + "="*50)
-        print(f"✅ JOB COMPLETE: {job_id[:8]} {'(SHORT)' if is_short else ''} {'(VIDEO-ONLY)' if is_video_only else ''}")
+        print(f"✅ JOB COMPLETE: {job_id[:8]} {'(SHORT)' if is_short else ''}")
         print(f"   Audio: {audio_gofile}")
         print(f"   Video: {video_gofile}")
         print("="*50)

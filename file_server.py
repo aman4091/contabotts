@@ -555,13 +555,9 @@ async def claim_job(
 
     # Try to claim each job atomically
     for job_file, job_data in jobs_with_files:
-        # Skip video_only_waiting jobs that don't have audio link yet
-        if job_data.get("video_only_waiting") and not job_data.get("existing_audio_link"):
-            continue
-
-        # Skip ALL jobs sent to telegram that don't have audio yet
-        # Bot sends script to telegram, user uploads audio, then worker processes
-        if job_data.get("telegram_sent") and not job_data.get("existing_audio_link"):
+        # Skip ALL jobs that don't have existing_audio_link yet
+        # Audio must be uploaded via folder watcher before processing
+        if not job_data.get("existing_audio_link"):
             continue
 
         try:
