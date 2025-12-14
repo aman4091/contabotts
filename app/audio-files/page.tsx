@@ -262,6 +262,32 @@ export default function AudioFilesPage() {
     }
   }
 
+  const [clearing, setClearing] = useState(false)
+
+  async function clearAllPendingJobs() {
+    if (!confirm("Delete ALL pending jobs and audio files?\n\nThis will:\n- Delete all pending jobs\n- Clear external-audio folder\n- Clear audio-ready folder\n\nThis cannot be undone!")) {
+      return
+    }
+
+    setClearing(true)
+    try {
+      const res = await fetch("/api/queue/clear-all", {
+        method: "POST"
+      })
+      const data = await res.json()
+      if (data.success) {
+        toast.success(`Cleared ${data.deleted_jobs} jobs, ${data.deleted_audio_files} audio files`)
+        await loadJobs()
+      } else {
+        toast.error("Failed to clear: " + (data.error || "Unknown error"))
+      }
+    } catch (error) {
+      toast.error("Error clearing queue")
+    } finally {
+      setClearing(false)
+    }
+  }
+
   const filteredJobs = jobs.filter(job => {
     if (statusFilter === "all") return true
     return job.status === statusFilter
@@ -330,20 +356,36 @@ export default function AudioFilesPage() {
           <h1 className="text-xl sm:text-2xl md:text-3xl font-bold gradient-text">Queue Manager</h1>
           <p className="text-muted-foreground text-sm mt-1">Track audio & video generation jobs</p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={loadJobs}
-          disabled={loading}
-          className="border-violet-500/30 hover:border-violet-500 hover:bg-violet-500/10 transition-all"
-        >
-          {loading ? (
-            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-          ) : (
-            <RefreshCw className="w-4 h-4 mr-2" />
-          )}
-          Refresh
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={clearAllPendingJobs}
+            disabled={clearing || stats.pending === 0}
+            className="border-red-500/30 hover:border-red-500 hover:bg-red-500/10 transition-all text-red-400"
+          >
+            {clearing ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <Trash2 className="w-4 h-4 mr-2" />
+            )}
+            Clear All
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={loadJobs}
+            disabled={loading}
+            className="border-violet-500/30 hover:border-violet-500 hover:bg-violet-500/10 transition-all"
+          >
+            {loading ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <RefreshCw className="w-4 h-4 mr-2" />
+            )}
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {/* Stats */}

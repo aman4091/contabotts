@@ -975,6 +975,65 @@ async def resume_all_jobs(
     return {"success": True, "resumed_count": resumed_count}
 
 
+@app.post("/queue/{queue_type}/clear-all")
+async def clear_all_pending(
+    queue_type: str,
+    x_api_key: Optional[str] = Header(None)
+):
+    """
+    Delete ALL pending jobs and clear audio folders
+    This is a destructive operation - use with caution!
+
+    Args:
+        queue_type: 'audio' or 'video'
+
+    Returns:
+        Count of deleted jobs and files
+    """
+    verify_api_key(x_api_key)
+    paths = get_queue_paths(queue_type)
+
+    deleted_jobs = 0
+    deleted_audio_files = 0
+
+    # Delete all pending jobs
+    pending_files = list(paths["pending"].glob("*.json"))
+    for job_file in pending_files:
+        try:
+            job_file.unlink()
+            deleted_jobs += 1
+        except:
+            continue
+
+    # Clear external-audio folder
+    external_audio = Path(BASE_PATH) / "external-audio"
+    if external_audio.exists():
+        for f in external_audio.glob("*"):
+            if f.is_file():
+                try:
+                    f.unlink()
+                    deleted_audio_files += 1
+                except:
+                    continue
+
+    # Clear audio-ready folder
+    audio_ready = Path(BASE_PATH) / "audio-ready"
+    if audio_ready.exists():
+        for f in audio_ready.glob("*"):
+            if f.is_file():
+                try:
+                    f.unlink()
+                    deleted_audio_files += 1
+                except:
+                    continue
+
+    return {
+        "success": True,
+        "deleted_jobs": deleted_jobs,
+        "deleted_audio_files": deleted_audio_files
+    }
+
+
 @app.post("/queue/{queue_type}/jobs/{job_id}/update")
 async def update_job(
     queue_type: str,
