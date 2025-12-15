@@ -221,7 +221,7 @@ queue = FileServerQueue(FILE_SERVER_URL, FILE_SERVER_API_KEY)
 # UTILS
 # ============================================================================
 
-async def upload_to_gofile(file_path: str) -> Optional[str]:
+async def upload_to_gofile(file_path: str, custom_filename: str = None) -> Optional[str]:
     try:
         import httpx
         async with httpx.AsyncClient(timeout=600.0) as client:
@@ -236,8 +236,10 @@ async def upload_to_gofile(file_path: str) -> Optional[str]:
                 print("Gofile: No servers available")
                 return None
             server = servers[0]["name"]
+            # Use custom filename if provided
+            filename = custom_filename or os.path.basename(file_path)
             with open(file_path, 'rb') as f:
-                up = await client.post(f"https://{server}.gofile.io/contents/uploadfile", files={'file': f})
+                up = await client.post(f"https://{server}.gofile.io/contents/uploadfile", files={'file': (filename, f)})
             if up.status_code == 200:
                 return up.json()["data"]["downloadPage"]
             return None
@@ -245,13 +247,13 @@ async def upload_to_gofile(file_path: str) -> Optional[str]:
         print(f"Gofile error: {e}")
         return None
 
-async def upload_to_pixeldrain(file_path: str) -> Optional[str]:
+async def upload_to_pixeldrain(file_path: str, custom_filename: str = None) -> Optional[str]:
     """Fallback upload to Pixeldrain"""
     try:
         import httpx
         async with httpx.AsyncClient(timeout=600.0) as client:
             with open(file_path, 'rb') as f:
-                filename = os.path.basename(file_path)
+                filename = custom_filename or os.path.basename(file_path)
                 up = await client.post(
                     "https://pixeldrain.com/api/file",
                     files={'file': (filename, f)}
@@ -280,14 +282,21 @@ async def upload_to_contabo(file_path: str, username: str, video_number: int, fi
         print(f"Contabo upload error: {e}")
         return None
 
-async def upload_file(file_path: str, username: str = "default", video_number: int = 0, file_type: str = "video") -> Optional[str]:
+async def upload_file(file_path: str, username: str = "default", video_number: int = 0, file_type: str = "video", channel_code: str = "") -> Optional[str]:
     """Upload file to Gofile, fallback to Pixeldrain, then Contabo"""
-    print(f"📤 Uploading to Gofile...")
-    link = await upload_to_gofile(file_path)
+    # Create descriptive filename: V489_channel.mp4 or V489.mp4
+    ext = os.path.splitext(file_path)[1] or ".mp4"
+    if channel_code:
+        custom_filename = f"V{video_number}_{channel_code}{ext}"
+    else:
+        custom_filename = f"V{video_number}{ext}"
+
+    print(f"📤 Uploading to Gofile as {custom_filename}...")
+    link = await upload_to_gofile(file_path, custom_filename)
     if link:
         return link
     print(f"⚠️ Gofile failed, trying Pixeldrain...")
-    link = await upload_to_pixeldrain(file_path)
+    link = await upload_to_pixeldrain(file_path, custom_filename)
     if link:
         return link
     print(f"⚠️ Pixeldrain failed, trying Contabo...")
@@ -835,7 +844,7 @@ async def process_job(job: Dict) -> bool:
             video_gofile = f"LOCAL:{local_save_path}"
             print(f"✅ Video saved locally: {local_save_path}")
         else:
-            video_gofile = await upload_file(local_video_out, username, video_number, "video")
+            video_gofile = await upload_file(local_video_out, username, video_number, "video", channel)
             if not video_gofile:
                 raise Exception("Video upload failed")
             print(f"✅ Video uploaded: {video_gofile}")

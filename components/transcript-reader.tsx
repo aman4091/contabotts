@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Loader2, ChevronLeft, ChevronRight, Check, Download } from "lucide-react"
+import { Loader2, ChevronLeft, ChevronRight, Check } from "lucide-react"
 import { toast } from "sonner"
 
 interface TranscriptFile {
@@ -38,12 +38,10 @@ export function TranscriptReader({ channelCode, onSelect }: TranscriptReaderProp
   const [pageInput, setPageInput] = useState("")
   const [mode, setMode] = useState<"transcripts" | "videos">("transcripts")
 
-  // Load data on mount
   useEffect(() => {
     loadData()
   }, [channelCode])
 
-  // Load content when index changes
   useEffect(() => {
     if (mode === "transcripts" && transcripts.length > 0 && currentIndex >= 0 && currentIndex < transcripts.length) {
       loadTranscriptContent(transcripts[currentIndex])
@@ -55,7 +53,6 @@ export function TranscriptReader({ channelCode, onSelect }: TranscriptReaderProp
   async function loadData() {
     setLoading(true)
     try {
-      // Load transcripts list
       const transRes = await fetch(`/api/transcripts/list?channel=${channelCode}`)
       let transcriptList: TranscriptFile[] = []
       if (transRes.ok) {
@@ -63,7 +60,6 @@ export function TranscriptReader({ channelCode, onSelect }: TranscriptReaderProp
         transcriptList = data.transcripts || []
       }
 
-      // Load videos list (sorted by views)
       const videosRes = await fetch(`/api/videos?channel=${channelCode}&limit=1000&sort=views`)
       let videoList: Video[] = []
       if (videosRes.ok) {
@@ -74,12 +70,10 @@ export function TranscriptReader({ channelCode, onSelect }: TranscriptReaderProp
       setTranscripts(transcriptList)
       setVideos(videoList)
 
-      // If transcripts exist, use transcript mode
       if (transcriptList.length > 0) {
         setMode("transcripts")
         setCurrentIndex(0)
       } else if (videoList.length > 0) {
-        // Otherwise use videos mode (fetch on-demand)
         setMode("videos")
         setCurrentIndex(0)
       }
@@ -93,7 +87,6 @@ export function TranscriptReader({ channelCode, onSelect }: TranscriptReaderProp
   async function loadTranscriptContent(meta: TranscriptFile) {
     setLoadingContent(true)
     setCurrentMeta(meta)
-    // Find matching video for thumbnail
     const video = videos.find(v => v.videoId === meta.videoId)
     setCurrentVideo(video || {
       videoId: meta.videoId,
@@ -126,10 +119,8 @@ export function TranscriptReader({ channelCode, onSelect }: TranscriptReaderProp
     })
     setTranscriptContent("")
 
-    // First check if transcript exists
     const existingIndex = transcripts.findIndex(t => t.videoId === video.videoId)
     if (existingIndex >= 0) {
-      // Load existing transcript
       try {
         const res = await fetch(`/api/transcripts/${transcripts[existingIndex].index}?channel=${channelCode}`)
         if (res.ok) {
@@ -143,7 +134,6 @@ export function TranscriptReader({ channelCode, onSelect }: TranscriptReaderProp
       }
     }
 
-    // Fetch transcript on-demand
     setFetchingTranscript(true)
     try {
       const res = await fetch(`/api/videos/transcript?videoId=${video.videoId}`)
@@ -151,7 +141,6 @@ export function TranscriptReader({ channelCode, onSelect }: TranscriptReaderProp
         const data = await res.json()
         if (data.transcript) {
           setTranscriptContent(data.transcript)
-          // Save transcript for future use
           saveTranscript(video, data.transcript)
         } else {
           toast.error("No transcript available for this video")
@@ -184,7 +173,6 @@ export function TranscriptReader({ channelCode, onSelect }: TranscriptReaderProp
           }]
         })
       })
-      // Update local transcripts list
       setTranscripts(prev => [...prev, {
         index: nextIndex,
         title: video.title,
@@ -197,7 +185,6 @@ export function TranscriptReader({ channelCode, onSelect }: TranscriptReaderProp
   }
 
   function goToPrevious() {
-    const total = mode === "transcripts" ? transcripts.length : videos.length
     if (currentIndex > 0) {
       setCurrentIndex(currentIndex - 1)
     }
@@ -244,45 +231,41 @@ export function TranscriptReader({ channelCode, onSelect }: TranscriptReaderProp
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-120px)]">
-      {/* Header with Thumbnail */}
-      <div className="flex gap-4 p-4 border-b border-border bg-background/80 backdrop-blur-sm">
-        {/* Thumbnail */}
+    <div className="flex flex-col h-[calc(100vh-180px)] sm:h-[calc(100vh-120px)]">
+      {/* Header - Mobile: stacked, Desktop: side by side */}
+      <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 p-3 sm:p-4 border-b border-border bg-background/80 backdrop-blur-sm">
+        {/* Thumbnail - smaller on mobile */}
         {currentVideo && (
-          <div className="flex-shrink-0">
+          <div className="flex-shrink-0 flex justify-center sm:justify-start">
             <img
               src={currentVideo.thumbnail}
               alt={currentVideo.title}
-              className="w-40 h-24 object-cover rounded-lg"
+              className="w-32 h-20 sm:w-40 sm:h-24 object-cover rounded-lg"
             />
           </div>
         )}
 
-        {/* Title & Navigation */}
+        {/* Title & Info */}
         <div className="flex-1 min-w-0">
-          <h2 className="text-lg font-semibold truncate text-foreground">
+          <h2 className="text-sm sm:text-lg font-semibold line-clamp-2 sm:truncate text-foreground">
             {currentMeta?.title || currentVideo?.title || "Loading..."}
           </h2>
-          <p className="text-sm text-muted-foreground">
-            Video ID: {currentMeta?.videoId || currentVideo?.videoId || "..."}
+          <p className="text-xs sm:text-sm text-muted-foreground mt-1">
+            ID: {currentMeta?.videoId || currentVideo?.videoId || "..."}
+            {currentVideo?.viewCount ? ` | ${currentVideo.viewCount.toLocaleString()} views` : ""}
           </p>
-          {currentVideo?.viewCount ? (
-            <p className="text-xs text-muted-foreground mt-1">
-              {currentVideo.viewCount.toLocaleString()} views
-            </p>
-          ) : null}
 
-          {/* Navigation */}
-          <div className="flex items-center gap-2 mt-2">
+          {/* Navigation - wraps on mobile */}
+          <div className="flex flex-wrap items-center gap-2 mt-2">
             <Button
               variant="outline"
               size="sm"
               onClick={goToPrevious}
               disabled={currentIndex === 0 || loadingContent}
-              className="border-violet-500/30 text-violet-400 hover:bg-violet-500/10"
+              className="border-violet-500/30 text-violet-400 hover:bg-violet-500/10 h-8 px-2 sm:px-3"
             >
               <ChevronLeft className="w-4 h-4" />
-              Prev
+              <span className="hidden sm:inline ml-1">Prev</span>
             </Button>
 
             <div className="flex items-center gap-1">
@@ -292,11 +275,11 @@ export function TranscriptReader({ channelCode, onSelect }: TranscriptReaderProp
                 onChange={(e) => setPageInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && goToPage()}
                 placeholder={String(currentIndex + 1)}
-                className="w-16 h-8 text-center text-sm"
+                className="w-12 sm:w-16 h-8 text-center text-xs sm:text-sm"
                 min={1}
                 max={total}
               />
-              <span className="text-sm text-muted-foreground">/ {total}</span>
+              <span className="text-xs sm:text-sm text-muted-foreground">/ {total}</span>
               <Button
                 variant="outline"
                 size="sm"
@@ -313,9 +296,9 @@ export function TranscriptReader({ channelCode, onSelect }: TranscriptReaderProp
               size="sm"
               onClick={goToNext}
               disabled={currentIndex === total - 1 || loadingContent}
-              className="border-violet-500/30 text-violet-400 hover:bg-violet-500/10"
+              className="border-violet-500/30 text-violet-400 hover:bg-violet-500/10 h-8 px-2 sm:px-3"
             >
-              Next
+              <span className="hidden sm:inline mr-1">Next</span>
               <ChevronRight className="w-4 h-4" />
             </Button>
           </div>
@@ -323,41 +306,39 @@ export function TranscriptReader({ channelCode, onSelect }: TranscriptReaderProp
       </div>
 
       {/* Transcript Content */}
-      <div className="flex-1 overflow-auto p-4">
+      <div className="flex-1 overflow-auto p-3 sm:p-4">
         {loadingContent || fetchingTranscript ? (
           <div className="flex flex-col items-center justify-center h-full gap-2">
             <Loader2 className="w-6 h-6 animate-spin text-violet-500" />
             {fetchingTranscript && (
-              <p className="text-sm text-muted-foreground">Fetching transcript...</p>
+              <p className="text-xs sm:text-sm text-muted-foreground">Fetching transcript...</p>
             )}
           </div>
         ) : transcriptContent ? (
           <div className="max-w-4xl mx-auto">
-            <div className="prose prose-invert max-w-none">
-              <pre className="whitespace-pre-wrap font-sans text-base leading-relaxed text-foreground bg-muted/30 p-6 rounded-lg">
-                {transcriptContent}
-              </pre>
-            </div>
+            <pre className="whitespace-pre-wrap font-sans text-sm sm:text-base leading-relaxed text-foreground bg-muted/30 p-3 sm:p-6 rounded-lg">
+              {transcriptContent}
+            </pre>
           </div>
         ) : (
-          <div className="flex items-center justify-center h-full text-muted-foreground">
+          <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
             No transcript available
           </div>
         )}
       </div>
 
-      {/* Footer with Select Button */}
-      <div className="flex items-center justify-between p-4 border-t border-border bg-background/80 backdrop-blur-sm">
-        <div className="text-sm text-muted-foreground">
-          {transcriptContent.length.toLocaleString()} characters
+      {/* Footer - Sticky */}
+      <div className="sticky bottom-0 flex items-center justify-between p-3 sm:p-4 border-t border-border bg-background/95 backdrop-blur-sm z-10">
+        <div className="text-xs sm:text-sm text-muted-foreground">
+          {transcriptContent.length.toLocaleString()} chars
         </div>
         <Button
           onClick={handleSelect}
           disabled={loadingContent || fetchingTranscript || !transcriptContent}
-          className="bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500"
+          className="bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 h-9 sm:h-10 text-sm"
         >
-          <Check className="w-4 h-4 mr-2" />
-          Select & Process
+          <Check className="w-4 h-4 mr-1 sm:mr-2" />
+          <span className="hidden sm:inline">Select & </span>Process
         </Button>
       </div>
     </div>
