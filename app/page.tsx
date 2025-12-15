@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { toast } from "sonner"
-import { Loader2, Youtube, Search, X, Menu } from "lucide-react"
+import { Loader2, Youtube, Search, X, Menu, Upload } from "lucide-react"
 import { VideoPopup } from "@/components/video-popup"
 import { TranscriptPopup } from "@/components/transcript-popup"
 import { TranscriptReader } from "@/components/transcript-reader"
@@ -60,6 +60,10 @@ export default function HomePage() {
 
   // Bulk mode callback
   const [bulkCallback, setBulkCallback] = useState<(() => void) | null>(null)
+
+  // Uploaded scripts queue
+  const [uploadedScripts, setUploadedScripts] = useState<{name: string, content: string}[]>([])
+  const [currentScriptIndex, setCurrentScriptIndex] = useState(0)
 
   useEffect(() => {
     loadInitialData()
@@ -173,6 +177,20 @@ export default function HomePage() {
     setUrlTranscript("")
     setUrlVideoId("")
     setYoutubeUrl("")
+
+    // Check if there are more uploaded scripts to process
+    if (uploadedScripts.length > 0 && currentScriptIndex < uploadedScripts.length - 1) {
+      const nextIndex = currentScriptIndex + 1
+      setCurrentScriptIndex(nextIndex)
+      setTimeout(() => {
+        showUploadedScript(nextIndex)
+      }, 200)
+    } else if (uploadedScripts.length > 0) {
+      // Clear uploaded scripts when done
+      setUploadedScripts([])
+      setCurrentScriptIndex(0)
+      toast.success("All uploaded scripts processed!")
+    }
   }
 
   function handlePopupClose() {
@@ -184,6 +202,47 @@ export default function HomePage() {
       setBulkCallback(null)
       setTimeout(() => cb(), 100) // Small delay to let popup close
     }
+  }
+
+  function showUploadedScript(index: number) {
+    const script = uploadedScripts[index]
+    if (script) {
+      setUrlTranscript(script.content)
+      setUrlVideoId(`upload-${index + 1}`)
+      setShowTranscriptPopup(true)
+    }
+  }
+
+  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files
+    if (!files || files.length === 0) return
+
+    const scripts: {name: string, content: string}[] = []
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]
+      if (file.type === "text/plain" || file.name.endsWith(".txt")) {
+        const content = await file.text()
+        scripts.push({ name: file.name, content })
+      }
+    }
+
+    if (scripts.length === 0) {
+      toast.error("No valid .txt files found")
+      return
+    }
+
+    setUploadedScripts(scripts)
+    setCurrentScriptIndex(0)
+    toast.success(`${scripts.length} script(s) loaded`)
+
+    // Show first script
+    setUrlTranscript(scripts[0].content)
+    setUrlVideoId(`upload-1`)
+    setShowTranscriptPopup(true)
+
+    // Reset file input
+    e.target.value = ""
   }
 
   if (loading) {
@@ -330,9 +389,9 @@ export default function HomePage() {
           <span>{channelsWithVideos.find(c => c.channelCode === selectedChannel)?.channelName || "Select Channel"}</span>
         </button>
 
-        {/* YouTube URL Input */}
-        <div className="flex gap-2">
-          <div className="relative flex-1">
+        {/* YouTube URL Input + Upload Script */}
+        <div className="flex gap-2 flex-wrap">
+          <div className="relative flex-1 min-w-[200px]">
             <Youtube className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-red-500" />
             <Input
               value={youtubeUrl}
@@ -362,7 +421,28 @@ export default function HomePage() {
             )}
             <span className="ml-2 hidden sm:inline">Process</span>
           </Button>
+          {/* Upload Script Button */}
+          <label className="cursor-pointer">
+            <input
+              type="file"
+              accept=".txt"
+              multiple
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+            <div className="h-10 px-4 flex items-center gap-2 bg-amber-600 hover:bg-amber-500 text-white rounded-md text-sm font-medium transition-colors">
+              <Upload className="w-4 h-4" />
+              <span className="hidden sm:inline">Upload</span>
+            </div>
+          </label>
         </div>
+
+        {/* Uploaded Scripts Progress */}
+        {uploadedScripts.length > 1 && (
+          <div className="text-xs text-muted-foreground bg-amber-500/10 border border-amber-500/30 rounded px-3 py-1.5">
+            Uploaded Scripts: {currentScriptIndex + 1} / {uploadedScripts.length}
+          </div>
+        )}
 
         {/* TranscriptReader for selected channel */}
         {selectedChannel && (
