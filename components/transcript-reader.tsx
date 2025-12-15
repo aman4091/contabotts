@@ -70,11 +70,13 @@ export function TranscriptReader({ channelCode, onSelect }: TranscriptReaderProp
       setTranscripts(transcriptList)
       setVideos(videoList)
 
-      if (transcriptList.length > 0) {
-        setMode("transcripts")
-        setCurrentIndex(0)
-      } else if (videoList.length > 0) {
+      // Always use videos mode - show all 1000 videos, fetch transcript on-demand
+      if (videoList.length > 0) {
         setMode("videos")
+        setCurrentIndex(0)
+      } else if (transcriptList.length > 0) {
+        // Fallback to transcripts mode only if no videos (like GS32)
+        setMode("transcripts")
         setCurrentIndex(0)
       }
     } catch (error) {

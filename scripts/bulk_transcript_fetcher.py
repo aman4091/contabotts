@@ -18,9 +18,9 @@ DATA_DIR = Path("/root/tts/data/users/aman")
 VIDEOS_DIR = DATA_DIR / "videos"
 TRANSCRIPTS_DIR = DATA_DIR / "transcripts"
 SUPADATA_API_KEY = os.getenv("SUPADATA_API_KEY", "")
-BATCH_SIZE = 10  # Fetch 10 at a time, then pause
-DELAY_BETWEEN_FETCHES = 2  # seconds between each fetch
-DELAY_BETWEEN_BATCHES = 30  # seconds between batches
+BATCH_SIZE = int(os.getenv("BATCH_SIZE", "5"))  # Fetch 5 at a time, then pause
+DELAY_BETWEEN_FETCHES = 5  # seconds between each fetch
+DELAY_BETWEEN_BATCHES = 60  # seconds between batches
 
 # Logging
 logging.basicConfig(
