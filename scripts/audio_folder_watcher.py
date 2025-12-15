@@ -34,16 +34,19 @@ logger = logging.getLogger(__name__)
 
 
 def extract_number_from_filename(filename: str) -> int:
-    """Extract the video number from filename like 'script_475.wav' or '475.mp3'"""
-    # Remove extension
+    """Extract video number from filename like 'script_51_VIDEO_V476_xxx.wav' or '476.mp3'"""
     name = Path(filename).stem
 
-    # Find all numbers in filename
-    numbers = re.findall(r'\d+', name)
+    # First try: Look for V followed by number (e.g., V476)
+    v_match = re.search(r'V(\d+)', name)
+    if v_match:
+        return int(v_match.group(1))
 
+    # Fallback: Just the number itself (e.g., 476.mp3)
+    numbers = re.findall(r'\d+', name)
     if numbers:
-        # Return the first number found (most likely the video number)
         return int(numbers[0])
+
     return None
 
 
