@@ -58,6 +58,9 @@ export default function HomePage() {
   // Preloaded transcript from TranscriptReader
   const [preloadedTranscript, setPreloadedTranscript] = useState("")
 
+  // Bulk mode callback
+  const [bulkCallback, setBulkCallback] = useState<(() => void) | null>(null)
+
   useEffect(() => {
     loadInitialData()
   }, [])
@@ -175,6 +178,12 @@ export default function HomePage() {
   function handlePopupClose() {
     setSelectedVideo(null)
     setPreloadedTranscript("")
+    // Call bulk callback if exists (to advance to next in bulk mode)
+    if (bulkCallback) {
+      const cb = bulkCallback
+      setBulkCallback(null)
+      setTimeout(() => cb(), 100) // Small delay to let popup close
+    }
   }
 
   if (loading) {
@@ -360,7 +369,7 @@ export default function HomePage() {
           <TranscriptReader
             key={selectedChannel}
             channelCode={selectedChannel}
-            onSelect={(videoId, title, transcript) => {
+            onSelect={(videoId, title, transcript, onDone) => {
               setPreloadedTranscript(transcript)
               setSelectedVideo({
                 videoId,
@@ -369,6 +378,10 @@ export default function HomePage() {
                 duration: 0,
                 viewCount: 0
               })
+              // Store callback for bulk mode
+              if (onDone) {
+                setBulkCallback(() => onDone)
+              }
             }}
           />
         )}
