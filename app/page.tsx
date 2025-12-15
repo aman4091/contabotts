@@ -2,11 +2,9 @@
 
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "sonner"
-import { Loader2, RefreshCw, Settings, Youtube, Search, X, CheckSquare, Square, Play, ArrowUpDown, Menu } from "lucide-react"
+import { Loader2, Youtube, Search, X, Menu } from "lucide-react"
 import { VideoPopup } from "@/components/video-popup"
 import { TranscriptPopup } from "@/components/transcript-popup"
 import { TranscriptReader } from "@/components/transcript-reader"
@@ -35,39 +33,12 @@ interface AudioFile {
   sizeFormatted: string
 }
 
-function formatDuration(seconds: number): string {
-  const hours = Math.floor(seconds / 3600)
-  const minutes = Math.floor((seconds % 3600) / 60)
-  if (hours > 0) {
-    return `${hours}:${minutes.toString().padStart(2, "0")}:00`
-  }
-  return `${minutes}:00`
-}
-
-function formatViews(views: number): string {
-  if (views >= 1000000) {
-    return `${(views / 1000000).toFixed(1)}M`
-  }
-  if (views >= 1000) {
-    return `${(views / 1000).toFixed(0)}K`
-  }
-  return views.toString()
-}
-
 export default function HomePage() {
-  const [videos, setVideos] = useState<Video[]>([])
   const [loading, setLoading] = useState(true)
-  const [loadingMore, setLoadingMore] = useState(false)
-  const [hasMore, setHasMore] = useState(false)
-  const [page, setPage] = useState(1)
-  const [total, setTotal] = useState(0)
-  const [remaining, setRemaining] = useState(0)
-  const [channelName, setChannelName] = useState<string | null>(null)
 
   // Channels
   const [channelsWithVideos, setChannelsWithVideos] = useState<ChannelVideoStatus[]>([])
   const [selectedChannel, setSelectedChannel] = useState<string>("")
-  const [fetchingLatest, setFetchingLatest] = useState(false)
 
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null)
   const [audioFiles, setAudioFiles] = useState<AudioFile[]>([])
@@ -81,77 +52,15 @@ export default function HomePage() {
   const [urlTranscript, setUrlTranscript] = useState("")
   const [urlVideoId, setUrlVideoId] = useState("")
 
-  // Search state
-  const [searchQuery, setSearchQuery] = useState("")
-
-  // Sort state
-  const [sortBy, setSortBy] = useState<"views" | "latest" | "oldest">("views")
-
-  // Multi-select state
-  const [selectMode, setSelectMode] = useState(false)
-  const [selectedVideoIds, setSelectedVideoIds] = useState<Set<string>>(new Set())
-
   // Mobile sidebar state
   const [showMobileSidebar, setShowMobileSidebar] = useState(false)
 
-  // Transcript reader state (for GS32 channel)
+  // Preloaded transcript from TranscriptReader
   const [preloadedTranscript, setPreloadedTranscript] = useState("")
 
   useEffect(() => {
     loadInitialData()
   }, [])
-
-  // Load videos and fetch latest when channel changes
-  useEffect(() => {
-    if (selectedChannel) {
-      // GS32 is transcript-only, skip video loading
-      if (selectedChannel === "GS32") {
-        setLoading(false)
-        setVideos([])
-        setChannelName("God Says 32")
-      } else {
-        fetchLatestAndLoadVideos()
-      }
-    }
-  }, [selectedChannel])
-
-  // Reload videos when sort changes (with current sort value)
-  useEffect(() => {
-    if (selectedChannel && videos.length > 0) {
-      loadVideos(1, false, sortBy)
-    }
-  }, [sortBy])
-
-  async function fetchLatestAndLoadVideos() {
-    if (!selectedChannel) return
-
-    setFetchingLatest(true)
-    try {
-      // First fetch latest 10 videos and add new ones
-      const res = await fetch("/api/videos/fetch-latest", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ channelCode: selectedChannel })
-      })
-
-      const data = await res.json()
-      if (data.addedCount > 0) {
-        toast.success(`${data.addedCount} new video(s) added!`)
-        // Switch to Latest sort to show new videos at top
-        setSortBy("latest")
-        // Load with latest sort directly
-        loadVideos(1, false, "latest")
-        return
-      }
-    } catch (error) {
-      console.error("Error fetching latest:", error)
-    } finally {
-      setFetchingLatest(false)
-    }
-
-    // Then load all videos with current sort
-    loadVideos(1, false, sortBy)
-  }
 
   async function loadInitialData() {
     setLoading(true)
@@ -172,12 +81,11 @@ export default function HomePage() {
       }
       setChannelsWithVideos([gs32Channel, ...channelsWithVids])
 
-      // Select first channel (GS32 is first now)
-      if (channelsWithVids.length > 0 || true) {
-        // Default to first non-GS32 channel, or GS32 if no others
+      // Select first channel
+      if (channelsWithVids.length > 0) {
         setSelectedChannel(channelsWithVids[0]?.channelCode || "GS32")
       } else {
-        setLoading(false)
+        setSelectedChannel("GS32")
       }
 
       // Load audio files and settings
@@ -185,41 +93,8 @@ export default function HomePage() {
       loadSettings()
     } catch (error) {
       console.error("Error loading initial data:", error)
-      setLoading(false)
-    }
-  }
-
-  async function loadVideos(pageNum: number, append: boolean = false, sort: string = sortBy) {
-    if (!selectedChannel) return
-
-    if (pageNum === 1) {
-      setLoading(true)
-    } else {
-      setLoadingMore(true)
-    }
-
-    try {
-      const res = await fetch(`/api/videos?page=${pageNum}&limit=100&channel=${selectedChannel}&sort=${sort}`)
-      const data = await res.json()
-
-      if (data.videos) {
-        if (append) {
-          setVideos(prev => [...prev, ...data.videos])
-        } else {
-          setVideos(data.videos)
-        }
-        setHasMore(data.hasMore)
-        setTotal(data.total)
-        setRemaining(data.remaining)
-        setChannelName(data.channelName)
-        setPage(pageNum)
-      }
-    } catch (error) {
-      console.error("Error loading videos:", error)
-      toast.error("Failed to load videos")
     } finally {
       setLoading(false)
-      setLoadingMore(false)
     }
   }
 
@@ -244,50 +119,6 @@ export default function HomePage() {
     } catch (error) {
       console.error("Error loading settings:", error)
     }
-  }
-
-  function handleLoadMore() {
-    loadVideos(page + 1, true, sortBy)
-  }
-
-  function handleVideoClick(video: Video) {
-    setSelectedVideo(video)
-  }
-
-  async function handleSkip(videoId: string) {
-    try {
-      await fetch("/api/videos/skip", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoId, channelCode: selectedChannel })
-      })
-      // Remove from list
-      setVideos(prev => prev.filter(v => v.videoId !== videoId))
-      setTotal(prev => prev - 1)
-      toast.success("Video skipped")
-    } catch (error) {
-      console.error("Error skipping video:", error)
-    }
-  }
-
-  async function handleAddToQueue(videoId: string) {
-    // Mark as completed
-    try {
-      await fetch("/api/videos", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoId, action: "complete", channelCode: selectedChannel })
-      })
-      // Remove from list
-      setVideos(prev => prev.filter(v => v.videoId !== videoId))
-      setTotal(prev => prev - 1)
-    } catch (error) {
-      console.error("Error marking video as complete:", error)
-    }
-  }
-
-  function handleRefresh() {
-    loadVideos(1, false, sortBy)
   }
 
   // Extract videoId from YouTube URL
@@ -341,103 +172,22 @@ export default function HomePage() {
     setYoutubeUrl("")
   }
 
-  // Filter videos based on search query (videos already sorted by API)
-  const filteredVideos = searchQuery.trim()
-    ? videos.filter(v => v.title.toLowerCase().includes(searchQuery.toLowerCase()))
-    : videos
-
-  // Toggle video selection
-  function toggleVideoSelection(videoId: string) {
-    setSelectedVideoIds(prev => {
-      const newSet = new Set(prev)
-      if (newSet.has(videoId)) {
-        newSet.delete(videoId)
-      } else {
-        newSet.add(videoId)
-      }
-      return newSet
-    })
-  }
-
-  // Select all filtered videos
-  function selectAllFiltered() {
-    setSelectedVideoIds(new Set(filteredVideos.map(v => v.videoId)))
-  }
-
-  // Clear selection
-  function clearSelection() {
-    setSelectedVideoIds(new Set())
-  }
-
-  // Process first selected video (opens popup, user processes, then moves to next)
-  function processNextSelected() {
-    if (selectedVideoIds.size === 0) {
-      toast.error("No videos selected")
-      return
-    }
-    const firstId = Array.from(selectedVideoIds)[0]
-    const video = videos.find(v => v.videoId === firstId)
-    if (video) {
-      setSelectedVideo(video)
-    }
-  }
-
-  // When a video is processed (skip or add to queue), remove from selection and open next
-  function handleSkipWithSelection(videoId: string) {
-    handleSkip(videoId)
-    // Remove from selection and open next
-    const remainingIds = Array.from(selectedVideoIds).filter(id => id !== videoId)
-    setSelectedVideoIds(new Set(remainingIds))
-
-    // Open next video after small delay
-    if (remainingIds.length > 0) {
-      setTimeout(() => {
-        const nextVideo = videos.find(v => v.videoId === remainingIds[0])
-        if (nextVideo) {
-          setSelectedVideo(nextVideo)
-        }
-      }, 300)
-    }
-  }
-
-  function handleAddToQueueWithSelection(videoId: string) {
-    handleAddToQueue(videoId)
-    // Remove from selection and open next
-    const remainingIds = Array.from(selectedVideoIds).filter(id => id !== videoId)
-    setSelectedVideoIds(new Set(remainingIds))
-
-    // Open next video after small delay
-    if (remainingIds.length > 0) {
-      setTimeout(() => {
-        // Need to check videos list again since handleAddToQueue removes the video
-        const nextVideo = videos.find(v => v.videoId === remainingIds[0])
-        if (nextVideo) {
-          setSelectedVideo(nextVideo)
-        }
-      }, 300)
-    }
-  }
-
-  // When popup closes normally (not via skip/add), just close
   function handlePopupClose() {
     setSelectedVideo(null)
+    setPreloadedTranscript("")
   }
 
-  // For GS32, skip all loading/empty checks and go straight to main render
-  const isGS32 = selectedChannel === "GS32"
-
-  if (loading && !isGS32) {
+  if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-20">
         <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-        <p className="mt-4 text-muted-foreground">Loading videos...</p>
+        <p className="mt-4 text-muted-foreground">Loading...</p>
       </div>
     )
   }
 
-  // No videos fetched yet - show setup message with URL input
-  // But skip this for GS32 (transcript-only channel)
-  if (videos.length === 0 && !channelName && !isGS32) {
+  // No channels - show setup
+  if (channelsWithVideos.length === 0) {
     return (
       <div className="space-y-6">
         {/* YouTube URL Input */}
@@ -479,19 +229,17 @@ export default function HomePage() {
           <div className="w-16 h-16 rounded-full bg-red-500/10 flex items-center justify-center mb-4">
             <Youtube className="w-8 h-8 text-red-500" />
           </div>
-          <h2 className="text-xl font-semibold mb-2">No Videos Yet</h2>
+          <h2 className="text-xl font-semibold mb-2">No Channels Yet</h2>
           <p className="text-muted-foreground text-center mb-6 max-w-md">
-            Paste a YouTube URL above or set up your source channel in Settings.
+            Add a source channel in Settings to start fetching videos.
           </p>
           <Link href="/settings">
             <Button className="bg-gradient-to-r from-violet-600 to-cyan-500 hover:from-violet-500 hover:to-cyan-400">
-              <Settings className="w-4 h-4 mr-2" />
               Go to Settings
             </Button>
           </Link>
         </div>
 
-        {/* Transcript Popup for URL */}
         {showTranscriptPopup && (
           <TranscriptPopup
             transcript={urlTranscript}
@@ -562,25 +310,17 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* Main Content */}
+      {/* Main Content - TranscriptReader for all channels */}
       <div className="flex-1 space-y-4 overflow-y-auto pr-2">
-        {/* Show Transcript Reader for GS32 channel */}
-        {selectedChannel === "GS32" ? (
-          <TranscriptReader
-            channelCode="GS32"
-            onSelect={(videoId, title, transcript) => {
-              setPreloadedTranscript(transcript)
-              setSelectedVideo({
-                videoId,
-                title,
-                thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
-                duration: 0,
-                viewCount: 0
-              })
-            }}
-          />
-        ) : (
-          <>
+        {/* Mobile menu button */}
+        <button
+          className="lg:hidden p-2 rounded hover:bg-muted flex items-center gap-2 text-sm"
+          onClick={() => setShowMobileSidebar(true)}
+        >
+          <Menu className="w-5 h-5" />
+          <span>{channelsWithVideos.find(c => c.channelCode === selectedChannel)?.channelName || "Select Channel"}</span>
+        </button>
+
         {/* YouTube URL Input */}
         <div className="flex gap-2">
           <div className="relative flex-1">
@@ -597,221 +337,40 @@ export default function HomePage() {
                 onClick={() => setYoutubeUrl("")}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               >
-              <X className="w-4 h-4" />
-            </button>
-          )}
-        </div>
-        <Button
-          onClick={handleProcessUrl}
-          disabled={fetchingTranscript || !youtubeUrl.trim()}
-          className="bg-gradient-to-r from-violet-600 to-cyan-500 hover:from-violet-500 hover:to-cyan-400"
-        >
-          {fetchingTranscript ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Search className="w-4 h-4" />
-          )}
-          <span className="ml-2 hidden sm:inline">Process</span>
-        </Button>
-      </div>
-
-      {/* Search Bar */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <Input
-          value={searchQuery}
-          onChange={e => setSearchQuery(e.target.value)}
-          placeholder="Search videos by title..."
-          className="pl-10 pr-10"
-        />
-        {searchQuery && (
-          <button
-            onClick={() => setSearchQuery("")}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        )}
-      </div>
-
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              {/* Mobile menu button */}
-              <button
-                className="lg:hidden p-1 rounded hover:bg-muted"
-                onClick={() => setShowMobileSidebar(true)}
-              >
-                <Menu className="w-6 h-6" />
+                <X className="w-4 h-4" />
               </button>
-              <Youtube className="w-6 h-6 text-red-500" />
-              <h1 className="text-xl sm:text-2xl font-bold">{channelName || "Videos"}</h1>
-              {fetchingLatest && <Loader2 className="w-4 h-4 animate-spin text-violet-400" />}
-            </div>
-            <p className="text-muted-foreground text-sm mt-1">
-              {searchQuery ? `${filteredVideos.length} of ${total} videos` : `${total} videos available`}
-            </p>
+            )}
           </div>
-          {/* Sort Dropdown */}
-          <Select value={sortBy} onValueChange={(v: "views" | "latest" | "oldest") => setSortBy(v)}>
-            <SelectTrigger className="w-[130px] border-amber-500/30">
-              <ArrowUpDown className="w-4 h-4 mr-2 text-amber-400" />
-              <SelectValue placeholder="Sort by" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="views">Most Views</SelectItem>
-              <SelectItem value="latest">Latest</SelectItem>
-              <SelectItem value="oldest">Oldest</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="flex items-center gap-2">
-          {/* Select Mode Toggle */}
           <Button
-            variant={selectMode ? "default" : "outline"}
-            size="sm"
-            onClick={() => {
-              setSelectMode(!selectMode)
-              if (selectMode) clearSelection()
+            onClick={handleProcessUrl}
+            disabled={fetchingTranscript || !youtubeUrl.trim()}
+            className="bg-gradient-to-r from-violet-600 to-cyan-500 hover:from-violet-500 hover:to-cyan-400"
+          >
+            {fetchingTranscript ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Search className="w-4 h-4" />
+            )}
+            <span className="ml-2 hidden sm:inline">Process</span>
+          </Button>
+        </div>
+
+        {/* TranscriptReader for selected channel */}
+        {selectedChannel && (
+          <TranscriptReader
+            key={selectedChannel}
+            channelCode={selectedChannel}
+            onSelect={(videoId, title, transcript) => {
+              setPreloadedTranscript(transcript)
+              setSelectedVideo({
+                videoId,
+                title,
+                thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+                duration: 0,
+                viewCount: 0
+              })
             }}
-            className={selectMode ? "bg-violet-600 hover:bg-violet-500" : "border-violet-500/30 hover:border-violet-500 hover:bg-violet-500/10"}
-          >
-            <CheckSquare className="w-4 h-4 mr-2" />
-            Select
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleRefresh}
-            className="border-violet-500/30 hover:border-violet-500 hover:bg-violet-500/10"
-          >
-            <RefreshCw className="w-4 h-4 mr-2" />
-            Refresh
-          </Button>
-        </div>
-      </div>
-
-      {/* Selection Controls */}
-      {selectMode && (
-        <div className="flex items-center gap-2 p-3 bg-violet-500/10 border border-violet-500/30 rounded-lg">
-          <span className="text-sm text-violet-400">
-            {selectedVideoIds.size} selected
-          </span>
-          <div className="flex-1" />
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={selectAllFiltered}
-            className="text-violet-400 hover:text-violet-300"
-          >
-            Select All ({filteredVideos.length})
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={clearSelection}
-            className="text-muted-foreground hover:text-foreground"
-          >
-            Clear
-          </Button>
-          <Button
-            size="sm"
-            onClick={processNextSelected}
-            disabled={selectedVideoIds.size === 0}
-            className="bg-gradient-to-r from-emerald-600 to-cyan-500 hover:from-emerald-500 hover:to-cyan-400"
-          >
-            <Play className="w-4 h-4 mr-2" />
-            Process ({selectedVideoIds.size})
-          </Button>
-        </div>
-      )}
-
-      {/* Video Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-        {filteredVideos.map(video => {
-          const isSelected = selectedVideoIds.has(video.videoId)
-          return (
-            <div
-              key={video.videoId}
-              onClick={() => {
-                if (selectMode) {
-                  toggleVideoSelection(video.videoId)
-                } else {
-                  handleVideoClick(video)
-                }
-              }}
-              className={`group cursor-pointer ${isSelected ? 'ring-2 ring-violet-500 rounded-lg' : ''}`}
-            >
-              {/* Thumbnail */}
-              <div className="relative aspect-video rounded-lg overflow-hidden bg-muted">
-                <img
-                  src={video.thumbnail}
-                  alt={video.title}
-                  className="w-full h-full object-cover transition-transform group-hover:scale-105"
-                  loading="lazy"
-                />
-                {/* Selection checkbox in select mode */}
-                {selectMode && (
-                  <div className="absolute top-2 left-2 z-10">
-                    {isSelected ? (
-                      <CheckSquare className="w-6 h-6 text-violet-400 drop-shadow-lg" />
-                    ) : (
-                      <Square className="w-6 h-6 text-white/70 drop-shadow-lg" />
-                    )}
-                  </div>
-                )}
-                {/* Duration badge */}
-                <div className="absolute bottom-1 right-1 bg-black/80 text-white text-xs px-1 rounded">
-                  {formatDuration(video.duration)}
-                </div>
-                {/* Hover/Selected overlay */}
-                <div className={`absolute inset-0 transition-colors ${isSelected ? 'bg-violet-500/20' : 'bg-black/0 group-hover:bg-black/20'}`} />
-              </div>
-              {/* Title */}
-              <div className="mt-2">
-                <h3 className={`text-sm font-medium line-clamp-2 transition-colors ${isSelected ? 'text-violet-400' : 'group-hover:text-violet-400'}`}>
-                  {video.title}
-                </h3>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {formatViews(video.viewCount)} views
-                </p>
-              </div>
-            </div>
-          )
-        })}
-      </div>
-
-      {/* Load More */}
-      {hasMore && (
-        <div className="flex justify-center py-4">
-          <Button
-            variant="outline"
-            onClick={handleLoadMore}
-            disabled={loadingMore}
-            className="px-8"
-          >
-            {loadingMore ? (
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-            ) : null}
-            Load More ({remaining} remaining)
-          </Button>
-        </div>
-      )}
-
-      {/* All videos processed */}
-      {videos.length === 0 && channelName && (
-        <div className="text-center py-12">
-          <p className="text-muted-foreground">All videos have been processed!</p>
-          <Link href="/settings">
-            <Button variant="link" className="mt-2">
-              Fetch more videos in Settings
-            </Button>
-          </Link>
-        </div>
-      )}
-          </>
+          />
         )}
       </div>
 
@@ -823,12 +382,13 @@ export default function HomePage() {
           defaultReferenceAudio={defaultReferenceAudio}
           prompt={prompt}
           initialTranscript={preloadedTranscript}
-          onClose={() => {
+          onClose={handlePopupClose}
+          onSkip={() => {
             handlePopupClose()
-            setPreloadedTranscript("")
           }}
-          onSkip={selectMode ? handleSkipWithSelection : handleSkip}
-          onAddToQueue={selectMode ? handleAddToQueueWithSelection : handleAddToQueue}
+          onAddToQueue={() => {
+            handlePopupClose()
+          }}
         />
       )}
 

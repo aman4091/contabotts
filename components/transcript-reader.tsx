@@ -3,13 +3,21 @@
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Loader2, ChevronLeft, ChevronRight, Check } from "lucide-react"
+import { Loader2, ChevronLeft, ChevronRight, Check, Download } from "lucide-react"
+import { toast } from "sonner"
 
 interface TranscriptFile {
   index: number
   title: string
   videoId: string
   charCount: number
+}
+
+interface Video {
+  videoId: string
+  title: string
+  thumbnail: string
+  viewCount: number
 }
 
 interface TranscriptReaderProps {
@@ -19,38 +27,64 @@ interface TranscriptReaderProps {
 
 export function TranscriptReader({ channelCode, onSelect }: TranscriptReaderProps) {
   const [transcripts, setTranscripts] = useState<TranscriptFile[]>([])
+  const [videos, setVideos] = useState<Video[]>([])
   const [currentIndex, setCurrentIndex] = useState(0)
   const [loading, setLoading] = useState(true)
   const [loadingContent, setLoadingContent] = useState(false)
+  const [fetchingTranscript, setFetchingTranscript] = useState(false)
   const [transcriptContent, setTranscriptContent] = useState("")
   const [currentMeta, setCurrentMeta] = useState<TranscriptFile | null>(null)
+  const [currentVideo, setCurrentVideo] = useState<Video | null>(null)
   const [pageInput, setPageInput] = useState("")
+  const [mode, setMode] = useState<"transcripts" | "videos">("transcripts")
 
-  // Load transcript list on mount
+  // Load data on mount
   useEffect(() => {
-    loadTranscriptList()
+    loadData()
   }, [channelCode])
 
-  // Load transcript content when index changes
+  // Load content when index changes
   useEffect(() => {
-    if (transcripts.length > 0 && currentIndex >= 0) {
+    if (mode === "transcripts" && transcripts.length > 0 && currentIndex >= 0 && currentIndex < transcripts.length) {
       loadTranscriptContent(transcripts[currentIndex])
+    } else if (mode === "videos" && videos.length > 0 && currentIndex >= 0) {
+      loadVideoTranscript(videos[currentIndex])
     }
-  }, [currentIndex, transcripts])
+  }, [currentIndex, transcripts, videos, mode])
 
-  async function loadTranscriptList() {
+  async function loadData() {
     setLoading(true)
     try {
-      const res = await fetch(`/api/transcripts/list?channel=${channelCode}`)
-      if (res.ok) {
-        const data = await res.json()
-        setTranscripts(data.transcripts || [])
-        if (data.transcripts?.length > 0) {
-          setCurrentIndex(0)
-        }
+      // Load transcripts list
+      const transRes = await fetch(`/api/transcripts/list?channel=${channelCode}`)
+      let transcriptList: TranscriptFile[] = []
+      if (transRes.ok) {
+        const data = await transRes.json()
+        transcriptList = data.transcripts || []
+      }
+
+      // Load videos list (sorted by views)
+      const videosRes = await fetch(`/api/videos?channel=${channelCode}&limit=1000&sort=views`)
+      let videoList: Video[] = []
+      if (videosRes.ok) {
+        const data = await videosRes.json()
+        videoList = data.videos || []
+      }
+
+      setTranscripts(transcriptList)
+      setVideos(videoList)
+
+      // If transcripts exist, use transcript mode
+      if (transcriptList.length > 0) {
+        setMode("transcripts")
+        setCurrentIndex(0)
+      } else if (videoList.length > 0) {
+        // Otherwise use videos mode (fetch on-demand)
+        setMode("videos")
+        setCurrentIndex(0)
       }
     } catch (error) {
-      console.error("Failed to load transcripts:", error)
+      console.error("Failed to load data:", error)
     } finally {
       setLoading(false)
     }
@@ -59,6 +93,15 @@ export function TranscriptReader({ channelCode, onSelect }: TranscriptReaderProp
   async function loadTranscriptContent(meta: TranscriptFile) {
     setLoadingContent(true)
     setCurrentMeta(meta)
+    // Find matching video for thumbnail
+    const video = videos.find(v => v.videoId === meta.videoId)
+    setCurrentVideo(video || {
+      videoId: meta.videoId,
+      title: meta.title,
+      thumbnail: `https://i.ytimg.com/vi/${meta.videoId}/hqdefault.jpg`,
+      viewCount: 0
+    })
+
     try {
       const res = await fetch(`/api/transcripts/${meta.index}?channel=${channelCode}`)
       if (res.ok) {
@@ -72,31 +115,117 @@ export function TranscriptReader({ channelCode, onSelect }: TranscriptReaderProp
     }
   }
 
+  async function loadVideoTranscript(video: Video) {
+    setLoadingContent(true)
+    setCurrentVideo(video)
+    setCurrentMeta({
+      index: currentIndex + 1,
+      title: video.title,
+      videoId: video.videoId,
+      charCount: 0
+    })
+    setTranscriptContent("")
+
+    // First check if transcript exists
+    const existingIndex = transcripts.findIndex(t => t.videoId === video.videoId)
+    if (existingIndex >= 0) {
+      // Load existing transcript
+      try {
+        const res = await fetch(`/api/transcripts/${transcripts[existingIndex].index}?channel=${channelCode}`)
+        if (res.ok) {
+          const data = await res.json()
+          setTranscriptContent(data.content || "")
+          setLoadingContent(false)
+          return
+        }
+      } catch (error) {
+        console.error("Failed to load existing transcript:", error)
+      }
+    }
+
+    // Fetch transcript on-demand
+    setFetchingTranscript(true)
+    try {
+      const res = await fetch(`/api/videos/transcript?videoId=${video.videoId}`)
+      if (res.ok) {
+        const data = await res.json()
+        if (data.transcript) {
+          setTranscriptContent(data.transcript)
+          // Save transcript for future use
+          saveTranscript(video, data.transcript)
+        } else {
+          toast.error("No transcript available for this video")
+        }
+      } else {
+        toast.error("Failed to fetch transcript")
+      }
+    } catch (error) {
+      console.error("Failed to fetch transcript:", error)
+      toast.error("Failed to fetch transcript")
+    } finally {
+      setFetchingTranscript(false)
+      setLoadingContent(false)
+    }
+  }
+
+  async function saveTranscript(video: Video, transcript: string) {
+    try {
+      const nextIndex = transcripts.length + 1
+      await fetch("/api/transcripts/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          channelCode,
+          transcripts: [{
+            index: nextIndex,
+            title: video.title,
+            videoId: video.videoId,
+            transcript
+          }]
+        })
+      })
+      // Update local transcripts list
+      setTranscripts(prev => [...prev, {
+        index: nextIndex,
+        title: video.title,
+        videoId: video.videoId,
+        charCount: transcript.length
+      }])
+    } catch (error) {
+      console.error("Failed to save transcript:", error)
+    }
+  }
+
   function goToPrevious() {
+    const total = mode === "transcripts" ? transcripts.length : videos.length
     if (currentIndex > 0) {
       setCurrentIndex(currentIndex - 1)
     }
   }
 
   function goToNext() {
-    if (currentIndex < transcripts.length - 1) {
+    const total = mode === "transcripts" ? transcripts.length : videos.length
+    if (currentIndex < total - 1) {
       setCurrentIndex(currentIndex + 1)
     }
   }
 
   function goToPage() {
+    const total = mode === "transcripts" ? transcripts.length : videos.length
     const pageNum = parseInt(pageInput)
-    if (!isNaN(pageNum) && pageNum >= 1 && pageNum <= transcripts.length) {
+    if (!isNaN(pageNum) && pageNum >= 1 && pageNum <= total) {
       setCurrentIndex(pageNum - 1)
       setPageInput("")
     }
   }
 
   function handleSelect() {
-    if (currentMeta && transcriptContent) {
-      onSelect(currentMeta.videoId, currentMeta.title, transcriptContent)
+    if (currentVideo && transcriptContent) {
+      onSelect(currentVideo.videoId, currentVideo.title, transcriptContent)
     }
   }
+
+  const total = mode === "transcripts" ? transcripts.length : videos.length
 
   if (loading) {
     return (
@@ -106,83 +235,103 @@ export function TranscriptReader({ channelCode, onSelect }: TranscriptReaderProp
     )
   }
 
-  if (transcripts.length === 0) {
+  if (total === 0) {
     return (
       <div className="flex items-center justify-center h-96 text-muted-foreground">
-        No transcripts found for this channel
+        No videos found for this channel
       </div>
     )
   }
 
   return (
     <div className="flex flex-col h-[calc(100vh-120px)]">
-      {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-border bg-background/80 backdrop-blur-sm">
-        <div className="flex-1 min-w-0 mr-4">
+      {/* Header with Thumbnail */}
+      <div className="flex gap-4 p-4 border-b border-border bg-background/80 backdrop-blur-sm">
+        {/* Thumbnail */}
+        {currentVideo && (
+          <div className="flex-shrink-0">
+            <img
+              src={currentVideo.thumbnail}
+              alt={currentVideo.title}
+              className="w-40 h-24 object-cover rounded-lg"
+            />
+          </div>
+        )}
+
+        {/* Title & Navigation */}
+        <div className="flex-1 min-w-0">
           <h2 className="text-lg font-semibold truncate text-foreground">
-            {currentMeta?.title || "Loading..."}
+            {currentMeta?.title || currentVideo?.title || "Loading..."}
           </h2>
           <p className="text-sm text-muted-foreground">
-            Video ID: {currentMeta?.videoId || "..."}
+            Video ID: {currentMeta?.videoId || currentVideo?.videoId || "..."}
           </p>
-        </div>
+          {currentVideo?.viewCount ? (
+            <p className="text-xs text-muted-foreground mt-1">
+              {currentVideo.viewCount.toLocaleString()} views
+            </p>
+          ) : null}
 
-        {/* Navigation */}
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={goToPrevious}
-            disabled={currentIndex === 0 || loadingContent}
-            className="border-violet-500/30 text-violet-400 hover:bg-violet-500/10"
-          >
-            <ChevronLeft className="w-4 h-4" />
-            Previous
-          </Button>
-
-          <div className="flex items-center gap-1">
-            <Input
-              type="number"
-              value={pageInput}
-              onChange={(e) => setPageInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && goToPage()}
-              placeholder={String(currentIndex + 1)}
-              className="w-16 h-8 text-center text-sm"
-              min={1}
-              max={transcripts.length}
-            />
-            <span className="text-sm text-muted-foreground">/ {transcripts.length}</span>
+          {/* Navigation */}
+          <div className="flex items-center gap-2 mt-2">
             <Button
               variant="outline"
               size="sm"
-              onClick={goToPage}
-              disabled={!pageInput || loadingContent}
-              className="h-8 px-2 border-violet-500/30 text-violet-400 hover:bg-violet-500/10"
+              onClick={goToPrevious}
+              disabled={currentIndex === 0 || loadingContent}
+              className="border-violet-500/30 text-violet-400 hover:bg-violet-500/10"
             >
-              Go
+              <ChevronLeft className="w-4 h-4" />
+              Prev
+            </Button>
+
+            <div className="flex items-center gap-1">
+              <Input
+                type="number"
+                value={pageInput}
+                onChange={(e) => setPageInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && goToPage()}
+                placeholder={String(currentIndex + 1)}
+                className="w-16 h-8 text-center text-sm"
+                min={1}
+                max={total}
+              />
+              <span className="text-sm text-muted-foreground">/ {total}</span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={goToPage}
+                disabled={!pageInput || loadingContent}
+                className="h-8 px-2 border-violet-500/30 text-violet-400 hover:bg-violet-500/10"
+              >
+                Go
+              </Button>
+            </div>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={goToNext}
+              disabled={currentIndex === total - 1 || loadingContent}
+              className="border-violet-500/30 text-violet-400 hover:bg-violet-500/10"
+            >
+              Next
+              <ChevronRight className="w-4 h-4" />
             </Button>
           </div>
-
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={goToNext}
-            disabled={currentIndex === transcripts.length - 1 || loadingContent}
-            className="border-violet-500/30 text-violet-400 hover:bg-violet-500/10"
-          >
-            Next
-            <ChevronRight className="w-4 h-4" />
-          </Button>
         </div>
       </div>
 
       {/* Transcript Content */}
       <div className="flex-1 overflow-auto p-4">
-        {loadingContent ? (
-          <div className="flex items-center justify-center h-full">
+        {loadingContent || fetchingTranscript ? (
+          <div className="flex flex-col items-center justify-center h-full gap-2">
             <Loader2 className="w-6 h-6 animate-spin text-violet-500" />
+            {fetchingTranscript && (
+              <p className="text-sm text-muted-foreground">Fetching transcript...</p>
+            )}
           </div>
-        ) : (
+        ) : transcriptContent ? (
           <div className="max-w-4xl mx-auto">
             <div className="prose prose-invert max-w-none">
               <pre className="whitespace-pre-wrap font-sans text-base leading-relaxed text-foreground bg-muted/30 p-6 rounded-lg">
@@ -190,17 +339,21 @@ export function TranscriptReader({ channelCode, onSelect }: TranscriptReaderProp
               </pre>
             </div>
           </div>
+        ) : (
+          <div className="flex items-center justify-center h-full text-muted-foreground">
+            No transcript available
+          </div>
         )}
       </div>
 
       {/* Footer with Select Button */}
       <div className="flex items-center justify-between p-4 border-t border-border bg-background/80 backdrop-blur-sm">
         <div className="text-sm text-muted-foreground">
-          {currentMeta?.charCount?.toLocaleString() || 0} characters
+          {transcriptContent.length.toLocaleString()} characters
         </div>
         <Button
           onClick={handleSelect}
-          disabled={loadingContent || !transcriptContent}
+          disabled={loadingContent || fetchingTranscript || !transcriptContent}
           className="bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500"
         >
           <Check className="w-4 h-4 mr-2" />
