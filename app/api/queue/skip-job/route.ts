@@ -51,14 +51,13 @@ export async function POST(request: NextRequest) {
 
     // Mark job as completed on file server
     const response = await fetch(`${FILE_SERVER_URL}/queue/audio/jobs/${job_id}/status`, {
-      method: "PUT",
+      method: "POST",
       headers: {
         "Content-Type": "application/json",
         "x-api-key": FILE_SERVER_API_KEY
       },
       body: JSON.stringify({
-        status: "completed",
-        skipped: true
+        new_status: "completed"
       })
     })
 

@@ -1,23 +1,15 @@
 #!/usr/bin/env python3
 """
 Telegram Bot for Audio Queue
-Sends ONE script at a time to Telegram. Waits for audio upload before sending next script.
-
-Flow:
-1. Send script to Telegram and save job ID to active_job.json
-2. Wait until that job gets audio (existing_audio_link set by folder watcher)
-3. Only then send the next script (don't wait for video)
+Sends scripts to Telegram - ONLY scripts, no other messages
 """
 
 import os
 import sys
-import json
 import time
 import logging
 import requests
 import tempfile
-from datetime import datetime
-from pathlib import Path
 
 # Telegram Bot setup
 BOT_TOKEN = "7865909076:AAElJmFN2awcf-4v_jJ53aJJEls1N0tZNSQ"
@@ -27,13 +19,10 @@ CHAT_ID = "-1002498893774"
 FILE_SERVER_URL = os.getenv("FILE_SERVER_URL", "http://localhost:8000")
 FILE_SERVER_API_KEY = os.getenv("FILE_SERVER_API_KEY", "tts-secret-key-2024")
 
-# Active job tracking file - folder watcher reads this
-ACTIVE_JOB_FILE = Path("/root/tts/data/active_job.json")
-
-# Polling interval in seconds
+# Polling interval
 POLL_INTERVAL = 10
 
-# Track processed jobs to avoid duplicate sends
+# Track processed jobs
 processed_jobs = set()
 
 # Logging
@@ -44,26 +33,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def save_active_job(job: dict):
-    """Save the currently active job to file - folder watcher reads this"""
-    try:
-        ACTIVE_JOB_FILE.parent.mkdir(parents=True, exist_ok=True)
-        active_data = {
-            "job_id": job.get("job_id"),
-            "audio_counter": job.get("audio_counter"),
-            "video_number": job.get("video_number"),
-            "username": job.get("username"),
-            "sent_at": datetime.now().isoformat()
-        }
-        with open(ACTIVE_JOB_FILE, "w") as f:
-            json.dump(active_data, f, indent=2)
-        logger.info(f"📌 Active job set: #{active_data['audio_counter']} (V{active_data['video_number']})")
-    except Exception as e:
-        logger.error(f"Error saving active job: {e}")
-
-
-def get_all_pending_jobs():
-    """Fetch ALL pending jobs from file server"""
+def get_pending_jobs():
+    """Get all pending jobs from file server"""
     try:
         response = requests.get(
             f"{FILE_SERVER_URL}/queue/audio/jobs",
@@ -73,36 +44,21 @@ def get_all_pending_jobs():
         )
         if response.status_code == 200:
             return response.json().get("jobs", [])
-        else:
-            logger.error(f"Failed to fetch jobs: {response.status_code}")
-            return []
+        return []
     except Exception as e:
         logger.error(f"Error fetching jobs: {e}")
         return []
 
 
-def is_waiting_for_audio(jobs: list) -> bool:
-    """Check if any job is waiting for audio (telegram_sent but no existing_audio_link)"""
-    for job in jobs:
-        if job.get("telegram_sent") and not job.get("existing_audio_link"):
-            audio_counter = job.get("audio_counter", 0)
-            logger.debug(f"Job #{audio_counter} waiting for audio...")
-            return True
-    return False
-
-
-def get_next_job_to_send(jobs: list) -> dict:
-    """Get the oldest job that hasn't been sent to Telegram yet"""
+def get_unsent_jobs(jobs: list) -> list:
+    """Get jobs that haven't been sent to Telegram yet, sorted by created_at"""
     unsent = [j for j in jobs if not j.get("telegram_sent", False)]
-    if unsent:
-        # Sort by created_at (oldest first)
-        unsent.sort(key=lambda x: x.get("created_at", ""))
-        return unsent[0]
-    return None
+    unsent.sort(key=lambda x: x.get("created_at", ""))
+    return unsent
 
 
 def mark_job_as_sent(job_id: str):
-    """Mark job as sent to telegram (add a flag so we don't send again)"""
+    """Mark job as sent to telegram"""
     try:
         response = requests.post(
             f"{FILE_SERVER_URL}/queue/audio/jobs/{job_id}/update",
@@ -110,42 +66,17 @@ def mark_job_as_sent(job_id: str):
                 "Content-Type": "application/json",
                 "x-api-key": FILE_SERVER_API_KEY
             },
-            json={
-                "telegram_sent": True
-            },
-            timeout=30
-        )
-        if response.status_code == 200:
-            logger.info(f"Job {job_id[:8]} marked as telegram_sent")
-            return True
-        else:
-            logger.error(f"Failed to mark job {job_id[:8]}: {response.status_code}")
-            return False
-    except Exception as e:
-        logger.error(f"Error marking job {job_id[:8]}: {e}")
-        return False
-
-
-def send_telegram_message(text: str):
-    """Send text message to Telegram"""
-    try:
-        response = requests.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-            json={
-                "chat_id": CHAT_ID,
-                "text": text,
-                "parse_mode": "HTML"
-            },
+            json={"telegram_sent": True},
             timeout=30
         )
         return response.status_code == 200
     except Exception as e:
-        logger.error(f"Error sending message: {e}")
+        logger.error(f"Error marking job: {e}")
         return False
 
 
-def send_telegram_document(file_path: str, caption: str = ""):
-    """Send document to Telegram"""
+def send_script_document(file_path: str, caption: str):
+    """Send script file to Telegram"""
     try:
         with open(file_path, 'rb') as f:
             response = requests.post(
@@ -173,88 +104,62 @@ def send_script_to_telegram(job: dict):
     audio_counter = job.get("audio_counter", 0)
 
     if not script_text:
-        logger.warning(f"Job {job_id[:8]} has no script text, skipping")
+        logger.warning(f"Job {job_id[:8]} has no script, skipping")
         return False
 
-    logger.info(f"Sending script: #{audio_counter} - {channel_code} V{video_number}")
+    logger.info(f"Sending: #{audio_counter} - {channel_code} V{video_number}")
 
-    # Create temp file with script
+    # Create temp file
     with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
         f.write(script_text)
         temp_file = f.name
 
     try:
-        # Prepare caption
-        caption = f"<b>#{audio_counter}</b> | {channel_code} V{video_number}\n"
-        caption += f"<b>Job ID:</b> <code>{job_id[:8]}</code>"
+        # Rename to proper filename with video_number
+        filename = f"script_{video_number}.txt"
+        new_path = os.path.join(os.path.dirname(temp_file), filename)
+        os.rename(temp_file, new_path)
+        temp_file = new_path
 
-        # Send script file
-        filename = f"script_{audio_counter}_{channel_code}_V{video_number}.txt"
-        os.rename(temp_file, os.path.join(os.path.dirname(temp_file), filename))
-        temp_file = os.path.join(os.path.dirname(temp_file), filename)
+        # Caption with job info
+        caption = f"<b>#{audio_counter}</b> | {channel_code} V{video_number}"
 
-        if send_telegram_document(temp_file, caption):
-            logger.info(f"Script sent to Telegram for job #{audio_counter}")
-
-            # Save as active job - folder watcher will match audio to this job
-            save_active_job(job)
-
-            # Mark as sent so we don't send again
+        if send_script_document(temp_file, caption):
+            logger.info(f"Sent script #{audio_counter} V{video_number}")
             mark_job_as_sent(job_id)
             processed_jobs.add(job_id)
             return True
         else:
-            logger.error(f"Failed to send script for job #{audio_counter}")
+            logger.error(f"Failed to send script #{audio_counter}")
             return False
     finally:
-        # Cleanup temp file
         if os.path.exists(temp_file):
             os.remove(temp_file)
 
 
 def main_loop():
-    """Main polling loop - sends ONE script at a time, waits for audio before next"""
+    """Main loop - sends ALL unsent scripts"""
     logger.info("=" * 50)
     logger.info("Audio Telegram Bot Started")
-    logger.info("Mode: ONE script at a time (wait for audio before next)")
-    logger.info(f"Polling interval: {POLL_INTERVAL}s")
-    logger.info(f"File Server: {FILE_SERVER_URL}")
-    logger.info(f"Chat ID: {CHAT_ID}")
+    logger.info(f"Poll interval: {POLL_INTERVAL}s")
     logger.info("=" * 50)
 
-    # Send startup message
-    send_telegram_message("🎙️ Audio Bot started\nMode: One script at a time")
+    # NO startup message to Telegram!
 
     while True:
         try:
-            # Get ALL pending jobs
-            jobs = get_all_pending_jobs()
+            jobs = get_pending_jobs()
 
-            if not jobs:
-                logger.debug("No pending jobs")
-                time.sleep(POLL_INTERVAL)
-                continue
+            if jobs:
+                unsent = get_unsent_jobs(jobs)
 
-            # Check if any job is waiting for audio
-            if is_waiting_for_audio(jobs):
-                # Don't send new script - wait for current one's audio
-                logger.debug("Waiting for audio upload before sending next script...")
-                time.sleep(POLL_INTERVAL)
-                continue
+                for job in unsent:
+                    job_id = job.get("job_id", "")
+                    if job_id not in processed_jobs:
+                        send_script_to_telegram(job)
+                        time.sleep(1)
 
-            # No job waiting for audio - send the next script
-            next_job = get_next_job_to_send(jobs)
-
-            if next_job:
-                job_id = next_job.get("job_id", "")
-
-                # Skip already processed jobs (in-memory cache)
-                if job_id not in processed_jobs:
-                    audio_counter = next_job.get("audio_counter", 0)
-                    logger.info(f"📤 Sending script #{audio_counter} to Telegram...")
-                    send_script_to_telegram(next_job)
-
-            # Clean up processed jobs set (keep last 1000)
+            # Cleanup
             if len(processed_jobs) > 1000:
                 processed_list = list(processed_jobs)
                 processed_jobs.clear()
@@ -263,7 +168,6 @@ def main_loop():
         except Exception as e:
             logger.error(f"Error in main loop: {e}")
 
-        # Wait before next poll
         time.sleep(POLL_INTERVAL)
 
 
@@ -271,6 +175,5 @@ if __name__ == "__main__":
     try:
         main_loop()
     except KeyboardInterrupt:
-        logger.info("Bot stopped by user")
-        send_telegram_message("Audio Telegram Bot stopped")
+        logger.info("Bot stopped")
         sys.exit(0)
