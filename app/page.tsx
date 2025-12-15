@@ -432,7 +432,7 @@ export default function HomePage() {
             />
             <div className="h-10 px-4 flex items-center gap-2 bg-amber-600 hover:bg-amber-500 text-white rounded-md text-sm font-medium transition-colors">
               <Upload className="w-4 h-4" />
-              <span className="hidden sm:inline">Upload</span>
+              <span>Upload</span>
             </div>
           </label>
         </div>

@@ -45,6 +45,7 @@ export function TranscriptReader({ channelCode, onSelect }: TranscriptReaderProp
   const [bulkQueue, setBulkQueue] = useState<number[]>([])
   const [bulkPosition, setBulkPosition] = useState(0)
   const [inBulkMode, setInBulkMode] = useState(false)
+  const [pendingAutoSelect, setPendingAutoSelect] = useState(false)
 
   useEffect(() => {
     loadData()
@@ -57,6 +58,17 @@ export function TranscriptReader({ channelCode, onSelect }: TranscriptReaderProp
       loadVideoTranscript(videos[currentIndex])
     }
   }, [currentIndex, transcripts, videos, mode])
+
+  // Auto-select when transcript loads in bulk mode
+  useEffect(() => {
+    if (pendingAutoSelect && !loadingContent && !fetchingTranscript && transcriptContent && currentVideo) {
+      setPendingAutoSelect(false)
+      // Small delay to ensure UI is ready
+      setTimeout(() => {
+        onSelect(currentVideo.videoId, currentVideo.title, transcriptContent, goToNextInBulk)
+      }, 100)
+    }
+  }, [pendingAutoSelect, loadingContent, fetchingTranscript, transcriptContent, currentVideo])
 
   async function loadData() {
     setLoading(true)
@@ -236,6 +248,7 @@ export function TranscriptReader({ channelCode, onSelect }: TranscriptReaderProp
     setInBulkMode(true)
     setShowBulkInput(false)
     setCurrentIndex(queue[0])
+    setPendingAutoSelect(true)
     toast.success(`Bulk mode: ${queue.length} items (${start} to ${end})`)
   }
 
@@ -245,6 +258,7 @@ export function TranscriptReader({ channelCode, onSelect }: TranscriptReaderProp
     setBulkPosition(0)
     setBulkStart("")
     setBulkEnd("")
+    setPendingAutoSelect(false)
   }
 
   function goToNextInBulk() {
@@ -252,6 +266,7 @@ export function TranscriptReader({ channelCode, onSelect }: TranscriptReaderProp
     if (nextPos < bulkQueue.length) {
       setBulkPosition(nextPos)
       setCurrentIndex(bulkQueue[nextPos])
+      setPendingAutoSelect(true)
     } else {
       toast.success("Bulk processing complete!")
       cancelBulkMode()
