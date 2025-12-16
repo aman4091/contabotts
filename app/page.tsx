@@ -26,6 +26,7 @@ interface ChannelVideoStatus {
   channelId?: string
   totalVideos: number
   fetchedAt: string
+  customPrompt?: string
 }
 
 interface AudioFile {
@@ -44,6 +45,7 @@ export default function HomePage() {
   const [audioFiles, setAudioFiles] = useState<AudioFile[]>([])
   const [defaultReferenceAudio, setDefaultReferenceAudio] = useState("")
   const [prompt, setPrompt] = useState("")
+  const [defaultPrompt, setDefaultPrompt] = useState("")
 
   // YouTube URL input state
   const [youtubeUrl, setYoutubeUrl] = useState("")
@@ -122,9 +124,21 @@ export default function HomePage() {
       setDefaultReferenceAudio(data.defaultReferenceAudio || "")
       if (data.prompts?.youtube) {
         setPrompt(data.prompts.youtube)
+        setDefaultPrompt(data.prompts.youtube)
       }
     } catch (error) {
       console.error("Error loading settings:", error)
+    }
+  }
+
+  // Handle channel selection - update prompt to channel's custom prompt
+  function handleChannelSelect(channelCode: string) {
+    setSelectedChannel(channelCode)
+    const channel = channelsWithVideos.find(c => c.channelCode === channelCode)
+    if (channel?.customPrompt) {
+      setPrompt(channel.customPrompt)
+    } else {
+      setPrompt(defaultPrompt)
     }
   }
 
@@ -315,6 +329,7 @@ export default function HomePage() {
             audioFiles={audioFiles}
             defaultReferenceAudio={defaultReferenceAudio}
             prompt={prompt}
+            channelCode={selectedChannel}
             onClose={handleCloseTranscriptPopup}
           />
         )}
@@ -346,7 +361,7 @@ export default function HomePage() {
             <button
               key={channel.channelCode}
               onClick={() => {
-                setSelectedChannel(channel.channelCode)
+                handleChannelSelect(channel.channelCode)
                 setShowMobileSidebar(false)
               }}
               className={`w-full flex flex-col items-center p-2 rounded-lg transition-colors ${
@@ -474,6 +489,7 @@ export default function HomePage() {
           audioFiles={audioFiles}
           defaultReferenceAudio={defaultReferenceAudio}
           prompt={prompt}
+          channelCode={selectedChannel}
           initialTranscript={preloadedTranscript}
           onClose={handlePopupClose}
           onSkip={() => {
@@ -493,6 +509,7 @@ export default function HomePage() {
           audioFiles={audioFiles}
           defaultReferenceAudio={defaultReferenceAudio}
           prompt={prompt}
+          channelCode={selectedChannel}
           onClose={handleCloseTranscriptPopup}
         />
       )}

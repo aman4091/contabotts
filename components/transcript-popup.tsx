@@ -38,6 +38,7 @@ interface TranscriptPopupProps {
   audioFiles: AudioFile[]
   defaultReferenceAudio: string
   prompt: string
+  channelCode?: string
   onClose: () => void
 }
 
@@ -47,6 +48,7 @@ export function TranscriptPopup({
   audioFiles,
   defaultReferenceAudio,
   prompt,
+  channelCode,
   onClose
 }: TranscriptPopupProps) {
   const [transcript, setTranscript] = useState(initialTranscript)
@@ -334,6 +336,7 @@ export function TranscriptPopup({
           transcript,
           videoTitle: `YouTube Video ${videoId}`,
           videoId,
+          channelCode: channelCode || "VIDEO",
           referenceAudio: selectedAudio,
           audioEnabled: true,
           audioOnly,

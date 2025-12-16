@@ -149,6 +149,7 @@ export async function POST(request: NextRequest) {
       transcript,
       videoTitle,
       videoId,
+      channelCode = "VIDEO",
       audioEnabled = true,
       referenceAudio: customReferenceAudio,
       customImages,
@@ -197,7 +198,7 @@ export async function POST(request: NextRequest) {
     const result = await createAudioJob({
       job_id: jobId,
       script_text: script,
-      channel_code: "VIDEO",
+      channel_code: channelCode,
       video_number: videoNumber,
       date: getTomorrowDate(),
       audio_counter: audioCounter,

@@ -148,7 +148,8 @@ export async function GET(request: NextRequest) {
                   channelLogo: metadata.channelLogo || "",
                   channelId: metadata.channelId,
                   fetchedAt: metadata.fetchedAt,
-                  totalVideos: metadata.totalVideos
+                  totalVideos: metadata.totalVideos,
+                  customPrompt: metadata.customPrompt || ""
                 })
               } catch {}
             }
@@ -180,6 +181,44 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error("Error getting fetch status:", error)
     return NextResponse.json({ error: "Failed to get status" }, { status: 500 })
+  }
+}
+
+// PATCH - Update channel settings (custom prompt, etc)
+export async function PATCH(request: NextRequest) {
+  try {
+    const username = await getUser()
+    const videosDir = getUserVideosDir(username)
+
+    const body = await request.json()
+    const { channelCode, customPrompt } = body
+
+    if (!channelCode) {
+      return NextResponse.json({ error: "Channel code required" }, { status: 400 })
+    }
+
+    const metadataPath = path.join(videosDir, channelCode, "metadata.json")
+
+    if (!fs.existsSync(metadataPath)) {
+      return NextResponse.json({ error: "Channel not found" }, { status: 404 })
+    }
+
+    const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf-8"))
+
+    // Update custom prompt
+    if (customPrompt !== undefined) {
+      metadata.customPrompt = customPrompt
+    }
+
+    fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2))
+
+    return NextResponse.json({
+      success: true,
+      message: "Channel settings updated"
+    })
+  } catch (error) {
+    console.error("Error updating channel:", error)
+    return NextResponse.json({ error: "Failed to update channel" }, { status: 500 })
   }
 }
 

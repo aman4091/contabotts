@@ -24,7 +24,10 @@ import {
   AlertTriangle,
   RotateCcw,
   Youtube,
-  RefreshCw
+  RefreshCw,
+  Edit2,
+  X,
+  MessageSquare
 } from "lucide-react"
 
 interface Settings {
@@ -91,8 +94,12 @@ export default function SettingsPage() {
       channelUrl: string
       totalVideos: number
       fetchedAt: string
+      customPrompt: string
     }
   }>({})
+  const [editingPrompt, setEditingPrompt] = useState<string | null>(null)
+  const [promptValue, setPromptValue] = useState("")
+  const [savingPrompt, setSavingPrompt] = useState(false)
 
   // Channel management
   const [newChannelCode, setNewChannelCode] = useState("")
@@ -124,14 +131,15 @@ export default function SettingsPage() {
       setAudioFiles(audioData.files || [])
 
       // Build channel video status map
-      const statusMap: { [key: string]: { channelName: string; channelUrl: string; totalVideos: number; fetchedAt: string } } = {}
+      const statusMap: { [key: string]: { channelName: string; channelUrl: string; totalVideos: number; fetchedAt: string; customPrompt: string } } = {}
       if (videoFetchData.channels) {
         for (const ch of videoFetchData.channels) {
           statusMap[ch.channelCode] = {
             channelName: ch.channelName,
             channelUrl: ch.channelUrl || "",
             totalVideos: ch.totalVideos,
-            fetchedAt: ch.fetchedAt
+            fetchedAt: ch.fetchedAt,
+            customPrompt: ch.customPrompt || ""
           }
         }
       }
@@ -420,6 +428,32 @@ export default function SettingsPage() {
     }
   }
 
+  async function saveChannelPrompt(channelCode: string) {
+    setSavingPrompt(true)
+    try {
+      const res = await fetch("/api/videos/fetch", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channelCode, customPrompt: promptValue })
+      })
+
+      if (res.ok) {
+        toast.success("Prompt saved")
+        setChannelVideoStatus(prev => ({
+          ...prev,
+          [channelCode]: { ...prev[channelCode], customPrompt: promptValue }
+        }))
+        setEditingPrompt(null)
+      } else {
+        toast.error("Failed to save prompt")
+      }
+    } catch {
+      toast.error("Failed to save prompt")
+    } finally {
+      setSavingPrompt(false)
+    }
+  }
+
   async function deleteChannel(channelCode: string) {
     if (!confirm(`Delete channel "${channelCode}" and all its video data?`)) return
 
@@ -534,7 +568,7 @@ export default function SettingsPage() {
                 <div className="space-y-3">
                   <Label className="text-sm font-medium">Your Channels</Label>
                   {Object.entries(channelVideoStatus).map(([code, status]) => (
-                    <div key={code} className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-lg">
+                    <div key={code} className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-lg space-y-3">
                       <div className="flex items-center gap-3">
                         <div className="p-2 rounded-lg bg-red-500/10">
                           <Youtube className="w-5 h-5 text-red-500" />
@@ -572,6 +606,66 @@ export default function SettingsPage() {
                             )}
                           </Button>
                         </div>
+                      </div>
+
+                      {/* Custom Prompt Section */}
+                      <div className="pt-2 border-t border-emerald-500/20">
+                        {editingPrompt === code ? (
+                          <div className="space-y-2">
+                            <Textarea
+                              value={promptValue}
+                              onChange={(e) => setPromptValue(e.target.value)}
+                              placeholder="Enter custom prompt for this channel..."
+                              className="min-h-[100px] text-sm"
+                            />
+                            <div className="flex gap-2">
+                              <Button
+                                size="sm"
+                                onClick={() => saveChannelPrompt(code)}
+                                disabled={savingPrompt}
+                                className="bg-emerald-600 hover:bg-emerald-500"
+                              >
+                                {savingPrompt ? (
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                  <Check className="w-4 h-4" />
+                                )}
+                                <span className="ml-1">Save</span>
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setEditingPrompt(null)}
+                              >
+                                <X className="w-4 h-4" />
+                                <span className="ml-1">Cancel</span>
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-start gap-2">
+                            <MessageSquare className="w-4 h-4 text-violet-400 mt-0.5 flex-shrink-0" />
+                            <div className="flex-1 min-w-0">
+                              {status.customPrompt ? (
+                                <p className="text-xs text-muted-foreground line-clamp-2">{status.customPrompt}</p>
+                              ) : (
+                                <p className="text-xs text-muted-foreground italic">No custom prompt set</p>
+                              )}
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setEditingPrompt(code)
+                                setPromptValue(status.customPrompt || "")
+                              }}
+                              className="h-6 px-2 text-violet-400 hover:text-violet-300 hover:bg-violet-500/10"
+                            >
+                              <Edit2 className="w-3 h-3" />
+                              <span className="ml-1 text-xs">Edit Prompt</span>
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}

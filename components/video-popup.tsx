@@ -45,6 +45,7 @@ interface VideoPopupProps {
   audioFiles: AudioFile[]
   defaultReferenceAudio: string
   prompt: string
+  channelCode?: string
   initialTranscript?: string
   onClose: () => void
   onSkip: (videoId: string) => void
@@ -75,6 +76,7 @@ export function VideoPopup({
   audioFiles,
   defaultReferenceAudio,
   prompt,
+  channelCode,
   initialTranscript,
   onClose,
   onSkip,
@@ -413,6 +415,7 @@ export function VideoPopup({
           transcript,
           videoTitle: video.title,
           videoId: video.videoId,
+          channelCode: channelCode || "VIDEO",
           referenceAudio: selectedAudio,
           customImages: uploadedImagePaths.length > 0 ? uploadedImagePaths : undefined,
           aiImageMode

@@ -156,6 +156,27 @@ async def download_file(
     )
 
 
+@app.get("/public/{path:path}")
+async def public_download(path: str):
+    """
+    Public download endpoint - no API key required
+    For easy download via IDM/browser
+    """
+    file_path = safe_path(path)
+
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=400, detail=f"Not a file: {path}")
+
+    return FileResponse(
+        file_path,
+        filename=os.path.basename(file_path),
+        media_type="application/octet-stream"
+    )
+
+
 @app.post("/files/{path:path}")
 async def upload_file(
     path: str,

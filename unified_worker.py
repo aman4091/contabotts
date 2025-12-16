@@ -273,8 +273,8 @@ async def upload_to_contabo(file_path: str, username: str, video_number: int, fi
         remote_path = f"users/{username}/organized/video_{video_number}/{file_type}{ext}"
 
         if queue.upload_file(file_path, remote_path):
-            # Generate download URL
-            download_url = f"{FILE_SERVER_URL}/files/{remote_path}"
+            # Generate public download URL (no API key required)
+            download_url = f"{FILE_SERVER_URL}/public/{remote_path}"
             print(f"✅ Uploaded to Contabo: {download_url}")
             return download_url
         return None
