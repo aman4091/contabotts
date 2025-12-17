@@ -787,12 +787,12 @@ async def process_job(job: Dict) -> bool:
                 # Calculate number of images based on audio duration
                 audio_duration = landscape_gen.get_audio_duration(local_audio_out)
                 duration_minutes = audio_duration / 60
-                IMAGE_DISPLAY_DURATION = 20  # Each image shows for ~20 seconds (reduced to avoid FFmpeg memory issues)
+                IMAGE_DISPLAY_DURATION = 12  # Each image shows for 12 seconds
 
                 # Generate unique images = minutes / 2 (e.g., 10 min = 5 images)
                 num_unique_images = max(1, int(duration_minutes / 2))
-                # Calculate total display slots (max 30 to avoid FFmpeg memory issues)
-                total_slots = min(30, max(1, int(audio_duration / IMAGE_DISPLAY_DURATION)))
+                # Calculate total display slots
+                total_slots = max(1, int(audio_duration / IMAGE_DISPLAY_DURATION))
 
                 print(f"   📊 Duration: {duration_minutes:.1f} min -> {num_unique_images} unique AI images, {total_slots} display slots")
 
@@ -801,11 +801,9 @@ async def process_job(job: Dict) -> bool:
 
                 if unique_images:
                     print(f"✅ Generated {len(unique_images)} AI images")
-                    # Randomly shuffle images to fill all display slots
-                    local_images = []
-                    for _ in range(total_slots):
-                        local_images.append(random.choice(unique_images))
-                    print(f"   📷 {len(local_images)} images in slideshow (random shuffle)")
+                    # Random loop: randomly pick from unique images for each slot
+                    local_images = [random.choice(unique_images) for _ in range(total_slots)]
+                    print(f"   📷 {len(local_images)} slots, random shuffle from {len(unique_images)} unique images")
                 else:
                     print("⚠️ AI multi-image failed, trying single image...")
                     local_image = os.path.join(TEMP_DIR, f"ai_image_{job_id}.jpg")

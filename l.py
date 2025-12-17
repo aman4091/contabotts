@@ -493,17 +493,25 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
         safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
 
+        # Deduplicate images - only add unique files as inputs
+        unique_images = list(dict.fromkeys(image_paths))  # Preserves order, removes duplicates
+        path_to_input_idx = {path: idx for idx, path in enumerate(unique_images)}
+
+        print(f"   📁 {len(unique_images)} unique images as FFmpeg inputs, {num_images} display slots")
+
         # Build FFmpeg complex filter for crossfade
         inputs = ["ffmpeg", "-y"]
 
-        # Add all images as inputs (looped)
-        for i, img_path in enumerate(image_paths):
-            inputs.extend(["-loop", "1", "-t", str(segment_duration + fade_duration), "-i", img_path])
+        # Add only unique images as inputs
+        for img_path in unique_images:
+            inputs.extend(["-loop", "1", "-t", str(duration + fade_duration), "-i", img_path])
+
+        num_unique = len(unique_images)
 
         # Check for overlay
         has_overlay = overlay_path and os.path.exists(overlay_path)
         is_video_overlay = has_overlay and overlay_path.endswith(('.mp4', '.webm', '.mov'))
-        overlay_input_idx = num_images  # Index of overlay input
+        overlay_input_idx = num_unique  # Index after unique images
 
         if has_overlay:
             print(f"   🎭 Applying overlay: {os.path.basename(overlay_path)}")
@@ -511,29 +519,46 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 inputs.extend(["-stream_loop", "-1", "-i", overlay_path])
             else:
                 inputs.extend(["-loop", "1", "-i", overlay_path])
-            audio_input_idx = num_images + 1
+            audio_input_idx = num_unique + 1
         else:
-            audio_input_idx = num_images
+            audio_input_idx = num_unique
 
         # Add audio input
         inputs.extend(["-i", audio_path])
 
         # Build xfade filter chain
         filter_parts = []
-        current_label = "[0:v]"
 
-        # Scale all inputs first (force yuv420p to avoid color space issues)
-        for i in range(num_images):
-            filter_parts.append(f"[{i}:v]scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,setsar=1[v{i}]")
+        # Scale and split each unique input (so it can be used multiple times)
+        for idx, img_path in enumerate(unique_images):
+            # Count how many times this image is used
+            use_count = sum(1 for p in image_paths if p == img_path)
+            if use_count > 1:
+                # Split into multiple outputs
+                split_labels = "".join([f"[v{idx}_{j}]" for j in range(use_count)])
+                filter_parts.append(f"[{idx}:v]scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,setsar=1,split={use_count}{split_labels}")
+            else:
+                filter_parts.append(f"[{idx}:v]scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,setsar=1[v{idx}_0]")
+
+        # Track which split index to use for each unique image
+        img_use_counter = {path: 0 for path in unique_images}
+
+        # Map each slot to its scaled label
+        slot_labels = []
+        for img_path in image_paths:
+            idx = path_to_input_idx[img_path]
+            use_idx = img_use_counter[img_path]
+            slot_labels.append(f"[v{idx}_{use_idx}]")
+            img_use_counter[img_path] += 1
 
         # Chain xfade transitions
-        current_input = "[v0]"
+        current_input = slot_labels[0]
         for i in range(1, num_images):
             offset = (segment_duration * i) - fade_duration
             if offset < 0:
                 offset = 0
             output_label = f"[xf{i}]" if i < num_images - 1 else "[vfade]"
-            filter_parts.append(f"{current_input}[v{i}]xfade=transition=dissolve:duration={fade_duration}:offset={offset:.2f}{output_label}")
+            filter_parts.append(f"{current_input}{slot_labels[i]}xfade=transition=dissolve:duration={fade_duration}:offset={offset:.2f}{output_label}")
             current_input = f"[xf{i}]" if i < num_images - 1 else "[vfade]"
 
         # Apply overlay if exists, then subtitles
