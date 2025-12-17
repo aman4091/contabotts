@@ -791,10 +791,11 @@ async def process_job(job: Dict) -> bool:
 
                 # Generate unique images = minutes / 2 (e.g., 10 min = 5 images)
                 num_unique_images = max(1, int(duration_minutes / 2))
-                # Calculate total display slots
-                total_slots = max(1, int(audio_duration / IMAGE_DISPLAY_DURATION))
+                # Max 15 image transitions to avoid FFmpeg memory issues
+                MAX_SLOTS = 15
+                total_slots = min(MAX_SLOTS, max(num_unique_images, int(audio_duration / IMAGE_DISPLAY_DURATION)))
 
-                print(f"   📊 Duration: {duration_minutes:.1f} min -> {num_unique_images} unique AI images, {total_slots} display slots")
+                print(f"   📊 Duration: {duration_minutes:.1f} min -> {num_unique_images} AI images, {total_slots} display slots (max {MAX_SLOTS})")
 
                 # Generate multiple unique images
                 unique_images = generate_multiple_ai_images(ai_script, TEMP_DIR, num_unique_images, width=img_width, height=img_height)
@@ -803,7 +804,7 @@ async def process_job(job: Dict) -> bool:
                     print(f"✅ Generated {len(unique_images)} AI images")
                     # Random loop: randomly pick from unique images for each slot
                     local_images = [random.choice(unique_images) for _ in range(total_slots)]
-                    print(f"   📷 {len(local_images)} slots, random shuffle from {len(unique_images)} unique images")
+                    print(f"   📷 {len(local_images)} slots, random from {len(unique_images)} unique images")
                 else:
                     print("⚠️ AI multi-image failed, trying single image...")
                     local_image = os.path.join(TEMP_DIR, f"ai_image_{job_id}.jpg")
