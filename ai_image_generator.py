@@ -10,7 +10,7 @@ Flow:
 
 import os
 import requests
-from typing import Optional
+from typing import Optional, List
 from urllib.parse import quote
 
 # Google Generative AI (for text generation)
@@ -262,6 +262,165 @@ def generate_ai_image(script_text: str, output_path: str, width: int = 1920, hei
     print("="*50 + "\n")
 
     return success
+
+
+# Multi-image prompt for generating varied scenes
+MULTI_IMAGE_PROMPT = """Analyze the following script and generate {count} DIFFERENT image prompts for a video slideshow.
+
+Each image should:
+1. Represent a different scene/mood/aspect from the content
+2. Be suitable as a background for a video with subtitles
+3. Be visually appealing, cinematic, and high quality
+4. NOT contain any text, words, or letters
+5. Have variety in: lighting, colors, angles, settings
+
+Output EXACTLY {count} prompts, one per line, numbered 1-{count}.
+Keep each prompt under 150 words.
+Focus on: atmosphere, lighting, colors, setting, artistic style.
+
+Script:
+{script}
+
+Image prompts:"""
+
+
+def analyze_script_for_multiple_images(script_text: str, count: int, max_chars: int = 3000) -> List[str]:
+    """
+    Analyze script using Gemini and generate multiple varied image prompts
+
+    Args:
+        script_text: The script to analyze
+        count: Number of image prompts to generate
+        max_chars: Maximum characters to send
+
+    Returns:
+        List of image prompts or empty list if failed
+    """
+    if not GEMINI_API_KEY:
+        print("❌ GEMINI_API_KEY not set")
+        return []
+
+    settings_model = get_gemini_model_from_settings()
+    models_to_try = [settings_model, 'gemini-2.0-flash-exp', 'gemini-1.5-flash']
+    models_to_try = list(dict.fromkeys(models_to_try))
+
+    truncated_script = script_text[:max_chars] if len(script_text) > max_chars else script_text
+    prompt = MULTI_IMAGE_PROMPT.format(script=truncated_script, count=count)
+
+    for model_name in models_to_try:
+        try:
+            print(f"🧠 Generating {count} image prompts with {model_name}...")
+
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
+
+            response = requests.post(url, json={
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "temperature": 0.9,  # Higher for more variety
+                    "maxOutputTokens": 2000,
+                    "thinkingConfig": {"thinkingBudget": 0}
+                }
+            }, timeout=90)
+
+            if response.status_code == 200:
+                data = response.json()
+
+                if data.get("candidates", [{}])[0].get("finishReason") == "SAFETY":
+                    print(f"   ⚠️ Blocked by safety, trying next model...")
+                    continue
+
+                text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+                if text:
+                    # Parse numbered prompts
+                    prompts = []
+                    lines = text.split('\n')
+                    for line in lines:
+                        line = line.strip()
+                        # Remove numbering like "1.", "1)", "1:"
+                        if line and line[0].isdigit():
+                            # Find where the actual prompt starts
+                            for i, char in enumerate(line):
+                                if char in '.):' and i < 3:
+                                    line = line[i+1:].strip()
+                                    break
+                        if line and len(line) > 20:  # Valid prompt
+                            prompts.append(line)
+
+                    if len(prompts) >= count:
+                        print(f"✅ Generated {len(prompts)} image prompts")
+                        return prompts[:count]
+                    elif prompts:
+                        print(f"⚠️ Got {len(prompts)} prompts, needed {count}. Using what we have.")
+                        # Repeat prompts if needed
+                        while len(prompts) < count:
+                            prompts.append(prompts[len(prompts) % len(prompts)])
+                        return prompts
+
+            print(f"   ⚠️ {model_name} failed")
+
+        except Exception as e:
+            print(f"   ⚠️ {model_name} error: {e}")
+            continue
+
+    print("❌ All models failed")
+    return []
+
+
+def generate_multiple_ai_images(script_text: str, output_dir: str, count: int,
+                                 width: int = 1920, height: int = 1080) -> List[str]:
+    """
+    Generate multiple AI images from script
+
+    Args:
+        script_text: Script to analyze
+        output_dir: Directory to save images
+        count: Number of images to generate
+        width: Image width
+        height: Image height
+
+    Returns:
+        List of generated image paths
+    """
+    import time
+
+    is_shorts = width == 1080 and height == 1920
+    print("\n" + "="*50)
+    print(f"🤖 MULTI-IMAGE GENERATION - {count} images ({'SHORTS' if is_shorts else 'LANDSCAPE'})")
+    print("="*50)
+
+    # Step 1: Get multiple prompts from Gemini
+    prompts = analyze_script_for_multiple_images(script_text, count)
+
+    if not prompts:
+        print("❌ Failed to generate image prompts, using single prompt fallback")
+        single_prompt = analyze_script_for_image(script_text)
+        if single_prompt:
+            prompts = [single_prompt] * count
+        else:
+            return []
+
+    # Step 2: Generate each image
+    generated_paths = []
+    for i, prompt in enumerate(prompts):
+        output_path = os.path.join(output_dir, f"ai_image_{i+1}.jpg")
+        print(f"\n📸 Generating image {i+1}/{count}...")
+        print(f"   Prompt: {prompt[:60]}...")
+
+        success = generate_image_with_nebius(prompt, output_path, width=width, height=height)
+
+        if success:
+            generated_paths.append(output_path)
+        else:
+            print(f"   ⚠️ Failed to generate image {i+1}")
+
+        # Small delay between requests
+        if i < len(prompts) - 1:
+            time.sleep(2)
+
+    print(f"\n✅ Generated {len(generated_paths)}/{count} images")
+    print("="*50 + "\n")
+
+    return generated_paths
 
 
 # For testing

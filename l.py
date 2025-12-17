@@ -28,6 +28,12 @@ TARGET_H = 1080
 FONT_SIZE = 80       # Perfect for 1080p
 BOX_OPACITY = "00"   # Solid Black
 TEXT_Y_POS = 540     # Dead Center
+
+# --- RANDOMIZATION SETTINGS ---
+AVAILABLE_FONTS = ["Arial", "Verdana", "Trebuchet MS", "Georgia", "Tahoma", "Impact", "DejaVu Sans", "Liberation Sans"]
+VIDEO_OVERLAYS_DIR = "/root/tts/data/video-overlays"
+MIN_OPACITY = 50
+MAX_OPACITY = 100
 # =================================================
 
 def run_command(cmd):
@@ -35,6 +41,17 @@ def run_command(cmd):
         subprocess.run(cmd, shell=True, check=True)
         return True
     except: return False
+
+def get_random_overlay():
+    """Get random overlay file from video-overlays directory"""
+    if not os.path.exists(VIDEO_OVERLAYS_DIR):
+        return None
+    files = [f for f in os.listdir(VIDEO_OVERLAYS_DIR) if f.endswith(('.png', '.mp4', '.webm', '.mov'))]
+    if not files:
+        return None
+    selected = random.choice(files)
+    print(f"   🎭 Using overlay: {selected}")
+    return os.path.join(VIDEO_OVERLAYS_DIR, selected)
 
 def setup_environment():
     print("🛠️  Checking Environment...")
@@ -203,9 +220,13 @@ class LandscapeGenerator:
         pos = settings["position"]
 
         font_size = font["size"]
-        font_family = font["family"]
+        # Random font family for variety
+        font_family = random.choice(AVAILABLE_FONTS)
         font_color = hex_to_ass_color(font["color"], 100)
-        bg_color = hex_to_ass_color(bg["color"], bg["opacity"])
+        # Random opacity for variety (50-100%)
+        random_opacity = random.randint(MIN_OPACITY, MAX_OPACITY)
+        bg_color = hex_to_ass_color(bg["color"], random_opacity)
+        print(f"   🎨 Subtitle style: Font={font_family}, Opacity={random_opacity}%")
         corner_radius = bg["cornerRadius"]
 
         # Calculate Y position based on alignment
@@ -366,34 +387,67 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         except:
             return 60  # Default fallback
 
-    def render(self, audio_path, image_path, ass_path, output_path):
+    def render(self, audio_path, image_path, ass_path, output_path, overlay_path=None):
         print("🎬 Rendering 1080p PRO (12 Mbps)...")
         safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
 
-        vf = f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,subtitles='{safe_ass}'"
+        # Build inputs and filter based on overlay
+        if overlay_path and os.path.exists(overlay_path):
+            print(f"   🎭 Applying overlay: {os.path.basename(overlay_path)}")
+            is_video_overlay = overlay_path.endswith(('.mp4', '.webm', '.mov'))
 
-        inputs = ["ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path]
+            if is_video_overlay:
+                inputs = ["ffmpeg", "-y", "-loop", "1", "-i", image_path, "-stream_loop", "-1", "-i", overlay_path, "-i", audio_path]
+                filter_complex = (
+                    f"[0:v]scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2[bg];"
+                    f"[1:v]scale={TARGET_W}:{TARGET_H},format=yuva420p[ovr];"
+                    f"[bg][ovr]overlay=0:0:shortest=1[combined];"
+                    f"[combined]format=yuv420p,subtitles='{safe_ass}'[vout]"
+                )
+                audio_map = "2:a"
+            else:  # PNG overlay
+                inputs = ["ffmpeg", "-y", "-loop", "1", "-i", image_path, "-loop", "1", "-i", overlay_path, "-i", audio_path]
+                filter_complex = (
+                    f"[0:v]scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2[bg];"
+                    f"[1:v]scale={TARGET_W}:{TARGET_H},format=yuva420p[ovr];"
+                    f"[bg][ovr]overlay=0:0[combined];"
+                    f"[combined]format=yuv420p,subtitles='{safe_ass}'[vout]"
+                )
+                audio_map = "2:a"
 
-        # --- 1080p FAST & CRISP SETTINGS ---
-        cmd_gpu = inputs + [
-            "-vf", vf,
-            "-c:v", "h264_nvenc",
-            "-preset", "p5",        # P5 = High Quality (Faster than P7)
-            "-tune", "hq",
-            "-rc", "cbr",
-            "-b:v", "12M",          # 12 Mbps
-            "-maxrate", "12M",
-            "-bufsize", "24M",
-            "-c:a", "aac", "-b:a", "192k",
-            "-shortest", output_path
-        ]
+            cmd_gpu = inputs + [
+                "-filter_complex", filter_complex,
+                "-map", "[vout]", "-map", audio_map,
+                "-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq",
+                "-rc", "cbr", "-b:v", "12M", "-maxrate", "12M", "-bufsize", "24M",
+                "-c:a", "aac", "-b:a", "192k",
+                "-shortest", output_path
+            ]
+            cmd_cpu = inputs + [
+                "-filter_complex", filter_complex,
+                "-map", "[vout]", "-map", audio_map,
+                "-c:v", "libx264", "-preset", "faster", "-crf", "18",
+                "-c:a", "aac", "-b:a", "192k",
+                "-shortest", output_path
+            ]
+        else:
+            # No overlay - simple filter
+            vf = f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,subtitles='{safe_ass}'"
+            inputs = ["ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path]
 
-        cmd_cpu = inputs + [
-            "-vf", vf,
-            "-c:v", "libx264", "-preset", "faster", "-crf", "18",
-            "-c:a", "aac", "-b:a", "192k",
-            "-shortest", output_path
-        ]
+            cmd_gpu = inputs + [
+                "-vf", vf,
+                "-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq",
+                "-rc", "cbr", "-b:v", "12M", "-maxrate", "12M", "-bufsize", "24M",
+                "-c:a", "aac", "-b:a", "192k",
+                "-shortest", output_path
+            ]
+            cmd_cpu = inputs + [
+                "-vf", vf,
+                "-c:v", "libx264", "-preset", "faster", "-crf", "18",
+                "-c:a", "aac", "-b:a", "192k",
+                "-shortest", output_path
+            ]
 
         print("   Attempting NVENC (1080p P5)...")
         try:
@@ -406,9 +460,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 return True
             except Exception as e: print(f"❌ Failed: {e}"); return False
 
-    def render_with_fade(self, audio_path, image_paths, ass_path, output_path, fade_duration=1.0):
+    def render_with_fade(self, audio_path, image_paths, ass_path, output_path, fade_duration=1.0, overlay_path=None):
         """
-        Render video with multiple images that fade transition between each other.
+        Render video with multiple images that dissolve transition between each other.
 
         Args:
             audio_path: Path to audio file
@@ -416,6 +470,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             ass_path: Path to ASS subtitle file
             output_path: Output video path
             fade_duration: Duration of fade transition in seconds
+            overlay_path: Optional overlay file (PNG or video)
         """
         if len(image_paths) == 0:
             print("❌ No images provided")
@@ -423,7 +478,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
         if len(image_paths) == 1:
             # Single image, use regular render
-            return self.render(audio_path, image_paths[0], ass_path, output_path)
+            return self.render(audio_path, image_paths[0], ass_path, output_path, overlay_path=overlay_path)
 
         print(f"🎬 Rendering with {len(image_paths)} images (fade transitions)...")
 
@@ -445,6 +500,21 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         for i, img_path in enumerate(image_paths):
             inputs.extend(["-loop", "1", "-t", str(segment_duration + fade_duration), "-i", img_path])
 
+        # Check for overlay
+        has_overlay = overlay_path and os.path.exists(overlay_path)
+        is_video_overlay = has_overlay and overlay_path.endswith(('.mp4', '.webm', '.mov'))
+        overlay_input_idx = num_images  # Index of overlay input
+
+        if has_overlay:
+            print(f"   🎭 Applying overlay: {os.path.basename(overlay_path)}")
+            if is_video_overlay:
+                inputs.extend(["-stream_loop", "-1", "-i", overlay_path])
+            else:
+                inputs.extend(["-loop", "1", "-i", overlay_path])
+            audio_input_idx = num_images + 1
+        else:
+            audio_input_idx = num_images
+
         # Add audio input
         inputs.extend(["-i", audio_path])
 
@@ -463,11 +533,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             if offset < 0:
                 offset = 0
             output_label = f"[xf{i}]" if i < num_images - 1 else "[vfade]"
-            filter_parts.append(f"{current_input}[v{i}]xfade=transition=fade:duration={fade_duration}:offset={offset:.2f}{output_label}")
+            filter_parts.append(f"{current_input}[v{i}]xfade=transition=dissolve:duration={fade_duration}:offset={offset:.2f}{output_label}")
             current_input = f"[xf{i}]" if i < num_images - 1 else "[vfade]"
 
-        # Add subtitles to final video
-        filter_parts.append(f"[vfade]format=yuv420p,subtitles='{safe_ass}'[vout]")
+        # Apply overlay if exists, then subtitles
+        if has_overlay:
+            filter_parts.append(f"[{overlay_input_idx}:v]scale={TARGET_W}:{TARGET_H},format=yuva420p[ovr]")
+            filter_parts.append(f"[vfade][ovr]overlay=0:0{':shortest=1' if is_video_overlay else ''}[combined]")
+            filter_parts.append(f"[combined]format=yuv420p,subtitles='{safe_ass}'[vout]")
+        else:
+            filter_parts.append(f"[vfade]format=yuv420p,subtitles='{safe_ass}'[vout]")
 
         filter_complex = ";".join(filter_parts)
 
@@ -475,7 +550,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         cmd_gpu = inputs + [
             "-filter_complex", filter_complex,
             "-map", "[vout]",
-            "-map", f"{num_images}:a",
+            "-map", f"{audio_input_idx}:a",
             "-c:v", "h264_nvenc",
             "-preset", "p5",
             "-tune", "hq",
@@ -492,7 +567,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         cmd_cpu = inputs + [
             "-filter_complex", filter_complex,
             "-map", "[vout]",
-            "-map", f"{num_images}:a",
+            "-map", f"{audio_input_idx}:a",
             "-c:v", "libx264", "-preset", "faster", "-crf", "18",
             "-c:a", "aac", "-b:a", "192k",
             "-shortest",

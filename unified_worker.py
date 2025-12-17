@@ -30,13 +30,13 @@ import requests
 import shutil
 
 # Import from l.py (same directory)
-from l import LandscapeGenerator
+from l import LandscapeGenerator, get_random_overlay
 
 # Import AI image generator
 try:
-    from ai_image_generator import generate_ai_image
+    from ai_image_generator import generate_ai_image, generate_multiple_ai_images
     AI_IMAGE_AVAILABLE = True
-    print("✅ AI Image Generator loaded")
+    print("✅ AI Image Generator loaded (multi-image support)")
 except ImportError as e:
     AI_IMAGE_AVAILABLE = False
     print(f"⚠️ AI Image Generator not available: {e}")
@@ -770,27 +770,51 @@ async def process_job(job: Dict) -> bool:
                 local_image, server_image_path = queue.get_random_image(image_folder)
                 local_images = [local_image] if local_image else []
         elif job.get('use_ai_image', False) and AI_IMAGE_AVAILABLE:
-            # AI Image Generation: Analyze script and generate image
+            # AI Image Generation: Multiple images based on audio duration
             if is_short:
                 print("🤖 Using AI Image Generation (SHORTS 1080x1920)...")
             else:
-                print("🤖 Using AI Image Generation...")
+                print("🤖 Using AI Multi-Image Generation...")
 
             # Get script text for AI image
             ai_script = job.get('script_text') or queue.get_script(org_path)
 
             if ai_script:
-                local_image = os.path.join(TEMP_DIR, f"ai_image_{job_id}.jpg")
                 # Use 1080x1920 for shorts, 1920x1080 for landscape
                 img_width = 1080 if is_short else 1920
                 img_height = 1920 if is_short else 1080
-                if generate_ai_image(ai_script, local_image, width=img_width, height=img_height):
-                    print(f"✅ AI image generated ({img_width}x{img_height}): {local_image}")
-                    local_images = [local_image]
+
+                # Calculate number of images based on audio duration
+                audio_duration = landscape_gen.get_audio_duration(local_audio_out)
+                duration_minutes = audio_duration / 60
+                IMAGE_DISPLAY_DURATION = 12  # Each image shows for ~12 seconds
+
+                # Generate unique images = minutes / 2 (e.g., 10 min = 5 images)
+                num_unique_images = max(1, int(duration_minutes / 2))
+                # Calculate total display slots
+                total_slots = max(1, int(audio_duration / IMAGE_DISPLAY_DURATION))
+
+                print(f"   📊 Duration: {duration_minutes:.1f} min -> {num_unique_images} unique AI images, {total_slots} display slots")
+
+                # Generate multiple unique images
+                unique_images = generate_multiple_ai_images(ai_script, TEMP_DIR, num_unique_images, width=img_width, height=img_height)
+
+                if unique_images:
+                    print(f"✅ Generated {len(unique_images)} AI images")
+                    # Randomly shuffle images to fill all display slots
+                    local_images = []
+                    for _ in range(total_slots):
+                        local_images.append(random.choice(unique_images))
+                    print(f"   📷 {len(local_images)} images in slideshow (random shuffle)")
                 else:
-                    print("⚠️ AI image failed, falling back to random image")
-                    local_image, server_image_path = queue.get_random_image(image_folder)
-                    local_images = [local_image] if local_image else []
+                    print("⚠️ AI multi-image failed, trying single image...")
+                    local_image = os.path.join(TEMP_DIR, f"ai_image_{job_id}.jpg")
+                    if generate_ai_image(ai_script, local_image, width=img_width, height=img_height):
+                        local_images = [local_image]
+                    else:
+                        print("⚠️ AI image failed, falling back to random image")
+                        local_image, server_image_path = queue.get_random_image(image_folder)
+                        local_images = [local_image] if local_image else []
             else:
                 print("⚠️ No script for AI image, falling back to random image")
                 local_image, server_image_path = queue.get_random_image(image_folder)
@@ -805,8 +829,11 @@ async def process_job(job: Dict) -> bool:
 
         print("🎥 Generating Video with subtitles...")
 
+        # Get random overlay (if available)
+        overlay_path = get_random_overlay()
+
         if is_short:
-            # Shorts: use inline functions
+            # Shorts: use inline functions (no overlay support yet)
             ass_path = generate_subtitles_shorts(local_audio_out)
             if not ass_path: raise Exception("Subtitle generation failed")
             if not render_video_shorts(local_images[0], local_audio_out, ass_path, local_video_out):
@@ -817,15 +844,15 @@ async def process_job(job: Dict) -> bool:
             ass_path = landscape_gen.generate_subtitles(local_audio_out)
             if not ass_path: raise Exception("Subtitle generation failed")
 
-            # Render video using l.py
+            # Render video using l.py (with overlay support)
             if len(local_images) > 1:
-                # Multiple images: use fade transition
-                print(f"   Using {len(local_images)} images with fade transitions")
-                if not landscape_gen.render_with_fade(local_audio_out, local_images, ass_path, local_video_out):
+                # Multiple images: use dissolve transition
+                print(f"   Using {len(local_images)} images with dissolve transitions")
+                if not landscape_gen.render_with_fade(local_audio_out, local_images, ass_path, local_video_out, overlay_path=overlay_path):
                     raise Exception("Video render with fade failed")
             else:
                 # Single image: use regular render
-                if not landscape_gen.render(local_audio_out, local_images[0], ass_path, local_video_out):
+                if not landscape_gen.render(local_audio_out, local_images[0], ass_path, local_video_out, overlay_path=overlay_path):
                     raise Exception("Video render failed")
 
         # Cleanup ASS file
