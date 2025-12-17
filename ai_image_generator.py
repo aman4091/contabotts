@@ -264,29 +264,38 @@ def generate_ai_image(script_text: str, output_path: str, width: int = 1920, hei
     return success
 
 
-# Archangel Michael themed prompts for variety
-ARCHANGEL_PROMPTS = [
-    "Archangel Michael in golden armor, wings spread wide, standing on clouds with divine light rays, heavenly atmosphere, cinematic lighting, epic fantasy art",
-    "Archangel Michael wielding a flaming sword, dramatic pose, celestial background with stars and galaxies, ethereal glow, highly detailed digital art",
-    "Archangel Michael descending from heaven, powerful wings, golden halo, rays of divine light breaking through clouds, renaissance painting style",
-    "Archangel Michael in battle stance, silver and gold armor, dramatic stormy sky background, lightning, epic fantasy illustration",
-    "Archangel Michael peaceful portrait, serene expression, soft heavenly light, white and gold robes, clouds and doves, spiritual art",
-    "Archangel Michael protecting souls, guardian pose, warm golden light, ethereal mist, detailed feathered wings, sacred art style",
-    "Archangel Michael standing at heaven's gates, majestic architecture, divine rays, powerful presence, epic scale, fantasy concept art",
-    "Archangel Michael with shield and sword, warrior of light, cosmic background, nebula colors, cinematic composition, digital painting",
-    "Archangel Michael meditation pose, peaceful aura, soft blue and gold tones, celestial energy, spiritual enlightenment theme",
-    "Archangel Michael triumphant over darkness, dramatic lighting, contrast of light and shadow, epic battle aftermath, heroic fantasy art"
-]
+# Archangel Michael prompt for Gemini
+ARCHANGEL_PROMPT = """Generate {count} DIFFERENT and UNIQUE image prompts featuring Archangel Michael.
+
+Each prompt must:
+1. Feature Archangel Michael as the main subject
+2. Have DIFFERENT poses, settings, lighting, and moods
+3. Be suitable as a cinematic video background
+4. NOT contain any text or letters
+5. Be highly detailed and visually stunning
+
+Vary these elements across prompts:
+- Poses: standing, flying, fighting, meditating, protecting, descending, ascending
+- Settings: heaven, clouds, mountains, ancient temples, cosmic space, battlefields, gardens
+- Lighting: golden hour, moonlight, divine rays, aurora, sunrise, dramatic shadows
+- Armor: golden, silver, white, crystalline, ancient, radiant
+- Wings: spread wide, folded, glowing, feathered, ethereal
+- Mood: powerful, peaceful, fierce, serene, majestic, mysterious
+
+Output EXACTLY {count} prompts, one per line, numbered 1-{count}.
+Each prompt should be 50-100 words.
+
+Image prompts:"""
 
 
 def analyze_script_for_multiple_images(script_text: str, count: int, max_chars: int = 3000) -> List[str]:
     """
-    Analyze script using Gemini and generate multiple varied image prompts
+    Generate multiple Archangel Michael image prompts using Gemini
 
     Args:
-        script_text: The script to analyze
+        script_text: Not used (kept for compatibility)
         count: Number of image prompts to generate
-        max_chars: Maximum characters to send
+        max_chars: Not used
 
     Returns:
         List of image prompts or empty list if failed
@@ -299,12 +308,12 @@ def analyze_script_for_multiple_images(script_text: str, count: int, max_chars: 
     models_to_try = [settings_model, 'gemini-2.0-flash-exp', 'gemini-1.5-flash']
     models_to_try = list(dict.fromkeys(models_to_try))
 
-    truncated_script = script_text[:max_chars] if len(script_text) > max_chars else script_text
-    prompt = MULTI_IMAGE_PROMPT.format(script=truncated_script, count=count)
+    # Use Archangel Michael prompt instead of script analysis
+    prompt = ARCHANGEL_PROMPT.format(count=count)
 
     for model_name in models_to_try:
         try:
-            print(f"🧠 Generating {count} image prompts with {model_name}...")
+            print(f"🧠 Generating {count} Archangel Michael prompts with {model_name}...")
 
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
 
@@ -384,8 +393,12 @@ def generate_multiple_ai_images(script_text: str, output_dir: str, count: int,
     print(f"🤖 ARCHANGEL MICHAEL IMAGES - {count} images ({'SHORTS' if is_shorts else 'LANDSCAPE'})")
     print("="*50)
 
-    # Use Archangel Michael themed prompts (randomly pick from list)
-    prompts = [random.choice(ARCHANGEL_PROMPTS) for _ in range(count)]
+    # Get Archangel Michael prompts from Gemini
+    prompts = analyze_script_for_multiple_images("", count)
+
+    if not prompts:
+        print("❌ Failed to get prompts from Gemini")
+        return []
 
     # Generate each image
     generated_paths = []
