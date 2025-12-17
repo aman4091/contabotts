@@ -787,12 +787,12 @@ async def process_job(job: Dict) -> bool:
                 # Calculate number of images based on audio duration
                 audio_duration = landscape_gen.get_audio_duration(local_audio_out)
                 duration_minutes = audio_duration / 60
-                IMAGE_DISPLAY_DURATION = 12  # Each image shows for ~12 seconds
+                IMAGE_DISPLAY_DURATION = 20  # Each image shows for ~20 seconds (reduced to avoid FFmpeg memory issues)
 
                 # Generate unique images = minutes / 2 (e.g., 10 min = 5 images)
                 num_unique_images = max(1, int(duration_minutes / 2))
-                # Calculate total display slots
-                total_slots = max(1, int(audio_duration / IMAGE_DISPLAY_DURATION))
+                # Calculate total display slots (max 30 to avoid FFmpeg memory issues)
+                total_slots = min(30, max(1, int(audio_duration / IMAGE_DISPLAY_DURATION)))
 
                 print(f"   📊 Duration: {duration_minutes:.1f} min -> {num_unique_images} unique AI images, {total_slots} display slots")
 

@@ -522,9 +522,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         filter_parts = []
         current_label = "[0:v]"
 
-        # Scale all inputs first
+        # Scale all inputs first (force yuv420p to avoid color space issues)
         for i in range(num_images):
-            filter_parts.append(f"[{i}:v]scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,setsar=1[v{i}]")
+            filter_parts.append(f"[{i}:v]scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,setsar=1[v{i}]")
 
         # Chain xfade transitions
         current_input = "[v0]"
