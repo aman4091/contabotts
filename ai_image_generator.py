@@ -264,24 +264,19 @@ def generate_ai_image(script_text: str, output_path: str, width: int = 1920, hei
     return success
 
 
-# Multi-image prompt for generating varied scenes
-MULTI_IMAGE_PROMPT = """Analyze the following script and generate {count} DIFFERENT image prompts for a video slideshow.
-
-Each image should:
-1. Represent a different scene/mood/aspect from the content
-2. Be suitable as a background for a video with subtitles
-3. Be visually appealing, cinematic, and high quality
-4. NOT contain any text, words, or letters
-5. Have variety in: lighting, colors, angles, settings
-
-Output EXACTLY {count} prompts, one per line, numbered 1-{count}.
-Keep each prompt under 150 words.
-Focus on: atmosphere, lighting, colors, setting, artistic style.
-
-Script:
-{script}
-
-Image prompts:"""
+# Archangel Michael themed prompts for variety
+ARCHANGEL_PROMPTS = [
+    "Archangel Michael in golden armor, wings spread wide, standing on clouds with divine light rays, heavenly atmosphere, cinematic lighting, epic fantasy art",
+    "Archangel Michael wielding a flaming sword, dramatic pose, celestial background with stars and galaxies, ethereal glow, highly detailed digital art",
+    "Archangel Michael descending from heaven, powerful wings, golden halo, rays of divine light breaking through clouds, renaissance painting style",
+    "Archangel Michael in battle stance, silver and gold armor, dramatic stormy sky background, lightning, epic fantasy illustration",
+    "Archangel Michael peaceful portrait, serene expression, soft heavenly light, white and gold robes, clouds and doves, spiritual art",
+    "Archangel Michael protecting souls, guardian pose, warm golden light, ethereal mist, detailed feathered wings, sacred art style",
+    "Archangel Michael standing at heaven's gates, majestic architecture, divine rays, powerful presence, epic scale, fantasy concept art",
+    "Archangel Michael with shield and sword, warrior of light, cosmic background, nebula colors, cinematic composition, digital painting",
+    "Archangel Michael meditation pose, peaceful aura, soft blue and gold tones, celestial energy, spiritual enlightenment theme",
+    "Archangel Michael triumphant over darkness, dramatic lighting, contrast of light and shadow, epic battle aftermath, heroic fantasy art"
+]
 
 
 def analyze_script_for_multiple_images(script_text: str, count: int, max_chars: int = 3000) -> List[str]:
@@ -369,10 +364,10 @@ def analyze_script_for_multiple_images(script_text: str, count: int, max_chars: 
 def generate_multiple_ai_images(script_text: str, output_dir: str, count: int,
                                  width: int = 1920, height: int = 1080) -> List[str]:
     """
-    Generate multiple AI images from script
+    Generate multiple AI images with Archangel Michael theme
 
     Args:
-        script_text: Script to analyze
+        script_text: Script (not used, kept for compatibility)
         output_dir: Directory to save images
         count: Number of images to generate
         width: Image width
@@ -382,24 +377,17 @@ def generate_multiple_ai_images(script_text: str, output_dir: str, count: int,
         List of generated image paths
     """
     import time
+    import random
 
     is_shorts = width == 1080 and height == 1920
     print("\n" + "="*50)
-    print(f"🤖 MULTI-IMAGE GENERATION - {count} images ({'SHORTS' if is_shorts else 'LANDSCAPE'})")
+    print(f"🤖 ARCHANGEL MICHAEL IMAGES - {count} images ({'SHORTS' if is_shorts else 'LANDSCAPE'})")
     print("="*50)
 
-    # Step 1: Get multiple prompts from Gemini
-    prompts = analyze_script_for_multiple_images(script_text, count)
+    # Use Archangel Michael themed prompts (randomly pick from list)
+    prompts = [random.choice(ARCHANGEL_PROMPTS) for _ in range(count)]
 
-    if not prompts:
-        print("❌ Failed to generate image prompts, using single prompt fallback")
-        single_prompt = analyze_script_for_image(script_text)
-        if single_prompt:
-            prompts = [single_prompt] * count
-        else:
-            return []
-
-    # Step 2: Generate each image
+    # Generate each image
     generated_paths = []
     for i, prompt in enumerate(prompts):
         output_path = os.path.join(output_dir, f"ai_image_{i+1}.jpg")
