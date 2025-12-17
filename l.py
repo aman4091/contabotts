@@ -114,11 +114,12 @@ def render_segments_concat(image_paths, audio_path, ass_path, output_path, segme
             for seg_file in segment_files:
                 f.write(f"file '{seg_file}'\n")
 
-        # Step 3: Concat all segments
+        # Step 3: Concat all segments (use copy - no re-encoding, super fast)
+        print("   Joining segments...")
         concat_output = os.path.join(temp_dir, "concat_video.mp4")
         cmd_concat = [
             "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_list,
-            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+            "-c", "copy",
             concat_output
         ]
         subprocess.run(cmd_concat, capture_output=True)
