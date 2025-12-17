@@ -30,7 +30,7 @@ import requests
 import shutil
 
 # Import from l.py (same directory)
-from l import LandscapeGenerator, get_random_overlay
+from l import LandscapeGenerator, get_random_overlay, render_segments_concat
 
 # Import AI image generator
 try:
@@ -791,11 +791,10 @@ async def process_job(job: Dict) -> bool:
 
                 # Generate unique images = minutes / 2 (e.g., 10 min = 5 images)
                 num_unique_images = max(1, int(duration_minutes / 2))
-                # Max 15 image transitions to avoid FFmpeg memory issues
-                MAX_SLOTS = 15
-                total_slots = min(MAX_SLOTS, max(num_unique_images, int(audio_duration / IMAGE_DISPLAY_DURATION)))
+                # Calculate slots for 12 sec per image
+                total_slots = max(num_unique_images, int(audio_duration / IMAGE_DISPLAY_DURATION))
 
-                print(f"   📊 Duration: {duration_minutes:.1f} min -> {num_unique_images} AI images, {total_slots} display slots (max {MAX_SLOTS})")
+                print(f"   📊 Duration: {duration_minutes:.1f} min -> {num_unique_images} AI images, {total_slots} display slots ({IMAGE_DISPLAY_DURATION}s each)")
 
                 # Generate multiple unique images
                 unique_images = generate_multiple_ai_images(ai_script, TEMP_DIR, num_unique_images, width=img_width, height=img_height)
@@ -844,8 +843,13 @@ async def process_job(job: Dict) -> bool:
             if not ass_path: raise Exception("Subtitle generation failed")
 
             # Render video using l.py (with overlay support)
-            if len(local_images) > 1:
-                # Multiple images: use dissolve transition
+            if len(local_images) > 15:
+                # Many images: use concat method (12 sec per image, no memory issues)
+                print(f"   Using CONCAT method: {len(local_images)} images × 12 sec each")
+                if not render_segments_concat(local_images, local_audio_out, ass_path, local_video_out, segment_duration=12, overlay_path=overlay_path):
+                    raise Exception("Video render with concat failed")
+            elif len(local_images) > 1:
+                # Few images: use xfade method
                 print(f"   Using {len(local_images)} images with dissolve transitions")
                 if not landscape_gen.render_with_fade(local_audio_out, local_images, ass_path, local_video_out, overlay_path=overlay_path):
                     raise Exception("Video render with fade failed")

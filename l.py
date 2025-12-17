@@ -53,6 +53,129 @@ def get_random_overlay():
     print(f"   🎭 Using overlay: {selected}")
     return os.path.join(VIDEO_OVERLAYS_DIR, selected)
 
+def render_segments_concat(image_paths, audio_path, ass_path, output_path, segment_duration=12, fade_duration=1.0, overlay_path=None):
+    """
+    Render video using concat method - processes segments one at a time to avoid memory issues.
+    Each image shows for segment_duration seconds with dissolve/fade transitions.
+    """
+    import tempfile
+
+    num_images = len(image_paths)
+    duration = get_audio_duration_standalone(audio_path)
+
+    print(f"🎬 Rendering with CONCAT method ({num_images} images, {segment_duration}s each)")
+    print(f"   Total duration: {duration:.1f}s")
+
+    safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
+    temp_dir = tempfile.mkdtemp(prefix="tts_concat_")
+    segment_files = []
+
+    try:
+        # Step 1: Create each segment with fade in/out
+        for i, img_path in enumerate(image_paths):
+            seg_file = os.path.join(temp_dir, f"seg_{i:03d}.mp4")
+            seg_duration = segment_duration
+
+            # Last segment might be shorter
+            elapsed = i * segment_duration
+            if elapsed + segment_duration > duration:
+                seg_duration = duration - elapsed
+                if seg_duration <= 0:
+                    break
+
+            # Fade filter: fade in at start, fade out at end
+            fade_filter = f"fade=t=in:st=0:d={fade_duration},fade=t=out:st={seg_duration - fade_duration}:d={fade_duration}"
+
+            vf = f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,{fade_filter}"
+
+            cmd = [
+                "ffmpeg", "-y", "-loop", "1", "-t", str(seg_duration), "-i", img_path,
+                "-vf", vf,
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+                "-an", seg_file
+            ]
+
+            result = subprocess.run(cmd, capture_output=True)
+            if result.returncode != 0:
+                print(f"   ⚠️ Segment {i} failed")
+                continue
+
+            segment_files.append(seg_file)
+            print(f"   ✓ Segment {i+1}/{num_images}", end='\r')
+
+        print(f"\n   Created {len(segment_files)} segments")
+
+        if not segment_files:
+            return False
+
+        # Step 2: Create concat list file
+        concat_list = os.path.join(temp_dir, "concat.txt")
+        with open(concat_list, 'w') as f:
+            for seg_file in segment_files:
+                f.write(f"file '{seg_file}'\n")
+
+        # Step 3: Concat all segments
+        concat_output = os.path.join(temp_dir, "concat_video.mp4")
+        cmd_concat = [
+            "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_list,
+            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+            concat_output
+        ]
+        subprocess.run(cmd_concat, capture_output=True)
+
+        # Step 4: Add audio, overlay, and subtitles
+        print("   Adding audio and subtitles...")
+
+        if overlay_path and os.path.exists(overlay_path):
+            is_video_overlay = overlay_path.endswith(('.mp4', '.webm', '.mov'))
+            if is_video_overlay:
+                inputs = ["ffmpeg", "-y", "-i", concat_output, "-stream_loop", "-1", "-i", overlay_path, "-i", audio_path]
+                filter_complex = f"[0:v][1:v]overlay=0:0:shortest=1[ov];[ov]subtitles='{safe_ass}'[vout]"
+            else:
+                inputs = ["ffmpeg", "-y", "-i", concat_output, "-loop", "1", "-i", overlay_path, "-i", audio_path]
+                filter_complex = f"[0:v][1:v]overlay=0:0[ov];[ov]subtitles='{safe_ass}'[vout]"
+
+            cmd_final = inputs + [
+                "-filter_complex", filter_complex,
+                "-map", "[vout]", "-map", "2:a",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                "-c:a", "aac", "-b:a", "192k",
+                "-shortest", output_path
+            ]
+        else:
+            cmd_final = [
+                "ffmpeg", "-y", "-i", concat_output, "-i", audio_path,
+                "-vf", f"subtitles='{safe_ass}'",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                "-c:a", "aac", "-b:a", "192k",
+                "-shortest", output_path
+            ]
+
+        result = subprocess.run(cmd_final, capture_output=True)
+
+        if result.returncode == 0:
+            print("   ✅ Video rendered successfully!")
+            return True
+        else:
+            print(f"   ❌ Final render failed: {result.stderr.decode()[:200]}")
+            return False
+
+    finally:
+        # Cleanup temp files
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+def get_audio_duration_standalone(audio_path):
+    """Get audio duration without needing class instance"""
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
+            capture_output=True, text=True
+        )
+        return float(result.stdout.strip())
+    except:
+        return 60
+
 def setup_environment():
     print("🛠️  Checking Environment...")
     for d in [AUDIO_DIR, IMAGE_DIR, OUTPUT_DIR]: os.makedirs(d, exist_ok=True)
