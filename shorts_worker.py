@@ -476,7 +476,9 @@ def render_video(image_path: str, audio_path: str, ass_path: str, output_path: s
         total_duration = get_audio_duration(audio_path)
         print(f"Audio Duration: {total_duration:.1f}s")
 
+        # Same escaping as unified_worker.py
         safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
+
         vf = f"scale={SHORTS_W}:{SHORTS_H}:force_original_aspect_ratio=increase,crop={SHORTS_W}:{SHORTS_H},format=yuv420p,subtitles='{safe_ass}'"
 
         # Try GPU first, fallback to CPU
