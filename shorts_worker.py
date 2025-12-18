@@ -151,6 +151,22 @@ queue = FileServerQueue(FILE_SERVER_URL, FILE_SERVER_API_KEY)
 # AI IMAGE GENERATION (Archangel Michael theme)
 # ============================================================================
 
+def get_gemini_model_from_settings() -> str:
+    """Fetch Gemini model name from settings API"""
+    try:
+        # Use external IP to fetch settings from webapp
+        webapp_url = FILE_SERVER_URL.replace(":8000", ":3000")
+        api_url = f"{webapp_url}/api/settings"
+        response = requests.get(api_url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            model = data.get("ai", {}).get("model", "gemini-2.5-flash")
+            print(f"Using Gemini model from settings: {model}")
+            return model
+    except Exception as e:
+        print(f"Could not fetch settings, using default: {e}")
+    return "gemini-2.5-flash"
+
 ARCHANGEL_PROMPT = """Generate a SINGLE unique image prompt featuring Archangel Michael.
 
 The prompt must:
@@ -177,7 +193,11 @@ def get_archangel_prompt() -> Optional[str]:
         print("GEMINI_API_KEY not set")
         return None
 
-    models = ['gemini-2.0-flash-exp', 'gemini-1.5-flash']
+    # Get model from settings, fallback to defaults
+    settings_model = get_gemini_model_from_settings()
+    models = [settings_model, 'gemini-2.5-flash', 'gemini-2.0-flash-exp']
+    # Remove duplicates
+    models = list(dict.fromkeys(models))
 
     for model in models:
         try:
