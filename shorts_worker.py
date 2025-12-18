@@ -186,6 +186,28 @@ Output ONLY the image prompt in English, 50-100 words, nothing else.
 
 Image prompt:"""
 
+ARCHANGEL_MULTI_PROMPT = """Generate {count} DIFFERENT and UNIQUE image prompts featuring Archangel Michael.
+
+Each prompt must:
+1. Feature Archangel Michael as the main subject
+2. Have DIFFERENT poses, settings, lighting, and moods
+3. Be suitable as a cinematic video background
+4. NOT contain any text or letters
+5. Be highly detailed and visually stunning
+
+Vary these elements across prompts:
+- Poses: standing, flying, fighting, meditating, protecting, descending, ascending
+- Settings: heaven, clouds, mountains, ancient temples, cosmic space, battlefields, gardens
+- Lighting: golden hour, moonlight, divine rays, aurora, sunrise, dramatic shadows
+- Armor: golden, silver, white, crystalline, ancient, radiant
+- Wings: spread wide, folded, glowing, feathered, ethereal
+- Mood: powerful, peaceful, fierce, serene, majestic, mysterious
+
+Output EXACTLY {count} prompts, one per line, numbered 1-{count}.
+Each prompt should be 50-100 words.
+
+Image prompts:"""
+
 
 def get_archangel_prompt() -> Optional[str]:
     """Get Archangel Michael image prompt from Gemini"""
@@ -299,6 +321,146 @@ def generate_ai_image(output_path: str) -> bool:
     except ImportError:
         print("openai package not installed. Run: pip install openai")
         return False
+
+
+def get_multiple_archangel_prompts(count: int) -> list:
+    """Get multiple Archangel Michael image prompts from Gemini"""
+    if not GEMINI_API_KEY:
+        print("GEMINI_API_KEY not set")
+        return []
+
+    settings_model = get_gemini_model_from_settings()
+    models = [settings_model, 'gemini-2.5-flash', 'gemini-2.0-flash-exp']
+    models = list(dict.fromkeys(models))
+
+    prompt = ARCHANGEL_MULTI_PROMPT.format(count=count)
+
+    for model in models:
+        try:
+            print(f"Generating {count} prompts with {model}...")
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
+
+            response = requests.post(url, json={
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "temperature": 0.9,
+                    "maxOutputTokens": 2000,
+                    "thinkingConfig": {"thinkingBudget": 0}
+                }
+            }, timeout=90)
+
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("candidates", [{}])[0].get("finishReason") == "SAFETY":
+                    continue
+
+                text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+                if text:
+                    # Parse numbered prompts
+                    prompts = []
+                    lines = text.split('\n')
+                    for line in lines:
+                        line = line.strip()
+                        if line and line[0].isdigit():
+                            for i, char in enumerate(line):
+                                if char in '.):' and i < 3:
+                                    line = line[i+1:].strip()
+                                    break
+                        if line and len(line) > 20:
+                            prompts.append(line)
+
+                    if len(prompts) >= count:
+                        print(f"Generated {len(prompts)} prompts")
+                        return prompts[:count]
+                    elif prompts:
+                        print(f"Got {len(prompts)} prompts, needed {count}")
+                        while len(prompts) < count:
+                            prompts.append(prompts[len(prompts) % len(prompts)])
+                        return prompts
+
+        except Exception as e:
+            print(f"{model} error: {e}")
+            continue
+
+    return []
+
+
+def generate_multiple_ai_images(output_dir: str, count: int) -> list:
+    """Generate multiple AI images with Archangel Michael theme"""
+    import base64
+
+    if not NEBIUS_API_KEY:
+        print("NEBIUS_API_KEY not set")
+        return []
+
+    prompts = get_multiple_archangel_prompts(count)
+    if not prompts:
+        print("Failed to get prompts from Gemini")
+        return []
+
+    print(f"Generating {count} AI images (1080x1920)...")
+
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(
+            base_url="https://api.tokenfactory.nebius.com/v1/",
+            api_key=NEBIUS_API_KEY
+        )
+
+        generated_paths = []
+        for i, prompt in enumerate(prompts):
+            output_path = os.path.join(output_dir, f"ai_image_{i+1}.jpg")
+            print(f"Image {i+1}/{count}: {prompt[:60]}...")
+
+            for attempt in range(3):
+                try:
+                    response = client.images.generate(
+                        model="black-forest-labs/flux-dev",
+                        response_format="b64_json",
+                        extra_body={
+                            "response_extension": "png",
+                            "width": SHORTS_W,
+                            "height": SHORTS_H,
+                            "num_inference_steps": 28,
+                            "negative_prompt": "",
+                            "seed": -1
+                        },
+                        prompt=prompt
+                    )
+
+                    if response.data and len(response.data) > 0:
+                        image_data = base64.b64decode(response.data[0].b64_json)
+
+                        with open(output_path, 'wb') as f:
+                            f.write(image_data)
+
+                        try:
+                            from PIL import Image
+                            img = Image.open(output_path)
+                            if img.mode == 'RGBA':
+                                img = img.convert('RGB')
+                            img.save(output_path, "JPEG", quality=95)
+                        except ImportError:
+                            pass
+
+                        generated_paths.append(output_path)
+                        print(f"   Saved: {output_path}")
+                        break
+
+                except Exception as e:
+                    print(f"   Attempt {attempt + 1} error: {e}")
+                    if attempt < 2:
+                        time.sleep(3)
+
+            time.sleep(2)  # Delay between images
+
+        print(f"Generated {len(generated_paths)}/{count} images")
+        return generated_paths
+
+    except ImportError:
+        print("openai package not installed")
+        return []
 
 # ============================================================================
 # SUBTITLE GENERATION
@@ -468,20 +630,114 @@ def get_audio_duration(audio_path: str) -> float:
         return 0
 
 
-def render_video(image_path: str, audio_path: str, ass_path: str, output_path: str) -> bool:
-    """Render Shorts video (1080x1920)"""
+def render_video_concat(image_paths: list, audio_path: str, ass_path: str, output_path: str, segment_duration: int = 12, fade_duration: float = 1.0) -> bool:
+    """Render Shorts video with multiple images using concat method (fade transitions)"""
+    import tempfile
+    import shutil
+
     try:
-        print("Rendering Shorts Video...")
+        num_images = len(image_paths)
+        duration = get_audio_duration(audio_path)
+
+        print(f"Rendering with CONCAT ({num_images} images, {segment_duration}s each)")
+        print(f"Total duration: {duration:.1f}s")
+
+        safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
+        temp_dir = tempfile.mkdtemp(prefix="shorts_concat_")
+        segment_files = []
+
+        try:
+            # Step 1: Create each segment with fade in/out
+            for i, img_path in enumerate(image_paths):
+                seg_file = os.path.join(temp_dir, f"seg_{i:03d}.mp4")
+                seg_duration = segment_duration
+
+                # Last segment might be shorter
+                elapsed = i * segment_duration
+                if elapsed + segment_duration > duration:
+                    seg_duration = duration - elapsed
+                    if seg_duration <= 0:
+                        break
+
+                # Fade filter
+                fade_filter = f"fade=t=in:st=0:d={fade_duration},fade=t=out:st={seg_duration - fade_duration}:d={fade_duration}"
+                vf = f"scale={SHORTS_W}:{SHORTS_H}:force_original_aspect_ratio=increase,crop={SHORTS_W}:{SHORTS_H},format=yuv420p,{fade_filter}"
+
+                cmd = [
+                    "ffmpeg", "-y", "-loop", "1", "-t", str(seg_duration), "-i", img_path,
+                    "-vf", vf,
+                    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+                    "-an", seg_file
+                ]
+
+                result = subprocess.run(cmd, capture_output=True)
+                if result.returncode != 0:
+                    print(f"Segment {i} failed")
+                    continue
+
+                segment_files.append(seg_file)
+                print(f"Segment {i+1}/{num_images} done")
+
+            print(f"Created {len(segment_files)} segments")
+
+            if not segment_files:
+                return False
+
+            # Step 2: Create concat list
+            concat_list = os.path.join(temp_dir, "concat.txt")
+            with open(concat_list, 'w') as f:
+                for seg_file in segment_files:
+                    safe_seg = seg_file.replace("\\", "/")
+                    f.write(f"file '{safe_seg}'\n")
+
+            # Step 3: Concat segments
+            print("Joining segments...")
+            concat_output = os.path.join(temp_dir, "concat_video.mp4")
+            cmd_concat = [
+                "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_list,
+                "-c", "copy", concat_output
+            ]
+            subprocess.run(cmd_concat, capture_output=True)
+
+            # Step 4: Add audio and subtitles
+            print("Adding audio and subtitles...")
+            cmd_final = [
+                "ffmpeg", "-y", "-i", concat_output, "-i", audio_path,
+                "-vf", f"subtitles='{safe_ass}'",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                "-c:a", "aac", "-b:a", "192k",
+                "-shortest", output_path
+            ]
+
+            result = subprocess.run(cmd_final, capture_output=True)
+
+            if result.returncode == 0 and os.path.exists(output_path):
+                print("Video rendered successfully!")
+                return True
+            else:
+                print(f"Final render failed: {result.stderr.decode()[:300] if result.stderr else 'Unknown'}")
+                return False
+
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    except Exception as e:
+        print(f"Render error: {e}")
+        traceback.print_exc()
+        return False
+
+
+def render_video(image_path: str, audio_path: str, ass_path: str, output_path: str) -> bool:
+    """Render Shorts video with single image (fallback)"""
+    try:
+        print("Rendering Shorts Video (single image)...")
 
         total_duration = get_audio_duration(audio_path)
         print(f"Audio Duration: {total_duration:.1f}s")
 
-        # Same escaping as unified_worker.py
         safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
-
         vf = f"scale={SHORTS_W}:{SHORTS_H}:force_original_aspect_ratio=increase,crop={SHORTS_W}:{SHORTS_H},format=yuv420p,subtitles='{safe_ass}'"
 
-        # Try GPU first, fallback to CPU
         cmd_gpu = [
             "ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path,
             "-vf", vf,
@@ -588,8 +844,8 @@ async def process_job(job: Dict) -> bool:
     queue.send_heartbeat(WORKER_ID, status="busy", current_job=job_id)
 
     local_audio = os.path.join(OUTPUT_DIR, f"audio_{job_id}.wav")
-    local_image = os.path.join(OUTPUT_DIR, f"image_{job_id}.jpg")
     local_video = os.path.join(OUTPUT_DIR, f"video_{job_id}.mp4")
+    local_images = []  # Will hold multiple image paths
 
     try:
         # Step 1: Download Audio
@@ -597,10 +853,26 @@ async def process_job(job: Dict) -> bool:
         if not await download_audio(existing_audio_link, local_audio):
             raise Exception("Failed to download audio")
 
-        # Step 2: Generate AI Image
-        print("\n[2/4] Generating AI Image...")
-        if not generate_ai_image(local_image):
-            raise Exception("Failed to generate AI image")
+        # Get audio duration to calculate number of images
+        audio_duration = get_audio_duration(local_audio)
+        IMAGE_DISPLAY_DURATION = 12  # 12 seconds per image
+        MAX_IMAGES = 15
+
+        num_images = min(MAX_IMAGES, max(1, int(audio_duration / IMAGE_DISPLAY_DURATION) + 1))
+        print(f"Audio: {audio_duration:.1f}s -> {num_images} images (12s each)")
+
+        # Step 2: Generate AI Images
+        print(f"\n[2/4] Generating {num_images} AI Images...")
+        local_images = generate_multiple_ai_images(OUTPUT_DIR, num_images)
+
+        if not local_images:
+            # Fallback to single image
+            print("Multiple images failed, trying single image...")
+            single_image = os.path.join(OUTPUT_DIR, f"image_{job_id}.jpg")
+            if generate_ai_image(single_image):
+                local_images = [single_image]
+            else:
+                raise Exception("Failed to generate AI images")
 
         # Step 3: Generate Subtitles
         print("\n[3/4] Generating Subtitles...")
@@ -610,8 +882,14 @@ async def process_job(job: Dict) -> bool:
 
         # Step 4: Render Video
         print("\n[4/4] Rendering Video...")
-        if not render_video(local_image, local_audio, ass_path, local_video):
-            raise Exception("Failed to render video")
+        if len(local_images) > 1:
+            # Multiple images with fade transitions
+            if not render_video_concat(local_images, local_audio, ass_path, local_video, segment_duration=IMAGE_DISPLAY_DURATION):
+                raise Exception("Failed to render video")
+        else:
+            # Single image fallback
+            if not render_video(local_images[0], local_audio, ass_path, local_video):
+                raise Exception("Failed to render video")
 
         # Upload to Gofile
         print("\nUploading to Gofile...")
@@ -630,7 +908,8 @@ async def process_job(job: Dict) -> bool:
         send_telegram(
             f"📱 <b>Short Ready</b>\n"
             f"<b>Source:</b> {source_video}\n"
-            f"<b>Number:</b> #{short_number}\n\n"
+            f"<b>Number:</b> #{short_number}\n"
+            f"<b>Images:</b> {len(local_images)}\n\n"
             f"<b>🔗 Video:</b> {video_link}",
             username=job.get("username")
         )
@@ -649,9 +928,14 @@ async def process_job(job: Dict) -> bool:
         return False
     finally:
         # Cleanup
-        for f in [local_audio, local_image, local_video]:
+        for f in [local_audio, local_video]:
             if f and os.path.exists(f):
                 try: os.remove(f)
+                except: pass
+        # Cleanup multiple images
+        for img in local_images:
+            if img and os.path.exists(img):
+                try: os.remove(img)
                 except: pass
         if 'ass_path' in locals() and ass_path and os.path.exists(ass_path):
             try: os.remove(ass_path)
