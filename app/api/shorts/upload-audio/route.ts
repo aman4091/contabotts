@@ -4,6 +4,8 @@ import { randomUUID } from "crypto"
 
 const FILE_SERVER_URL = process.env.FILE_SERVER_URL || ""
 const FILE_SERVER_API_KEY = process.env.FILE_SERVER_API_KEY || ""
+// External URL for workers to download files (Windows PC can't access localhost)
+const FILE_SERVER_EXTERNAL_URL = "http://38.242.144.132:8000"
 
 async function getUser() {
   const cookieStore = await cookies()
@@ -48,8 +50,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Failed to upload audio file" }, { status: 500 })
     }
 
-    // Create audio link URL
-    const audioLink = `${FILE_SERVER_URL}/files/${audioPath}`
+    // Create audio link URL (use external URL for workers)
+    const audioLink = `${FILE_SERVER_EXTERNAL_URL}/files/${audioPath}`
 
     // Create shorts job with audio link
     const jobRes = await fetch(`${FILE_SERVER_URL}/queue/audio/jobs`, {
