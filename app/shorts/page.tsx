@@ -31,7 +31,9 @@ import {
   ImageIcon,
   Sparkles,
   Link,
-  Youtube
+  Youtube,
+  Upload,
+  FileAudio
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 
@@ -88,6 +90,10 @@ export default function ShortsPage() {
   // YouTube URL state
   const [youtubeUrl, setYoutubeUrl] = useState("")
   const [generatingFromUrl, setGeneratingFromUrl] = useState(false)
+
+  // MP3 Upload state
+  const [audioFile, setAudioFile] = useState<File | null>(null)
+  const [uploadingAudio, setUploadingAudio] = useState(false)
 
   useEffect(() => {
     loadJobs()
@@ -153,6 +159,40 @@ export default function ShortsPage() {
       setMessage({ type: "error", text: "Error generating shorts from YouTube" })
     } finally {
       setGeneratingFromUrl(false)
+    }
+  }
+
+  async function uploadAudioShort() {
+    if (!audioFile) {
+      setMessage({ type: "error", text: "Please select an audio file" })
+      return
+    }
+
+    setUploadingAudio(true)
+    setMessage(null)
+
+    try {
+      const formData = new FormData()
+      formData.append("audio", audioFile)
+
+      const res = await fetch("/api/shorts/upload-audio", {
+        method: "POST",
+        body: formData
+      })
+
+      const data = await res.json()
+
+      if (data.success) {
+        setMessage({ type: "success", text: `Short #${data.short_number} queued with AI image!` })
+        setAudioFile(null)
+        loadJobs()
+      } else {
+        setMessage({ type: "error", text: data.error || "Failed to upload" })
+      }
+    } catch (error) {
+      setMessage({ type: "error", text: "Error uploading audio" })
+    } finally {
+      setUploadingAudio(false)
     }
   }
 
@@ -392,7 +432,62 @@ export default function ShortsPage() {
                 </div>
               </div>
 
-              {/* Option 2: From processed script */}
+              {/* Option 2: Upload MP3 with Script */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Upload className="w-4 h-4 text-emerald-500" />
+                  Upload MP3 with Script
+                </div>
+                <div className="grid gap-3">
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <div className="flex-1">
+                      <label className="block text-xs text-muted-foreground mb-1">
+                        <FileAudio className="w-3 h-3 inline mr-1" />
+                        Audio File (MP3/WAV)
+                      </label>
+                      <Input
+                        type="file"
+                        accept=".mp3,.wav,.m4a,.aac"
+                        onChange={e => setAudioFile(e.target.files?.[0] || null)}
+                        className="text-sm"
+                      />
+                      {audioFile && (
+                        <span className="text-xs text-emerald-400 mt-1 block">
+                          {audioFile.name}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <Button
+                    onClick={uploadAudioShort}
+                    disabled={uploadingAudio || !audioFile}
+                    className="bg-emerald-600 hover:bg-emerald-700"
+                  >
+                    {uploadingAudio ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Uploading...
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="w-4 h-4 mr-2" />
+                        Create Short with AI Image
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center">
+                  <span className="w-full border-t border-border" />
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-background px-2 text-muted-foreground">OR</span>
+                </div>
+              </div>
+
+              {/* Option 3: From processed script */}
               <div className="space-y-2">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <FolderOpen className="w-4 h-4 text-violet-400" />

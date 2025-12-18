@@ -581,6 +581,10 @@ async def claim_job(
         if not job_data.get("existing_audio_link"):
             continue
 
+        # Skip SHORTS jobs - they are handled by shorts_worker.py (Windows PC)
+        if job_data.get("is_short", False):
+            continue
+
         try:
             # Atomic move: pending -> processing
             new_name = f"{request.worker_id}_{job_file.name}"
@@ -608,6 +612,75 @@ async def claim_job(
             continue
 
     return {"job": None, "message": "No jobs available (all claimed)"}
+
+
+@app.post("/queue/{queue_type}/claim-shorts")
+async def claim_shorts_job(
+    queue_type: str,
+    request: ClaimRequest,
+    x_api_key: Optional[str] = Header(None)
+):
+    """
+    Atomically claim the next pending SHORTS job only (is_short=true)
+    Used by shorts_worker.py on Windows
+
+    Args:
+        queue_type: 'audio' or 'video'
+        request: Contains worker_id
+
+    Returns:
+        Job data or null if no shorts jobs available
+    """
+    verify_api_key(x_api_key)
+    paths = get_queue_paths(queue_type)
+
+    pending_files = list(paths["pending"].glob("*.json"))
+
+    if not pending_files:
+        return {"job": None, "message": "No pending shorts jobs"}
+
+    jobs_with_files = []
+    for job_file in pending_files:
+        try:
+            with open(job_file) as f:
+                job_data = json.load(f)
+                jobs_with_files.append((job_file, job_data))
+        except:
+            continue
+
+    jobs_with_files.sort(key=lambda x: (-x[1].get("priority", 0), x[1].get("created_at", "")))
+
+    for job_file, job_data in jobs_with_files:
+        # ONLY claim jobs that are shorts
+        if not job_data.get("is_short", False):
+            continue
+
+        # Skip jobs without audio link
+        if not job_data.get("existing_audio_link"):
+            continue
+
+        try:
+            new_name = f"{request.worker_id}_{job_file.name}"
+            new_path = paths["processing"] / new_name
+            paths["processing"].mkdir(parents=True, exist_ok=True)
+
+            os.rename(str(job_file), str(new_path))
+
+            job_data["worker_id"] = request.worker_id
+            job_data["processing_started_at"] = datetime.now().isoformat()
+
+            with open(new_path, "w") as f:
+                json.dump(job_data, f, indent=2)
+
+            return {"job": job_data, "message": "Shorts job claimed successfully"}
+
+        except FileNotFoundError:
+            continue
+        except Exception as e:
+            print(f"Error claiming shorts job: {e}")
+            continue
+
+    return {"job": None, "message": "No shorts jobs available"}
 
 
 @app.post("/queue/{queue_type}/jobs/{job_id}/complete")
@@ -1104,9 +1177,11 @@ async def update_job(
         if key in allowed_fields:
             job_data[key] = value
 
-    # If existing_audio_link is added, set high priority for immediate processing
+    # If existing_audio_link is added, boost priority but preserve user priority
+    # anu has priority 10, others have 5 - so anu will be 110, others will be 105
     if "existing_audio_link" in updates and updates["existing_audio_link"]:
-        job_data["priority"] = 100  # High priority
+        current_priority = job_data.get("priority", 0)
+        job_data["priority"] = current_priority + 100  # Boost priority while keeping user order
 
     job_data["updated_at"] = datetime.now().isoformat()
 
