@@ -31,7 +31,6 @@ TEXT_Y_POS = 540     # Dead Center
 
 # --- RANDOMIZATION SETTINGS ---
 AVAILABLE_FONTS = ["Arial", "Verdana", "Trebuchet MS", "Georgia", "Tahoma", "Impact", "DejaVu Sans", "Liberation Sans"]
-VIDEO_OVERLAYS_DIR = "/root/tts/data/video-overlays"
 MIN_OPACITY = 50
 MAX_OPACITY = 100
 # =================================================
@@ -42,18 +41,7 @@ def run_command(cmd):
         return True
     except: return False
 
-def get_random_overlay():
-    """Get random overlay file from video-overlays directory"""
-    if not os.path.exists(VIDEO_OVERLAYS_DIR):
-        return None
-    files = [f for f in os.listdir(VIDEO_OVERLAYS_DIR) if f.endswith(('.png', '.mp4', '.webm', '.mov'))]
-    if not files:
-        return None
-    selected = random.choice(files)
-    print(f"   🎭 Using overlay: {selected}")
-    return os.path.join(VIDEO_OVERLAYS_DIR, selected)
-
-def render_segments_concat(image_paths, audio_path, ass_path, output_path, segment_duration=12, fade_duration=1.0, overlay_path=None):
+def render_segments_concat(image_paths, audio_path, ass_path, output_path, segment_duration=12, fade_duration=1.0):
     """
     Render video using concat method - processes segments one at a time to avoid memory issues.
     Each image shows for segment_duration seconds with dissolve/fade transitions.
@@ -124,33 +112,16 @@ def render_segments_concat(image_paths, audio_path, ass_path, output_path, segme
         ]
         subprocess.run(cmd_concat, capture_output=True)
 
-        # Step 4: Add audio, overlay, and subtitles
+        # Step 4: Add audio and subtitles
         print("   Adding audio and subtitles...")
 
-        if overlay_path and os.path.exists(overlay_path):
-            is_video_overlay = overlay_path.endswith(('.mp4', '.webm', '.mov'))
-            if is_video_overlay:
-                inputs = ["ffmpeg", "-y", "-i", concat_output, "-stream_loop", "-1", "-i", overlay_path, "-i", audio_path]
-                filter_complex = f"[0:v][1:v]overlay=0:0:shortest=1[ov];[ov]subtitles='{safe_ass}'[vout]"
-            else:
-                inputs = ["ffmpeg", "-y", "-i", concat_output, "-loop", "1", "-i", overlay_path, "-i", audio_path]
-                filter_complex = f"[0:v][1:v]overlay=0:0[ov];[ov]subtitles='{safe_ass}'[vout]"
-
-            cmd_final = inputs + [
-                "-filter_complex", filter_complex,
-                "-map", "[vout]", "-map", "2:a",
-                "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-                "-c:a", "aac", "-b:a", "192k",
-                "-shortest", output_path
-            ]
-        else:
-            cmd_final = [
-                "ffmpeg", "-y", "-i", concat_output, "-i", audio_path,
-                "-vf", f"subtitles='{safe_ass}'",
-                "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-                "-c:a", "aac", "-b:a", "192k",
-                "-shortest", output_path
-            ]
+        cmd_final = [
+            "ffmpeg", "-y", "-i", concat_output, "-i", audio_path,
+            "-vf", f"subtitles='{safe_ass}'",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+            "-c:a", "aac", "-b:a", "192k",
+            "-shortest", output_path
+        ]
 
         result = subprocess.run(cmd_final, capture_output=True)
 
@@ -511,67 +482,26 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         except:
             return 60  # Default fallback
 
-    def render(self, audio_path, image_path, ass_path, output_path, overlay_path=None):
+    def render(self, audio_path, image_path, ass_path, output_path):
         print("🎬 Rendering 1080p PRO (12 Mbps)...")
         safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
 
-        # Build inputs and filter based on overlay
-        if overlay_path and os.path.exists(overlay_path):
-            print(f"   🎭 Applying overlay: {os.path.basename(overlay_path)}")
-            is_video_overlay = overlay_path.endswith(('.mp4', '.webm', '.mov'))
+        vf = f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,subtitles='{safe_ass}'"
+        inputs = ["ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path]
 
-            if is_video_overlay:
-                inputs = ["ffmpeg", "-y", "-loop", "1", "-i", image_path, "-stream_loop", "-1", "-i", overlay_path, "-i", audio_path]
-                filter_complex = (
-                    f"[0:v]scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2[bg];"
-                    f"[1:v]scale={TARGET_W}:{TARGET_H},format=yuva420p[ovr];"
-                    f"[bg][ovr]overlay=0:0:shortest=1[combined];"
-                    f"[combined]format=yuv420p,subtitles='{safe_ass}'[vout]"
-                )
-                audio_map = "2:a"
-            else:  # PNG overlay
-                inputs = ["ffmpeg", "-y", "-loop", "1", "-i", image_path, "-loop", "1", "-i", overlay_path, "-i", audio_path]
-                filter_complex = (
-                    f"[0:v]scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2[bg];"
-                    f"[1:v]scale={TARGET_W}:{TARGET_H},format=yuva420p[ovr];"
-                    f"[bg][ovr]overlay=0:0[combined];"
-                    f"[combined]format=yuv420p,subtitles='{safe_ass}'[vout]"
-                )
-                audio_map = "2:a"
-
-            cmd_gpu = inputs + [
-                "-filter_complex", filter_complex,
-                "-map", "[vout]", "-map", audio_map,
-                "-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq",
-                "-rc", "cbr", "-b:v", "12M", "-maxrate", "12M", "-bufsize", "24M",
-                "-c:a", "aac", "-b:a", "192k",
-                "-shortest", output_path
-            ]
-            cmd_cpu = inputs + [
-                "-filter_complex", filter_complex,
-                "-map", "[vout]", "-map", audio_map,
-                "-c:v", "libx264", "-preset", "faster", "-crf", "18",
-                "-c:a", "aac", "-b:a", "192k",
-                "-shortest", output_path
-            ]
-        else:
-            # No overlay - simple filter
-            vf = f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,subtitles='{safe_ass}'"
-            inputs = ["ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path]
-
-            cmd_gpu = inputs + [
-                "-vf", vf,
-                "-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq",
-                "-rc", "cbr", "-b:v", "12M", "-maxrate", "12M", "-bufsize", "24M",
-                "-c:a", "aac", "-b:a", "192k",
-                "-shortest", output_path
-            ]
-            cmd_cpu = inputs + [
-                "-vf", vf,
-                "-c:v", "libx264", "-preset", "faster", "-crf", "18",
-                "-c:a", "aac", "-b:a", "192k",
-                "-shortest", output_path
-            ]
+        cmd_gpu = inputs + [
+            "-vf", vf,
+            "-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq",
+            "-rc", "cbr", "-b:v", "12M", "-maxrate", "12M", "-bufsize", "24M",
+            "-c:a", "aac", "-b:a", "192k",
+            "-shortest", output_path
+        ]
+        cmd_cpu = inputs + [
+            "-vf", vf,
+            "-c:v", "libx264", "-preset", "faster", "-crf", "18",
+            "-c:a", "aac", "-b:a", "192k",
+            "-shortest", output_path
+        ]
 
         print("   Attempting NVENC (1080p P5)...")
         try:
@@ -584,7 +514,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 return True
             except Exception as e: print(f"❌ Failed: {e}"); return False
 
-    def render_with_fade(self, audio_path, image_paths, ass_path, output_path, fade_duration=1.0, overlay_path=None):
+    def render_with_fade(self, audio_path, image_paths, ass_path, output_path, fade_duration=1.0):
         """
         Render video with multiple images that dissolve transition between each other.
 
@@ -594,7 +524,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             ass_path: Path to ASS subtitle file
             output_path: Output video path
             fade_duration: Duration of fade transition in seconds
-            overlay_path: Optional overlay file (PNG or video)
         """
         if len(image_paths) == 0:
             print("❌ No images provided")
@@ -602,7 +531,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
         if len(image_paths) == 1:
             # Single image, use regular render
-            return self.render(audio_path, image_paths[0], ass_path, output_path, overlay_path=overlay_path)
+            return self.render(audio_path, image_paths[0], ass_path, output_path)
 
         print(f"🎬 Rendering with {len(image_paths)} images (fade transitions)...")
 
@@ -624,20 +553,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         for i, img_path in enumerate(image_paths):
             inputs.extend(["-loop", "1", "-t", str(segment_duration + fade_duration), "-i", img_path])
 
-        # Check for overlay
-        has_overlay = overlay_path and os.path.exists(overlay_path)
-        is_video_overlay = has_overlay and overlay_path.endswith(('.mp4', '.webm', '.mov'))
-        overlay_input_idx = num_images
-
-        if has_overlay:
-            print(f"   🎭 Applying overlay: {os.path.basename(overlay_path)}")
-            if is_video_overlay:
-                inputs.extend(["-stream_loop", "-1", "-i", overlay_path])
-            else:
-                inputs.extend(["-loop", "1", "-i", overlay_path])
-            audio_input_idx = num_images + 1
-        else:
-            audio_input_idx = num_images
+        audio_input_idx = num_images
 
         # Add audio input
         inputs.extend(["-i", audio_path])
@@ -659,13 +575,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             filter_parts.append(f"{current_input}[v{i}]xfade=transition=dissolve:duration={fade_duration}:offset={offset:.2f}{output_label}")
             current_input = f"[xf{i}]" if i < num_images - 1 else "[vfade]"
 
-        # Apply overlay if exists, then subtitles
-        if has_overlay:
-            filter_parts.append(f"[{overlay_input_idx}:v]scale={TARGET_W}:{TARGET_H},format=yuva420p[ovr]")
-            filter_parts.append(f"[vfade][ovr]overlay=0:0{':shortest=1' if is_video_overlay else ''}[combined]")
-            filter_parts.append(f"[combined]format=yuv420p,subtitles='{safe_ass}'[vout]")
-        else:
-            filter_parts.append(f"[vfade]format=yuv420p,subtitles='{safe_ass}'[vout]")
+        # Add subtitles
+        filter_parts.append(f"[vfade]format=yuv420p,subtitles='{safe_ass}'[vout]")
 
         filter_complex = ";".join(filter_parts)
 
