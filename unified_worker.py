@@ -23,8 +23,11 @@ import asyncio
 import traceback
 import random
 import subprocess
+import platform
 from datetime import datetime
 from typing import Optional, Dict
+
+IS_WINDOWS = platform.system() == "Windows"
 
 import requests
 import shutil
@@ -283,13 +286,22 @@ async def upload_to_contabo(file_path: str, username: str, video_number: int, fi
         return None
 
 async def upload_file(file_path: str, username: str = "default", video_number: int = 0, file_type: str = "video", channel_code: str = "") -> Optional[str]:
-    """Upload file to Gofile, fallback to Pixeldrain, then Contabo"""
+    """Upload file to Gofile, fallback to Pixeldrain, then Contabo. On Windows, save locally."""
     # Create descriptive filename: V489_channel.mp4 or V489.mp4
     ext = os.path.splitext(file_path)[1] or ".mp4"
     if channel_code:
         custom_filename = f"V{video_number}_{channel_code}{ext}"
     else:
         custom_filename = f"V{video_number}{ext}"
+
+    # On Windows, save locally instead of uploading
+    if IS_WINDOWS:
+        output_dir = os.path.join(os.path.expanduser("~"), "Desktop", "TTS_Videos")
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, custom_filename)
+        shutil.copy2(file_path, output_path)
+        print(f"💾 Saved locally: {output_path}")
+        return f"local://{output_path}"
 
     print(f"📤 Uploading to Gofile as {custom_filename}...")
     link = await upload_to_gofile(file_path, custom_filename)
