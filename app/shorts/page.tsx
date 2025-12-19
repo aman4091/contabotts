@@ -33,8 +33,11 @@ import {
   Link,
   Youtube,
   Upload,
-  FileAudio
+  FileAudio,
+  Copy,
+  ClipboardPaste
 } from "lucide-react"
+import { Textarea } from "@/components/ui/textarea"
 import { Input } from "@/components/ui/input"
 
 interface ShortJob {
@@ -94,6 +97,11 @@ export default function ShortsPage() {
   // MP3 Upload state
   const [audioFile, setAudioFile] = useState<File | null>(null)
   const [uploadingAudio, setUploadingAudio] = useState(false)
+
+  // Manual shorts paste state
+  const [manualShortsText, setManualShortsText] = useState("")
+  const [manualShortsList, setManualShortsList] = useState<{ number: number; content: string }[]>([])
+  const [parsingManual, setParsingManual] = useState(false)
 
   useEffect(() => {
     loadJobs()
@@ -196,6 +204,88 @@ export default function ShortsPage() {
     }
   }
 
+  async function copyPromptAndScript() {
+    if (!selectedScript) {
+      setMessage({ type: "error", text: "Please select a script first" })
+      return
+    }
+
+    try {
+      // Get shorts prompt from settings
+      const settingsRes = await fetch("/api/settings")
+      const settings = await settingsRes.json()
+      const shortsPrompt = settings.prompts?.shorts || "Generate 10 YouTube Shorts scripts from this transcript."
+
+      // Get script content
+      const scriptRes = await fetch(`/api/shorts/script-content?folder=${selectedScript}`)
+      const scriptData = await scriptRes.json()
+      const scriptContent = scriptData.content || ""
+
+      // Combine prompt + script
+      const fullText = `${shortsPrompt}\n\n---\n\nSCRIPT:\n${scriptContent}`
+
+      // Try modern clipboard API first, fallback to execCommand
+      try {
+        await navigator.clipboard.writeText(fullText)
+        setMessage({ type: "success", text: "Prompt + Script copied!" })
+      } catch {
+        // Fallback for older browsers or permission issues
+        const textarea = document.createElement("textarea")
+        textarea.value = fullText
+        textarea.style.position = "fixed"
+        textarea.style.opacity = "0"
+        document.body.appendChild(textarea)
+        textarea.select()
+        document.execCommand("copy")
+        document.body.removeChild(textarea)
+        setMessage({ type: "success", text: "Prompt + Script copied!" })
+      }
+    } catch (error) {
+      console.error("Copy error:", error)
+      setMessage({ type: "error", text: "Failed to copy - check console" })
+    }
+  }
+
+  function addManualShort() {
+    if (!manualShortsText.trim()) {
+      setMessage({ type: "error", text: "Paste a short first" })
+      return
+    }
+
+    const content = cleanContent(manualShortsText.trim())
+    if (content.length < 20) {
+      setMessage({ type: "error", text: "Short too small (min 20 chars)" })
+      return
+    }
+
+    const newShort = {
+      number: manualShortsList.length + 1,
+      content: content
+    }
+
+    setManualShortsList(prev => [...prev, newShort])
+    setManualShortsText("")
+    setMessage({ type: "success", text: `Short #${newShort.number} added! (${manualShortsList.length + 1} total)` })
+  }
+
+  function previewManualShorts() {
+    if (manualShortsList.length === 0) {
+      setMessage({ type: "error", text: "Add at least one short first" })
+      return
+    }
+
+    setPreviewShorts(manualShortsList.map(s => ({ ...s, selected: true })))
+    setPreviewFolder("Manual Paste")
+    setShowPreview(true)
+    setMessage({ type: "success", text: `${manualShortsList.length} shorts ready for preview` })
+  }
+
+  function clearManualShorts() {
+    setManualShortsList([])
+    setManualShortsText("")
+    setMessage(null)
+  }
+
   async function generatePreview() {
     if (!selectedScript) {
       setMessage({ type: "error", text: "Please select a script first" })
@@ -275,6 +365,7 @@ export default function ShortsPage() {
         setShowPreview(false)
         setPreviewShorts([])
         setSelectedScript("")
+        setManualShortsList([])
         loadJobs()
         loadScripts()
       } else {
@@ -291,6 +382,7 @@ export default function ShortsPage() {
     setShowPreview(false)
     setPreviewShorts([])
     setPreviewFolder("")
+    setManualShortsList([])
   }
 
   const filteredJobs = jobs.filter(job => {
@@ -488,7 +580,7 @@ export default function ShortsPage() {
               </div>
 
               {/* Option 3: From processed script */}
-              <div className="space-y-2">
+              <div className="space-y-3">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <FolderOpen className="w-4 h-4 text-violet-400" />
                   From Processed Script
@@ -514,6 +606,15 @@ export default function ShortsPage() {
                     </SelectContent>
                   </Select>
                   <Button
+                    onClick={copyPromptAndScript}
+                    disabled={!selectedScript}
+                    variant="outline"
+                    className="border-amber-500/30 hover:border-amber-500 hover:bg-amber-500/10"
+                  >
+                    <Copy className="w-4 h-4 mr-2" />
+                    Copy Prompt + Script
+                  </Button>
+                  <Button
                     onClick={generatePreview}
                     disabled={generating || !selectedScript}
                     className="bg-violet-600 hover:bg-violet-700"
@@ -531,10 +632,60 @@ export default function ShortsPage() {
                     )}
                   </Button>
                 </div>
+
+                {/* Manual Shorts Paste Box */}
+                <div className="space-y-2 pt-2 border-t border-border/50">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <ClipboardPaste className="w-3 h-3 text-amber-400" />
+                      Paste one short at a time, click Next to add
+                    </div>
+                    {manualShortsList.length > 0 && (
+                      <Badge variant="secondary" className="bg-amber-500/20 text-amber-400">
+                        {manualShortsList.length} shorts added
+                      </Badge>
+                    )}
+                  </div>
+                  <Textarea
+                    placeholder="Paste one short here..."
+                    value={manualShortsText}
+                    onChange={e => setManualShortsText(e.target.value)}
+                    className="min-h-[80px] text-sm"
+                  />
+                  <div className="flex gap-2 flex-wrap">
+                    <Button
+                      onClick={addManualShort}
+                      disabled={!manualShortsText.trim()}
+                      className="bg-amber-600 hover:bg-amber-700"
+                    >
+                      <ClipboardPaste className="w-4 h-4 mr-2" />
+                      Next
+                    </Button>
+                    {manualShortsList.length > 0 && (
+                      <>
+                        <Button
+                          onClick={previewManualShorts}
+                          className="bg-emerald-600 hover:bg-emerald-700"
+                        >
+                          <Eye className="w-4 h-4 mr-2" />
+                          Preview ({manualShortsList.length})
+                        </Button>
+                        <Button
+                          onClick={clearManualShorts}
+                          variant="outline"
+                          className="border-red-500/30 hover:bg-red-500/10"
+                        >
+                          <X className="w-4 h-4 mr-2" />
+                          Clear
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </div>
               </div>
               <p className="text-xs text-muted-foreground">
                 Generate 10 shorts from a YouTube video URL or processed script.
-                Approved shorts will be queued with AI-generated images (1080x1920).
+                Or copy prompt+script, paste AI response to create shorts manually.
               </p>
             </>
           ) : (

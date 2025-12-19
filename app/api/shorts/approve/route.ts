@@ -66,7 +66,7 @@ async function createShortJob(params: {
         job_id: params.jobId,
         script_text: params.scriptText,
         channel_code: "SHORTS",
-        video_number: params.shortNumber,
+        video_number: 900000 + params.shortNumber, // Offset to avoid clash with regular videos
         date: new Date().toISOString().split("T")[0],
         audio_counter: Date.now() % 1000000,
         organized_path: `/shorts/${params.sourceVideo}`,

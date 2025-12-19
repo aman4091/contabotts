@@ -32,6 +32,7 @@ import requests
 
 FILE_SERVER_URL = os.getenv("FILE_SERVER_URL")
 FILE_SERVER_API_KEY = os.getenv("FILE_SERVER_API_KEY")
+FILE_SERVER_EXTERNAL_URL = os.getenv("FILE_SERVER_EXTERNAL_URL", FILE_SERVER_URL)  # Fallback to FILE_SERVER_URL
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 NEBIUS_API_KEY = os.getenv("NEBIUS_API_KEY")
 
@@ -821,6 +822,34 @@ async def upload_to_gofile(file_path: str, custom_filename: str = None) -> Optio
         print(f"Gofile error: {e}")
         return None
 
+async def upload_to_contabo(file_path: str, username: str, short_number: int) -> Optional[str]:
+    """Upload file to Contabo file server as fallback"""
+    try:
+        ext = os.path.splitext(file_path)[1] or ".mp4"
+        filename = f"SHORT_{short_number}{ext}"
+        remote_path = f"shorts-output/{username}/{filename}"
+
+        print(f"Uploading to Contabo: {remote_path}")
+
+        with open(file_path, "rb") as f:
+            resp = requests.post(
+                f"{FILE_SERVER_URL}/files/{remote_path}",
+                files={"file": (filename, f, "video/mp4")},
+                headers={"x-api-key": FILE_SERVER_API_KEY},
+                timeout=300
+            )
+
+        if resp.status_code == 200:
+            download_url = f"{FILE_SERVER_EXTERNAL_URL}/files/{remote_path}"
+            print(f"Contabo upload success: {download_url}")
+            return download_url
+        else:
+            print(f"Contabo upload failed: {resp.status_code}")
+            return None
+    except Exception as e:
+        print(f"Contabo upload error: {e}")
+        return None
+
 # ============================================================================
 # JOB PROCESSOR
 # ============================================================================
@@ -891,14 +920,22 @@ async def process_job(job: Dict) -> bool:
             if not render_video(local_images[0], local_audio, ass_path, local_video):
                 raise Exception("Failed to render video")
 
-        # Upload to Gofile
-        print("\nUploading to Gofile...")
+        # Upload to Gofile (with Contabo fallback)
+        print("\n[5/5] Uploading Video...")
         custom_filename = f"SHORT_{short_number}.mp4"
         video_link = await upload_to_gofile(local_video, custom_filename)
-        if not video_link:
-            raise Exception("Failed to upload video")
 
-        print(f"Video uploaded: {video_link}")
+        if not video_link:
+            print("Gofile failed, trying Contabo...")
+            username = job.get("username", "default")
+            video_link = await upload_to_contabo(local_video, username, short_number)
+
+        if not video_link:
+            # Both failed - show local path
+            print(f"\n⚠️ All uploads failed! Video saved locally: {local_video}")
+            video_link = f"LOCAL:{local_video}"
+
+        print(f"Video: {video_link}")
 
         # Complete job
         queue.complete_audio_job(job_id, WORKER_ID, video_link)
