@@ -30,7 +30,7 @@ import requests
 import shutil
 
 # Import from l.py (same directory)
-from l import LandscapeGenerator, get_random_overlay, render_segments_concat
+from l import LandscapeGenerator, render_segments_concat
 
 # Import AI image generator
 try:
@@ -827,9 +827,6 @@ async def process_job(job: Dict) -> bool:
 
         print("🎥 Generating Video with subtitles...")
 
-        # Get random overlay (if available)
-        overlay_path = get_random_overlay()
-
         if is_short:
             # Shorts: use inline functions (no overlay support yet)
             ass_path = generate_subtitles_shorts(local_audio_out)
@@ -842,20 +839,20 @@ async def process_job(job: Dict) -> bool:
             ass_path = landscape_gen.generate_subtitles(local_audio_out)
             if not ass_path: raise Exception("Subtitle generation failed")
 
-            # Render video using l.py (with overlay support)
+            # Render video using l.py
             if len(local_images) > 15:
                 # Many images: use concat method (12 sec per image, no memory issues)
                 print(f"   Using CONCAT method: {len(local_images)} images × 12 sec each")
-                if not render_segments_concat(local_images, local_audio_out, ass_path, local_video_out, segment_duration=12, overlay_path=overlay_path):
+                if not render_segments_concat(local_images, local_audio_out, ass_path, local_video_out, segment_duration=12):
                     raise Exception("Video render with concat failed")
             elif len(local_images) > 1:
                 # Few images: use xfade method
                 print(f"   Using {len(local_images)} images with dissolve transitions")
-                if not landscape_gen.render_with_fade(local_audio_out, local_images, ass_path, local_video_out, overlay_path=overlay_path):
+                if not landscape_gen.render_with_fade(local_audio_out, local_images, ass_path, local_video_out):
                     raise Exception("Video render with fade failed")
             else:
                 # Single image: use regular render
-                if not landscape_gen.render(local_audio_out, local_images[0], ass_path, local_video_out, overlay_path=overlay_path):
+                if not landscape_gen.render(local_audio_out, local_images[0], ass_path, local_video_out):
                     raise Exception("Video render failed")
 
         # Cleanup ASS file
