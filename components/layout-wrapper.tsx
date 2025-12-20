@@ -13,7 +13,8 @@ import {
   User,
   Youtube,
   Mic2,
-  Film
+  Film,
+  ClipboardList
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -34,6 +35,7 @@ const navItems = [
   { title: "Videos", href: "/", icon: Youtube },
   { title: "Shorts", href: "/shorts", icon: Film },
   { title: "Queue", href: "/audio-files", icon: FileAudio },
+  { title: "Jobs", href: "/jobs", icon: ClipboardList },
   { title: "Subtitles", href: "/subtitle-settings", icon: Subtitles },
   { title: "Settings", href: "/settings", icon: Settings }
 ]
