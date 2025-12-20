@@ -801,13 +801,15 @@ async def process_job(job: Dict) -> bool:
                 duration_minutes = audio_duration / 60
                 IMAGE_DISPLAY_DURATION = 12  # Each image shows for 12 seconds
 
-                # Calculate total slots needed for 12 sec per image
+                # Calculate total slots and unique images needed
                 total_slots = max(1, int(audio_duration / IMAGE_DISPLAY_DURATION))
-                print(f"   📊 Duration: {duration_minutes:.1f} min -> {total_slots} images needed ({IMAGE_DISPLAY_DURATION}s each)")
+                num_unique_images = max(1, int(duration_minutes / 2))  # 10 min = 5 unique images
+                print(f"   📊 Duration: {duration_minutes:.1f} min -> {num_unique_images} unique images, {total_slots} display slots ({IMAGE_DISPLAY_DURATION}s each)")
 
-                # Step 1: Get images from Archangel Michael folder first
+                # Step 1: Get unique images from Archangel Michael folder first
                 archangel_folder = "Archangel Michael"
-                archangel_images_used = []  # Track which Archangel images we used (for deletion)
+                archangel_images_used = []  # Track server paths for deletion
+                unique_images = []  # Pool of unique images to randomly pick from
 
                 try:
                     arch_response = requests.get(
@@ -817,11 +819,11 @@ async def process_job(job: Dict) -> bool:
                     )
                     if arch_response.status_code == 200:
                         arch_available = arch_response.json().get("images", [])
-                        # Take only what we need (up to total_slots)
-                        arch_to_use = arch_available[:total_slots]
+                        # Take only what we need for unique pool (not total_slots!)
+                        arch_to_use = arch_available[:num_unique_images]
 
                         if arch_to_use:
-                            print(f"   📂 Found {len(arch_available)} Archangel images, using {len(arch_to_use)}")
+                            print(f"   📂 Found {len(arch_available)} Archangel images, using {len(arch_to_use)} unique")
 
                             # Download Archangel images
                             for i, img_name in enumerate(arch_to_use):
@@ -833,33 +835,35 @@ async def process_job(job: Dict) -> bool:
                                     if dl_response.status_code == 200:
                                         with open(local_img_path, 'wb') as f:
                                             f.write(dl_response.content)
-                                        local_images.append(local_img_path)
+                                        unique_images.append(local_img_path)
                                         archangel_images_used.append(f"images/{archangel_folder}/{img_name}")
                                 except Exception as e:
                                     print(f"   ⚠️ Failed to download Archangel image {i}: {e}")
 
-                            print(f"   ✅ Downloaded {len(local_images)} Archangel images")
+                            print(f"   ✅ Downloaded {len(unique_images)} Archangel images")
                 except Exception as e:
                     print(f"   ⚠️ Could not fetch Archangel folder: {e}")
 
-                # Step 2: If we need more images, generate AI images for remaining slots
-                remaining_slots = total_slots - len(local_images)
+                # Step 2: If we need more unique images, generate AI images
+                remaining_unique = num_unique_images - len(unique_images)
 
-                if remaining_slots > 0 and not is_short:
-                    print(f"   🤖 Generating {remaining_slots} AI images for remaining slots...")
-                    num_unique_ai = max(1, int(remaining_slots / 2))  # Generate fewer unique, will repeat
+                if remaining_unique > 0 and not is_short:
+                    print(f"   🤖 Generating {remaining_unique} AI images for remaining unique pool...")
 
-                    ai_images = generate_multiple_ai_images(ai_script, TEMP_DIR, num_unique_ai, width=img_width, height=img_height)
+                    ai_images = generate_multiple_ai_images(ai_script, TEMP_DIR, remaining_unique, width=img_width, height=img_height)
 
                     if ai_images:
-                        # Fill remaining slots with AI images (can repeat)
-                        for i in range(remaining_slots):
-                            local_images.append(ai_images[i % len(ai_images)])
-                        print(f"   ✅ Added {remaining_slots} AI image slots from {len(ai_images)} unique")
+                        unique_images.extend(ai_images)
+                        print(f"   ✅ Added {len(ai_images)} AI images to pool")
                     else:
                         print("   ⚠️ AI generation failed, continuing with Archangel images only")
 
-                # Step 3: Delete used Archangel images from server
+                # Step 3: Fill all slots by randomly picking from unique pool
+                if unique_images:
+                    local_images = [random.choice(unique_images) for _ in range(total_slots)]
+                    print(f"   📷 {total_slots} slots filled randomly from {len(unique_images)} unique images")
+
+                # Step 4: Delete used Archangel images from server
                 if archangel_images_used:
                     print(f"   🗑️ Deleting {len(archangel_images_used)} used Archangel images from server...")
                     for img_path in archangel_images_used:
