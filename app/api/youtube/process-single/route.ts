@@ -15,41 +15,69 @@ function extractVideoId(url: string): string | null {
 
 async function fetchTranscript(videoId: string, apiKey: string): Promise<string | null> {
   try {
-    const url = `https://api.supadata.ai/v1/youtube/transcript?videoId=${videoId}`
+    const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`
 
-    console.log(`Fetching transcript: ${url}`)
+    console.log(`[DownSub] Fetching transcript for: ${videoId}`)
 
-    const res = await fetch(url, {
+    // Step 1: Get subtitle URLs from DownSub
+    const res = await fetch("https://api.downsub.com/download", {
+      method: "POST",
       headers: {
-        "x-api-key": apiKey
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
       },
+      body: JSON.stringify({ url: youtubeUrl }),
       cache: 'no-store'
     })
 
     if (!res.ok) {
       const text = await res.text()
-      console.error(`Supadata error for ${videoId}: ${res.status} - ${text}`)
+      console.error(`[DownSub] Error for ${videoId}: ${res.status} - ${text}`)
       return null
     }
 
     const data = await res.json()
 
-    // Supadata returns transcript in segments, combine them
-    if (data.content && Array.isArray(data.content)) {
-      return data.content.map((segment: any) => segment.text).join(" ")
+    if (data.status !== "success" || !data.data?.subtitles) {
+      console.error(`[DownSub] No subtitles found for ${videoId}`)
+      return null
     }
 
-    if (typeof data.transcript === "string") {
-      return data.transcript
+    // Step 2: Find English or Hindi subtitle (prefer English)
+    const subtitles = data.data.subtitles
+    let targetSubtitle = subtitles.find((s: any) => s.language?.toLowerCase().includes("english"))
+    if (!targetSubtitle) {
+      targetSubtitle = subtitles.find((s: any) => s.language?.toLowerCase().includes("hindi"))
+    }
+    if (!targetSubtitle && subtitles.length > 0) {
+      targetSubtitle = subtitles[0]
     }
 
-    if (data.text) {
-      return data.text
+    if (!targetSubtitle) {
+      console.error(`[DownSub] No suitable subtitle found for ${videoId}`)
+      return null
     }
 
-    return null
+    // Step 3: Get txt format URL
+    const txtFormat = targetSubtitle.formats?.find((f: any) => f.format === "txt")
+    if (!txtFormat?.url) {
+      console.error(`[DownSub] No txt format available for ${videoId}`)
+      return null
+    }
+
+    // Step 4: Fetch the actual transcript text
+    const txtRes = await fetch(txtFormat.url)
+    if (!txtRes.ok) {
+      console.error(`[DownSub] Failed to fetch txt for ${videoId}: ${txtRes.status}`)
+      return null
+    }
+
+    const transcript = await txtRes.text()
+    console.log(`[DownSub] Got transcript for ${videoId}: ${transcript.length} chars`)
+    return transcript.trim()
+
   } catch (error) {
-    console.error(`Error fetching transcript for ${videoId}:`, error)
+    console.error(`[DownSub] Error fetching transcript for ${videoId}:`, error)
     return null
   }
 }
@@ -65,10 +93,10 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const SUPADATA_API_KEY = process.env.SUPADATA_API_KEY
-    if (!SUPADATA_API_KEY) {
+    const DOWNSUB_API_KEY = process.env.DOWNSUB_API_KEY
+    if (!DOWNSUB_API_KEY) {
       return NextResponse.json(
-        { error: "Supadata API key not configured" },
+        { error: "DownSub API key not configured" },
         { status: 500 }
       )
     }
@@ -83,7 +111,7 @@ export async function POST(request: NextRequest) {
 
     console.log(`Processing video: ${videoId}`)
 
-    const transcript = await fetchTranscript(videoId, SUPADATA_API_KEY)
+    const transcript = await fetchTranscript(videoId, DOWNSUB_API_KEY)
 
     if (!transcript) {
       return NextResponse.json(

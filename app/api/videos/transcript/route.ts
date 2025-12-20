@@ -1,72 +1,17 @@
 import { NextRequest, NextResponse } from "next/server"
-import fs from "fs"
-import path from "path"
 
-const KEYS_FILE = path.join(process.cwd(), "data", "supadata_keys.json")
-const LIMIT_PER_KEY = 98
 const MIN_REQUEST_INTERVAL = 1000 // 1 second between requests
-
-interface KeyData {
-  key: string
-  used: number
-  exhausted: boolean
-}
-
-interface KeysConfig {
-  keys: KeyData[]
-  limit_per_key: number
-  last_request_time: number
-}
-
-function loadKeys(): KeysConfig {
-  try {
-    const data = fs.readFileSync(KEYS_FILE, "utf-8")
-    return JSON.parse(data)
-  } catch {
-    return { keys: [], limit_per_key: LIMIT_PER_KEY, last_request_time: 0 }
-  }
-}
-
-function saveKeys(config: KeysConfig) {
-  fs.writeFileSync(KEYS_FILE, JSON.stringify(config, null, 2))
-}
-
-function getAvailableKey(): { key: string; index: number } | null {
-  const config = loadKeys()
-
-  for (let i = 0; i < config.keys.length; i++) {
-    const keyData = config.keys[i]
-    if (!keyData.exhausted && keyData.used < LIMIT_PER_KEY) {
-      return { key: keyData.key, index: i }
-    }
-  }
-
-  return null
-}
-
-function markKeyUsed(index: number) {
-  const config = loadKeys()
-  config.keys[index].used++
-
-  // Mark as exhausted if limit reached
-  if (config.keys[index].used >= LIMIT_PER_KEY) {
-    config.keys[index].exhausted = true
-    console.log(`🔑 Key ${index + 1} exhausted (${config.keys[index].used}/${LIMIT_PER_KEY})`)
-  }
-
-  config.last_request_time = Date.now()
-  saveKeys(config)
-}
+let lastRequestTime = 0
 
 async function waitForRateLimit() {
-  const config = loadKeys()
-  const elapsed = Date.now() - config.last_request_time
+  const elapsed = Date.now() - lastRequestTime
 
   if (elapsed < MIN_REQUEST_INTERVAL) {
     const waitTime = MIN_REQUEST_INTERVAL - elapsed
     console.log(`⏳ Rate limit: waiting ${waitTime}ms`)
     await new Promise(resolve => setTimeout(resolve, waitTime))
   }
+  lastRequestTime = Date.now()
 }
 
 export async function GET(request: NextRequest) {
@@ -78,18 +23,15 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "videoId required" }, { status: 400 })
     }
 
-    const keyInfo = getAvailableKey()
-    if (!keyInfo) {
-      return NextResponse.json({ error: "All API keys exhausted" }, { status: 503 })
+    const DOWNSUB_API_KEY = process.env.DOWNSUB_API_KEY
+    if (!DOWNSUB_API_KEY) {
+      return NextResponse.json({ error: "DownSub API key not configured" }, { status: 500 })
     }
 
     // Rate limiting - wait if needed
     await waitForRateLimit()
 
-    const transcript = await fetchTranscript(videoId, keyInfo.key)
-
-    // Mark key as used after request
-    markKeyUsed(keyInfo.index)
+    const transcript = await fetchTranscript(videoId, DOWNSUB_API_KEY)
 
     if (!transcript) {
       return NextResponse.json({ error: "Could not fetch transcript" }, { status: 404 })
@@ -109,39 +51,69 @@ export async function GET(request: NextRequest) {
 
 async function fetchTranscript(videoId: string, apiKey: string): Promise<string | null> {
   try {
-    const url = `https://api.supadata.ai/v1/youtube/transcript?videoId=${videoId}`
+    const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`
 
-    const res = await fetch(url, {
+    console.log(`[DownSub] Fetching transcript for: ${videoId}`)
+
+    // Step 1: Get subtitle URLs from DownSub
+    const res = await fetch("https://api.downsub.com/download", {
+      method: "POST",
       headers: {
-        "x-api-key": apiKey
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
       },
+      body: JSON.stringify({ url: youtubeUrl }),
       cache: 'no-store'
     })
 
     if (!res.ok) {
       const text = await res.text()
-      console.error(`Supadata error for ${videoId}: ${res.status} - ${text}`)
+      console.error(`[DownSub] Error for ${videoId}: ${res.status} - ${text}`)
       return null
     }
 
     const data = await res.json()
 
-    // Supadata returns transcript in segments, combine them
-    if (data.content && Array.isArray(data.content)) {
-      return data.content.map((segment: any) => segment.text).join(" ")
+    if (data.status !== "success" || !data.data?.subtitles) {
+      console.error(`[DownSub] No subtitles found for ${videoId}`)
+      return null
     }
 
-    if (typeof data.transcript === "string") {
-      return data.transcript
+    // Step 2: Find English or Hindi subtitle (prefer English)
+    const subtitles = data.data.subtitles
+    let targetSubtitle = subtitles.find((s: any) => s.language?.toLowerCase().includes("english"))
+    if (!targetSubtitle) {
+      targetSubtitle = subtitles.find((s: any) => s.language?.toLowerCase().includes("hindi"))
+    }
+    if (!targetSubtitle && subtitles.length > 0) {
+      targetSubtitle = subtitles[0] // fallback to first available
     }
 
-    if (data.text) {
-      return data.text
+    if (!targetSubtitle) {
+      console.error(`[DownSub] No suitable subtitle found for ${videoId}`)
+      return null
     }
 
-    return null
+    // Step 3: Get txt format URL
+    const txtFormat = targetSubtitle.formats?.find((f: any) => f.format === "txt")
+    if (!txtFormat?.url) {
+      console.error(`[DownSub] No txt format available for ${videoId}`)
+      return null
+    }
+
+    // Step 4: Fetch the actual transcript text
+    const txtRes = await fetch(txtFormat.url)
+    if (!txtRes.ok) {
+      console.error(`[DownSub] Failed to fetch txt for ${videoId}: ${txtRes.status}`)
+      return null
+    }
+
+    const transcript = await txtRes.text()
+    console.log(`[DownSub] Got transcript for ${videoId}: ${transcript.length} chars`)
+    return transcript.trim()
+
   } catch (error) {
-    console.error(`Error fetching transcript for ${videoId}:`, error)
+    console.error(`[DownSub] Error fetching transcript for ${videoId}:`, error)
     return null
   }
 }

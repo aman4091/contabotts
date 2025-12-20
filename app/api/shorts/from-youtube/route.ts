@@ -5,7 +5,7 @@ import path from "path"
 
 const DATA_DIR = process.env.DATA_DIR || "/root/tts/data"
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || ""
-const SUPADATA_API_KEY = process.env.SUPADATA_API_KEY || ""
+const DOWNSUB_API_KEY = process.env.DOWNSUB_API_KEY || ""
 
 async function getUser() {
   const cookieStore = await cookies()
@@ -37,25 +37,58 @@ function extractVideoId(url: string): string | null {
 
 async function fetchTranscript(videoId: string): Promise<string | null> {
   try {
-    const url = `https://api.supadata.ai/v1/youtube/transcript?videoId=${videoId}`
-    const res = await fetch(url, {
-      headers: { "x-api-key": SUPADATA_API_KEY },
-      cache: "no-store"
+    const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`
+
+    console.log(`[DownSub] Fetching transcript for: ${videoId}`)
+
+    // Step 1: Get subtitle URLs from DownSub
+    const res = await fetch("https://api.downsub.com/download", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${DOWNSUB_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ url: youtubeUrl }),
+      cache: 'no-store'
     })
 
-    if (!res.ok) return null
+    if (!res.ok) {
+      console.error(`[DownSub] Error for ${videoId}: ${res.status}`)
+      return null
+    }
 
     const data = await res.json()
 
-    if (data.content && Array.isArray(data.content)) {
-      return data.content.map((segment: any) => segment.text).join(" ")
+    if (data.status !== "success" || !data.data?.subtitles) {
+      console.error(`[DownSub] No subtitles found for ${videoId}`)
+      return null
     }
-    if (typeof data.transcript === "string") return data.transcript
-    if (data.text) return data.text
 
-    return null
+    // Step 2: Find English or Hindi subtitle (prefer English)
+    const subtitles = data.data.subtitles
+    let targetSubtitle = subtitles.find((s: any) => s.language?.toLowerCase().includes("english"))
+    if (!targetSubtitle) {
+      targetSubtitle = subtitles.find((s: any) => s.language?.toLowerCase().includes("hindi"))
+    }
+    if (!targetSubtitle && subtitles.length > 0) {
+      targetSubtitle = subtitles[0]
+    }
+
+    if (!targetSubtitle) return null
+
+    // Step 3: Get txt format URL
+    const txtFormat = targetSubtitle.formats?.find((f: any) => f.format === "txt")
+    if (!txtFormat?.url) return null
+
+    // Step 4: Fetch the actual transcript text
+    const txtRes = await fetch(txtFormat.url)
+    if (!txtRes.ok) return null
+
+    const transcript = await txtRes.text()
+    return transcript.trim()
+
   } catch (error) {
-    console.error(`Transcript error for ${videoId}:`, error)
+    console.error(`[DownSub] Transcript error for ${videoId}:`, error)
     return null
   }
 }
@@ -170,8 +203,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Shorts prompt not configured in Settings" }, { status: 400 })
     }
 
-    if (!SUPADATA_API_KEY) {
-      return NextResponse.json({ error: "Supadata API key not configured" }, { status: 500 })
+    if (!DOWNSUB_API_KEY) {
+      return NextResponse.json({ error: "DownSub API key not configured" }, { status: 500 })
     }
 
     console.log(`Fetching transcript for ${videoId}...`)

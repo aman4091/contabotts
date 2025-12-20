@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-Transcribe Helper - Supadata API Integration
+Transcribe Helper - DownSub API Integration
 =============================================
-Extracted from working transcribe.py (D:\am\Script\transcribe.py)
-Handles YouTube transcript fetching via Supadata API with:
-- Async job polling for large files
+Handles YouTube transcript fetching via DownSub API with:
+- Async and sync versions
 - Proper error handling
-- Key rotation support
+- Language preference (English > Hindi > first available)
 """
 
 import os
@@ -14,173 +13,151 @@ import time
 import httpx
 from typing import Optional, Tuple
 
-class SupaDataError(Exception):
-    """Custom exception for Supadata API errors"""
+class DownSubError(Exception):
+    """Custom exception for DownSub API errors"""
     pass
 
 def _headers(api_key: str) -> dict:
-    """Generate headers for Supadata API requests"""
+    """Generate headers for DownSub API requests"""
     return {
-        "x-api-key": api_key,
-        "Accept": "application/json",
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
     }
+
+def _extract_video_id(video_url: str) -> Optional[str]:
+    """Extract video ID from YouTube URL"""
+    import re
+    patterns = [
+        r'(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/v\/)([a-zA-Z0-9_-]{11})',
+        r'^([a-zA-Z0-9_-]{11})$'
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, video_url)
+        if match:
+            return match.group(1)
+    return None
+
+def _find_best_subtitle(subtitles: list) -> Optional[dict]:
+    """Find the best subtitle (prefer English > Hindi > first available)"""
+    if not subtitles:
+        return None
+
+    # Try English first
+    for sub in subtitles:
+        lang = sub.get("language", "").lower()
+        if "english" in lang:
+            return sub
+
+    # Try Hindi
+    for sub in subtitles:
+        lang = sub.get("language", "").lower()
+        if "hindi" in lang:
+            return sub
+
+    # Fallback to first available
+    return subtitles[0] if subtitles else None
+
+def _get_txt_url(subtitle: dict) -> Optional[str]:
+    """Get txt format URL from subtitle formats"""
+    if not subtitle:
+        return None
+    for fmt in subtitle.get("formats", []):
+        if fmt.get("format") == "txt":
+            return fmt.get("url")
+    return None
 
 async def get_youtube_transcript(video_url: str, api_key: str) -> Tuple[Optional[str], bool]:
     """
-    Get transcript from Supadata API.
+    Get transcript from DownSub API.
 
     Returns:
         Tuple[Optional[str], bool]: (transcript_text, is_key_exhausted)
         - transcript_text: The transcript or None if failed
-        - is_key_exhausted: True if API key quota exhausted (429 error)
+        - is_key_exhausted: True if API key quota exhausted (403 error)
     """
     if not api_key:
-        print("❌ Missing Supadata API key")
+        print("❌ Missing DownSub API key")
         return None, False
 
     try:
-        # Correct endpoint according to Supadata docs
-        url = "https://api.supadata.ai/v1/transcript"
+        # Ensure we have a full YouTube URL
+        video_id = _extract_video_id(video_url)
+        if video_id:
+            youtube_url = f"https://www.youtube.com/watch?v={video_id}"
+        else:
+            youtube_url = video_url
 
-        # Parameters according to docs
-        params = {
-            "url": video_url,
-            "text": True,  # Return plain text instead of timestamped chunks
-            "mode": "auto"  # Try native first, fallback to AI generation
-        }
-
-        print(f"[Supadata] Requesting transcript: {video_url[:50]}...")
+        print(f"[DownSub] Requesting transcript: {youtube_url[:50]}...")
 
         async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.get(url, params=params, headers=_headers(api_key))
+            # Step 1: Get subtitle URLs from DownSub
+            response = await client.post(
+                "https://api.downsub.com/download",
+                headers=_headers(api_key),
+                json={"url": youtube_url}
+            )
 
-            print(f"[Supadata] Response status: {response.status_code}")
+            print(f"[DownSub] Response status: {response.status_code}")
 
             # Handle different status codes
             if response.status_code == 401:
                 print("❌ 401 Unauthorized - Invalid API key")
                 return None, False
 
-            elif response.status_code == 429:
-                print("⚠️ 429 Rate Limited - API key quota exhausted")
+            elif response.status_code == 403:
+                print("⚠️ 403 Forbidden - API key quota exhausted or access denied")
                 return None, True  # Key exhausted!
 
-            elif response.status_code == 202:
-                # Async job - need to poll for results
-                job_data = response.json()
-                job_id = job_data.get("jobId")
-                if not job_id:
-                    print("❌ Got 202 but no job ID")
-                    return None, False
-
-                print(f"[Supadata] Large file detected, polling job: {job_id}")
-                return await _poll_job_result(client, job_id, api_key)
+            elif response.status_code == 429:
+                print("⚠️ 429 Rate Limited - Too many requests")
+                return None, True  # Treat as exhausted
 
             elif response.status_code >= 400:
                 error_text = response.text[:200]
-                print(f"❌ Supadata error {response.status_code}: {error_text}")
+                print(f"❌ DownSub error {response.status_code}: {error_text}")
                 return None, False
 
             elif response.status_code == 200:
-                # Direct response - process transcript
                 data = response.json()
-                transcript = _extract_transcript_text(data)
-                if transcript:
-                    print(f"✅ Transcript received: {len(transcript)} characters")
-                    return transcript, False
-                else:
-                    print("❌ No transcript content found in response")
+
+                if data.get("status") != "success" or not data.get("data", {}).get("subtitles"):
+                    print("❌ No subtitles found in response")
                     return None, False
+
+                # Step 2: Find best subtitle
+                subtitles = data["data"]["subtitles"]
+                target_subtitle = _find_best_subtitle(subtitles)
+
+                if not target_subtitle:
+                    print("❌ No suitable subtitle found")
+                    return None, False
+
+                # Step 3: Get txt URL
+                txt_url = _get_txt_url(target_subtitle)
+                if not txt_url:
+                    print("❌ No txt format available")
+                    return None, False
+
+                # Step 4: Fetch transcript text
+                txt_response = await client.get(txt_url)
+                if txt_response.status_code != 200:
+                    print(f"❌ Failed to fetch txt: {txt_response.status_code}")
+                    return None, False
+
+                transcript = txt_response.text.strip()
+                print(f"✅ Transcript received: {len(transcript)} characters")
+                return transcript, False
+
             else:
                 print(f"❌ Unexpected status code: {response.status_code}")
                 return None, False
 
     except httpx.TimeoutException:
-        print("❌ Supadata request timeout")
+        print("❌ DownSub request timeout")
         return None, False
     except Exception as e:
-        print(f"❌ Supadata error: {e}")
+        print(f"❌ DownSub error: {e}")
         return None, False
-
-async def _poll_job_result(client: httpx.AsyncClient, job_id: str, api_key: str) -> Tuple[Optional[str], bool]:
-    """
-    Poll for job results when Supadata returns a job ID (202 status).
-
-    Returns:
-        Tuple[Optional[str], bool]: (transcript_text, is_key_exhausted)
-    """
-    poll_url = f"https://api.supadata.ai/v1/transcript/{job_id}"
-
-    max_attempts = 60  # 5 minutes max (60 * 5 seconds)
-    attempt = 0
-
-    while attempt < max_attempts:
-        try:
-            response = await client.get(poll_url, headers=_headers(api_key))
-
-            if response.status_code == 429:
-                print("⚠️ 429 during polling - API key quota exhausted")
-                return None, True  # Key exhausted!
-
-            if response.status_code == 200:
-                data = response.json()
-                status = data.get("status")
-
-                if status == "completed":
-                    print(f"[Supadata] Job completed successfully")
-                    transcript = _extract_transcript_text(data)
-                    if transcript:
-                        print(f"✅ Transcript received: {len(transcript)} characters")
-                        return transcript, False
-                    else:
-                        print("❌ No transcript in completed job")
-                        return None, False
-
-                elif status == "failed":
-                    error = data.get("error", "Unknown error")
-                    print(f"❌ Job failed: {error}")
-                    return None, False
-
-                elif status in ["queued", "active"]:
-                    print(f"[Supadata] Job status: {status}, waiting... ({attempt + 1}/{max_attempts})")
-                    await asyncio_sleep(5)  # Wait 5 seconds before next poll
-                    attempt += 1
-                    continue
-                else:
-                    print(f"❌ Unknown job status: {status}")
-                    return None, False
-            else:
-                print(f"❌ Job status check failed: {response.status_code}")
-                return None, False
-
-        except Exception as e:
-            print(f"[Supadata] Poll attempt {attempt + 1} failed: {e}")
-            attempt += 1
-            await asyncio_sleep(5)
-
-    print("❌ Job polling timeout - file may be too large or processing failed")
-    return None, False
-
-def _extract_transcript_text(data: dict) -> Optional[str]:
-    """
-    Extract transcript text from Supadata response.
-    Handles different response formats.
-    """
-    # Primary format: 'content' field (text=true parameter)
-    text = data.get("content", "")
-
-    if not text:
-        # Fallback formats
-        text = data.get("text") or data.get("transcript") or ""
-
-        if not text and "data" in data:
-            if isinstance(data["data"], str):
-                text = data["data"]
-            elif isinstance(data["data"], dict):
-                text = data["data"].get("content") or data["data"].get("text") or ""
-
-    # Clean and return
-    return text.strip() if text else None
 
 async def asyncio_sleep(seconds: float):
     """Async sleep wrapper"""
@@ -200,116 +177,84 @@ def get_youtube_transcript_sync(video_url: str, api_key: str) -> Tuple[Optional[
         Tuple[Optional[str], bool]: (transcript_text, is_key_exhausted)
     """
     if not api_key:
-        print("❌ Missing Supadata API key")
+        print("❌ Missing DownSub API key")
         return None, False
 
     try:
-        url = "https://api.supadata.ai/v1/transcript"
-        params = {
-            "url": video_url,
-            "text": True,
-            "mode": "auto"
-        }
+        # Ensure we have a full YouTube URL
+        video_id = _extract_video_id(video_url)
+        if video_id:
+            youtube_url = f"https://www.youtube.com/watch?v={video_id}"
+        else:
+            youtube_url = video_url
 
-        print(f"[Supadata] Requesting transcript: {video_url[:50]}...")
+        print(f"[DownSub] Requesting transcript: {youtube_url[:50]}...")
 
         with httpx.Client(timeout=120.0) as client:
-            response = client.get(url, params=params, headers=_headers(api_key))
+            # Step 1: Get subtitle URLs from DownSub
+            response = client.post(
+                "https://api.downsub.com/download",
+                headers=_headers(api_key),
+                json={"url": youtube_url}
+            )
 
-            print(f"[Supadata] Response status: {response.status_code}")
+            print(f"[DownSub] Response status: {response.status_code}")
 
             if response.status_code == 401:
                 print("❌ 401 Unauthorized - Invalid API key")
                 return None, False
 
-            elif response.status_code == 429:
-                print("⚠️ 429 Rate Limited - API key quota exhausted")
+            elif response.status_code == 403:
+                print("⚠️ 403 Forbidden - API key quota exhausted")
                 return None, True  # Key exhausted!
 
-            elif response.status_code == 202:
-                job_data = response.json()
-                job_id = job_data.get("jobId")
-                if not job_id:
-                    print("❌ Got 202 but no job ID")
-                    return None, False
-
-                print(f"[Supadata] Large file detected, polling job: {job_id}")
-                return _poll_job_result_sync(client, job_id, api_key)
+            elif response.status_code == 429:
+                print("⚠️ 429 Rate Limited")
+                return None, True
 
             elif response.status_code >= 400:
                 error_text = response.text[:200]
-                print(f"❌ Supadata error {response.status_code}: {error_text}")
+                print(f"❌ DownSub error {response.status_code}: {error_text}")
                 return None, False
 
             elif response.status_code == 200:
                 data = response.json()
-                transcript = _extract_transcript_text(data)
-                if transcript:
-                    print(f"✅ Transcript received: {len(transcript)} characters")
-                    return transcript, False
-                else:
-                    print("❌ No transcript content found in response")
+
+                if data.get("status") != "success" or not data.get("data", {}).get("subtitles"):
+                    print("❌ No subtitles found in response")
                     return None, False
+
+                # Step 2: Find best subtitle
+                subtitles = data["data"]["subtitles"]
+                target_subtitle = _find_best_subtitle(subtitles)
+
+                if not target_subtitle:
+                    print("❌ No suitable subtitle found")
+                    return None, False
+
+                # Step 3: Get txt URL
+                txt_url = _get_txt_url(target_subtitle)
+                if not txt_url:
+                    print("❌ No txt format available")
+                    return None, False
+
+                # Step 4: Fetch transcript text
+                txt_response = client.get(txt_url)
+                if txt_response.status_code != 200:
+                    print(f"❌ Failed to fetch txt: {txt_response.status_code}")
+                    return None, False
+
+                transcript = txt_response.text.strip()
+                print(f"✅ Transcript received: {len(transcript)} characters")
+                return transcript, False
+
             else:
                 print(f"❌ Unexpected status code: {response.status_code}")
                 return None, False
 
     except httpx.TimeoutException:
-        print("❌ Supadata request timeout")
+        print("❌ DownSub request timeout")
         return None, False
     except Exception as e:
-        print(f"❌ Supadata error: {e}")
+        print(f"❌ DownSub error: {e}")
         return None, False
-
-def _poll_job_result_sync(client: httpx.Client, job_id: str, api_key: str) -> Tuple[Optional[str], bool]:
-    """Synchronous version of job polling"""
-    poll_url = f"https://api.supadata.ai/v1/transcript/{job_id}"
-    max_attempts = 60
-    attempt = 0
-
-    while attempt < max_attempts:
-        try:
-            response = client.get(poll_url, headers=_headers(api_key))
-
-            if response.status_code == 429:
-                print("⚠️ 429 during polling - API key quota exhausted")
-                return None, True
-
-            if response.status_code == 200:
-                data = response.json()
-                status = data.get("status")
-
-                if status == "completed":
-                    print(f"[Supadata] Job completed successfully")
-                    transcript = _extract_transcript_text(data)
-                    if transcript:
-                        print(f"✅ Transcript received: {len(transcript)} characters")
-                        return transcript, False
-                    else:
-                        print("❌ No transcript in completed job")
-                        return None, False
-
-                elif status == "failed":
-                    error = data.get("error", "Unknown error")
-                    print(f"❌ Job failed: {error}")
-                    return None, False
-
-                elif status in ["queued", "active"]:
-                    print(f"[Supadata] Job status: {status}, waiting... ({attempt + 1}/{max_attempts})")
-                    time.sleep(5)
-                    attempt += 1
-                    continue
-                else:
-                    print(f"❌ Unknown job status: {status}")
-                    return None, False
-            else:
-                print(f"❌ Job status check failed: {response.status_code}")
-                return None, False
-
-        except Exception as e:
-            print(f"[Supadata] Poll attempt {attempt + 1} failed: {e}")
-            attempt += 1
-            time.sleep(5)
-
-    print("❌ Job polling timeout")
-    return None, False

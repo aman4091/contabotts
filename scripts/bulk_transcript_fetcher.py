@@ -3,6 +3,7 @@
 Bulk Transcript Fetcher
 Fetches transcripts for top 100 videos (by views) for each channel
 Runs in background, saves transcripts like GS32 format
+Uses DownSub API for transcript fetching
 """
 
 import os
@@ -17,7 +18,7 @@ from pathlib import Path
 DATA_DIR = Path("/root/tts/data/users/aman")
 VIDEOS_DIR = DATA_DIR / "videos"
 TRANSCRIPTS_DIR = DATA_DIR / "transcripts"
-SUPADATA_API_KEY = os.getenv("SUPADATA_API_KEY", "")
+DOWNSUB_API_KEY = os.getenv("DOWNSUB_API_KEY", "")
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "5"))  # Fetch 5 at a time, then pause
 DELAY_BETWEEN_FETCHES = 5  # seconds between each fetch
 DELAY_BETWEEN_BATCHES = 60  # seconds between batches
@@ -32,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 def load_env():
     """Load environment variables from .env.local"""
-    global SUPADATA_API_KEY
+    global DOWNSUB_API_KEY
     env_file = Path("/root/tts/.env.local")
     if env_file.exists():
         with open(env_file) as f:
@@ -40,8 +41,8 @@ def load_env():
                 line = line.strip()
                 if line and not line.startswith('#') and '=' in line:
                     key, value = line.split('=', 1)
-                    if key == "SUPADATA_API_KEY":
-                        SUPADATA_API_KEY = value
+                    if key == "DOWNSUB_API_KEY":
+                        DOWNSUB_API_KEY = value
                         break
 
 
@@ -111,38 +112,82 @@ def get_next_index(channel_code: str) -> int:
 
 
 def fetch_transcript(video_id: str) -> str:
-    """Fetch transcript from Supadata API"""
-    if not SUPADATA_API_KEY:
-        logger.error("SUPADATA_API_KEY not set")
+    """Fetch transcript from DownSub API"""
+    if not DOWNSUB_API_KEY:
+        logger.error("DOWNSUB_API_KEY not set")
         return None
 
     try:
-        url = f"https://api.supadata.ai/v1/youtube/transcript?videoId={video_id}"
-        res = requests.get(
-            url,
-            headers={"x-api-key": SUPADATA_API_KEY},
-            timeout=30
+        youtube_url = f"https://www.youtube.com/watch?v={video_id}"
+
+        # Step 1: Get subtitle URLs from DownSub
+        res = requests.post(
+            "https://api.downsub.com/download",
+            headers={
+                "Authorization": f"Bearer {DOWNSUB_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={"url": youtube_url},
+            timeout=60
         )
 
         if not res.ok:
-            logger.warning(f"Supadata error for {video_id}: {res.status_code}")
+            logger.warning(f"[DownSub] Error for {video_id}: {res.status_code}")
             return None
 
         data = res.json()
 
-        # Supadata returns transcript in segments
-        if data.get("content") and isinstance(data["content"], list):
-            return " ".join(seg.get("text", "") for seg in data["content"])
+        if data.get("status") != "success" or not data.get("data", {}).get("subtitles"):
+            logger.warning(f"[DownSub] No subtitles found for {video_id}")
+            return None
 
-        if isinstance(data.get("transcript"), str):
-            return data["transcript"]
+        # Step 2: Find English or Hindi subtitle (prefer English)
+        subtitles = data["data"]["subtitles"]
+        target_subtitle = None
 
-        if data.get("text"):
-            return data["text"]
+        for sub in subtitles:
+            lang = sub.get("language", "").lower()
+            if "english" in lang:
+                target_subtitle = sub
+                break
 
-        return None
+        if not target_subtitle:
+            for sub in subtitles:
+                lang = sub.get("language", "").lower()
+                if "hindi" in lang:
+                    target_subtitle = sub
+                    break
+
+        if not target_subtitle and subtitles:
+            target_subtitle = subtitles[0]
+
+        if not target_subtitle:
+            logger.warning(f"[DownSub] No suitable subtitle found for {video_id}")
+            return None
+
+        # Step 3: Get txt format URL
+        txt_url = None
+        for fmt in target_subtitle.get("formats", []):
+            if fmt.get("format") == "txt":
+                txt_url = fmt.get("url")
+                break
+
+        if not txt_url:
+            logger.warning(f"[DownSub] No txt format available for {video_id}")
+            return None
+
+        # Step 4: Fetch the actual transcript text
+        txt_res = requests.get(txt_url, timeout=30)
+        if not txt_res.ok:
+            logger.warning(f"[DownSub] Failed to fetch txt for {video_id}: {txt_res.status_code}")
+            return None
+
+        transcript = txt_res.text.strip()
+        logger.info(f"[DownSub] Got transcript for {video_id}: {len(transcript)} chars")
+        return transcript
+
     except Exception as e:
-        logger.error(f"Error fetching transcript for {video_id}: {e}")
+        logger.error(f"[DownSub] Error fetching transcript for {video_id}: {e}")
         return None
 
 
@@ -228,8 +273,8 @@ def main():
     """Main function"""
     load_env()
 
-    if not SUPADATA_API_KEY:
-        logger.error("SUPADATA_API_KEY not found in environment or .env.local")
+    if not DOWNSUB_API_KEY:
+        logger.error("DOWNSUB_API_KEY not found in environment or .env.local")
         sys.exit(1)
 
     logger.info("=" * 50)
