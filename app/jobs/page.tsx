@@ -31,11 +31,7 @@ export default function JobsPage() {
 
   useEffect(() => {
     loadJobs()
-    // Load marked jobs from localStorage
-    const saved = localStorage.getItem("markedJobs")
-    if (saved) {
-      setMarkedJobs(new Set(JSON.parse(saved)))
-    }
+    loadMarks()
   }, [])
 
   async function loadJobs() {
@@ -48,6 +44,30 @@ export default function JobsPage() {
       console.error("Error loading jobs:", error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function loadMarks() {
+    try {
+      const res = await fetch("/api/jobs/marks")
+      const data = await res.json()
+      if (data.marked) {
+        setMarkedJobs(new Set(data.marked))
+      }
+    } catch (error) {
+      console.error("Error loading marks:", error)
+    }
+  }
+
+  async function saveMarks(marked: Set<number>) {
+    try {
+      await fetch("/api/jobs/marks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ marked: Array.from(marked) })
+      })
+    } catch (error) {
+      console.error("Error saving marks:", error)
     }
   }
 
@@ -108,7 +128,7 @@ export default function JobsPage() {
       toast.success(`V${videoNumber} marked`)
     }
     setMarkedJobs(newMarked)
-    localStorage.setItem("markedJobs", JSON.stringify(Array.from(newMarked)))
+    saveMarks(newMarked)
   }
 
   // Get status badge color
@@ -173,9 +193,9 @@ export default function JobsPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-xl sm:text-2xl md:text-3xl font-bold gradient-text">Jobs</h1>
           <p className="text-muted-foreground text-sm mt-1">
@@ -185,103 +205,110 @@ export default function JobsPage() {
         </div>
 
         {/* Controls */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
           {/* Filter toggle */}
           <Button
             variant={showMarkedOnly ? "default" : "outline"}
             onClick={() => setShowMarkedOnly(!showMarkedOnly)}
-            className="gap-2"
+            size="sm"
+            className="gap-1"
           >
             <Star className={`h-4 w-4 ${showMarkedOnly ? "fill-current" : ""}`} />
-            {showMarkedOnly ? "Show All" : "Marked Only"}
+            <span className="hidden sm:inline">{showMarkedOnly ? "Show All" : "Marked"}</span>
           </Button>
 
           {/* Go to specific job */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
             <Input
-              placeholder="V number"
+              placeholder="V no."
               value={goToInput}
               onChange={(e) => setGoToInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && goToJob()}
-              className="w-28"
+              className="w-20 sm:w-24 h-9"
             />
-            <Button variant="outline" onClick={goToJob}>
+            <Button variant="outline" size="sm" onClick={goToJob}>
               <Search className="h-4 w-4" />
             </Button>
           </div>
         </div>
       </div>
 
-      {/* Navigation Header */}
-      <div className="flex items-center justify-between bg-card rounded-xl p-4 border border-border">
-        <Button
-          variant="outline"
-          onClick={goToPrevious}
-          disabled={currentIndex === 0}
-          className="gap-2"
-        >
-          <ChevronLeft className="h-4 w-4" />
-          Previous
-        </Button>
-
-        <div className="flex items-center gap-4">
+      {/* Navigation Header - Mobile Optimized */}
+      <div className="bg-card rounded-xl p-3 sm:p-4 border border-border">
+        {/* Top row: Job info */}
+        <div className="flex items-center justify-center gap-2 sm:gap-4 mb-3">
           {/* Mark Button */}
           <Button
             variant="ghost"
             size="sm"
             onClick={() => currentJob && toggleMark(currentJob.video_number)}
-            className={isMarked ? "text-yellow-400" : "text-muted-foreground"}
+            className={`p-1 ${isMarked ? "text-yellow-400" : "text-muted-foreground"}`}
           >
             <Star className={`h-5 w-5 ${isMarked ? "fill-yellow-400" : ""}`} />
           </Button>
 
           {/* Job identifier */}
-          <span className="text-2xl font-bold gradient-text">
+          <span className="text-xl sm:text-2xl font-bold gradient-text">
             V{currentJob?.video_number}
           </span>
 
           {/* Status badge */}
-          <span className={`px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(currentJob?.status || "")}`}>
+          <span className={`px-2 py-0.5 rounded-full text-xs font-medium border ${getStatusColor(currentJob?.status || "")}`}>
             {currentJob?.status?.toUpperCase()}
           </span>
 
           {/* Position indicator */}
-          <span className="text-sm text-muted-foreground">
-            {currentIndex + 1} / {displayJobs.length}
+          <span className="text-xs sm:text-sm text-muted-foreground">
+            {currentIndex + 1}/{displayJobs.length}
           </span>
         </div>
 
-        <Button
-          variant="outline"
-          onClick={goToNext}
-          disabled={currentIndex === displayJobs.length - 1}
-          className="gap-2"
-        >
-          Next
-          <ChevronRight className="h-4 w-4" />
-        </Button>
+        {/* Bottom row: Navigation buttons */}
+        <div className="flex items-center justify-between gap-2">
+          <Button
+            variant="outline"
+            onClick={goToPrevious}
+            disabled={currentIndex === 0}
+            size="sm"
+            className="flex-1 sm:flex-none"
+          >
+            <ChevronLeft className="h-4 w-4" />
+            <span className="sm:ml-1">Prev</span>
+          </Button>
+
+          <Button
+            variant="outline"
+            onClick={goToNext}
+            disabled={currentIndex === displayJobs.length - 1}
+            size="sm"
+            className="flex-1 sm:flex-none"
+          >
+            <span className="sm:mr-1">Next</span>
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
       {/* Job Info & Actions */}
-      <div className="flex items-center justify-between flex-wrap gap-4">
-        <div className="flex items-center gap-4 text-sm text-muted-foreground">
-          <span>Channel: {currentJob?.channel_code}</span>
-          <span>Voice: {currentJob?.reference_audio}</span>
-          <span>Date: {currentJob?.date}</span>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-2 sm:gap-4 text-xs sm:text-sm text-muted-foreground flex-wrap">
+          <span>{currentJob?.channel_code}</span>
+          <span>{currentJob?.reference_audio}</span>
+          <span>{currentJob?.date}</span>
         </div>
 
         {/* Action Buttons */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
           {/* Copy Script */}
-          <Button variant="outline" onClick={copyScript} className="gap-2">
+          <Button variant="outline" size="sm" onClick={copyScript} className="gap-1">
             <Copy className="h-4 w-4" />
-            Copy Script
+            <span className="hidden sm:inline">Copy</span>
           </Button>
 
           {/* GoFile Video Link */}
           {currentJob?.gofile_link && (
             <a href={currentJob.gofile_link} target="_blank" rel="noopener noreferrer">
-              <Button variant="outline" className="gap-2 bg-purple-500/10 border-purple-500/30 hover:bg-purple-500/20">
+              <Button variant="outline" size="sm" className="gap-1 bg-purple-500/10 border-purple-500/30 hover:bg-purple-500/20">
                 <Video className="h-4 w-4 text-purple-400" />
                 <span className="text-purple-400">Video</span>
               </Button>
@@ -291,7 +318,7 @@ export default function JobsPage() {
           {/* GoFile Audio Link */}
           {currentJob?.gofile_audio_link && (
             <a href={currentJob.gofile_audio_link} target="_blank" rel="noopener noreferrer">
-              <Button variant="outline" className="gap-2 bg-green-500/10 border-green-500/30 hover:bg-green-500/20">
+              <Button variant="outline" size="sm" className="gap-1 bg-green-500/10 border-green-500/30 hover:bg-green-500/20">
                 <Music className="h-4 w-4 text-green-400" />
                 <span className="text-green-400">Audio</span>
               </Button>
@@ -301,46 +328,39 @@ export default function JobsPage() {
       </div>
 
       {/* Script Display */}
-      <div className="bg-card rounded-xl border border-border p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-medium">Script</h2>
-          <span className="text-sm text-muted-foreground">
-            {currentJob?.script_text?.length || 0} characters
+      <div className="bg-card rounded-xl border border-border p-4 sm:p-6">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-base sm:text-lg font-medium">Script</h2>
+          <span className="text-xs sm:text-sm text-muted-foreground">
+            {currentJob?.script_text?.length || 0} chars
           </span>
         </div>
-        <div className="prose prose-invert max-w-none max-h-[60vh] overflow-y-auto">
-          <pre className="whitespace-pre-wrap text-base leading-relaxed font-sans bg-transparent p-0 m-0">
+        <div className="prose prose-invert max-w-none max-h-[50vh] sm:max-h-[60vh] overflow-y-auto">
+          <pre className="whitespace-pre-wrap text-sm sm:text-base leading-relaxed font-sans bg-transparent p-0 m-0">
             {currentJob?.script_text || "No script available"}
           </pre>
         </div>
       </div>
 
-      {/* Quick Navigation */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-sm text-muted-foreground mr-2">Quick Jump:</span>
-        {displayJobs.slice(0, 20).map((job, idx) => (
+      {/* Quick Navigation - Hidden on very small screens */}
+      <div className="hidden sm:flex items-center gap-2 flex-wrap">
+        <span className="text-sm text-muted-foreground mr-2">Quick:</span>
+        {displayJobs.slice(0, 15).map((job, idx) => (
           <Button
             key={job.job_id}
             variant={idx === currentIndex ? "default" : "outline"}
             size="sm"
             onClick={() => setCurrentIndex(idx)}
-            className={`text-xs ${markedJobs.has(job.video_number) ? "border-yellow-500/50" : ""}`}
+            className={`text-xs px-2 ${markedJobs.has(job.video_number) ? "border-yellow-500/50" : ""}`}
           >
             {markedJobs.has(job.video_number) && <Star className="h-3 w-3 mr-1 fill-yellow-400 text-yellow-400" />}
             V{job.video_number}
           </Button>
         ))}
-        {displayJobs.length > 20 && (
-          <span className="text-sm text-muted-foreground">+{displayJobs.length - 20} more</span>
+        {displayJobs.length > 15 && (
+          <span className="text-sm text-muted-foreground">+{displayJobs.length - 15} more</span>
         )}
       </div>
-
-      {/* Empty state for marked filter */}
-      {showMarkedOnly && displayJobs.length === 0 && (
-        <div className="text-center py-8 text-muted-foreground">
-          No marked jobs. Mark jobs with the star button!
-        </div>
-      )}
     </div>
   )
 }
