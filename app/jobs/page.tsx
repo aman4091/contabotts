@@ -112,10 +112,32 @@ export default function JobsPage() {
   }
 
   function copyScript() {
-    if (currentJob?.script_text) {
+    if (!currentJob?.script_text) return
+
+    // Try modern clipboard API first
+    if (navigator.clipboard && window.isSecureContext) {
       navigator.clipboard.writeText(currentJob.script_text)
-      toast.success("Script copied!")
+        .then(() => toast.success("Script copied!"))
+        .catch(() => fallbackCopy(currentJob.script_text))
+    } else {
+      fallbackCopy(currentJob.script_text)
     }
+  }
+
+  function fallbackCopy(text: string) {
+    const textarea = document.createElement("textarea")
+    textarea.value = text
+    textarea.style.position = "fixed"
+    textarea.style.left = "-9999px"
+    document.body.appendChild(textarea)
+    textarea.select()
+    try {
+      document.execCommand("copy")
+      toast.success("Script copied!")
+    } catch (e) {
+      toast.error("Copy failed - manually select text")
+    }
+    document.body.removeChild(textarea)
   }
 
   function toggleMark(videoNumber: number) {

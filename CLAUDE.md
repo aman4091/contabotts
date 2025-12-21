@@ -1,5 +1,9 @@
 # Project Instructions for Claude
 
+## Git Rules
+- NEVER push to git without asking me first
+- Always ask "Push kar dun?" before pushing
+
 ## Language Preference
 - NEVER use Hindi script (Devanagari/देवनागरी) - this is strictly prohibited
 - ALWAYS use Hinglish (Hindi words written in English/Roman script)
