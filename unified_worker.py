@@ -354,9 +354,15 @@ async def download_from_pixeldrain(url: str, output_path: str) -> bool:
     try:
         import httpx
         import base64
+        import re
 
-        # Ensure URL has ?download parameter for direct download
-        if "?download" not in url:
+        # Convert page URL to API download URL
+        # https://pixeldrain.com/u/Xtr2bNht -> https://pixeldrain.com/api/file/Xtr2bNht?download
+        match = re.search(r'pixeldrain\.com/u/([a-zA-Z0-9]+)', url)
+        if match:
+            file_id = match.group(1)
+            url = f"https://pixeldrain.com/api/file/{file_id}?download"
+        elif "?download" not in url:
             url = url + "?download"
 
         print(f"📥 Downloading from PixelDrain: {url[:60]}...")
