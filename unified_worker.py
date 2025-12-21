@@ -349,11 +349,51 @@ async def download_from_direct_url(url: str, output_path: str) -> bool:
         return False
 
 
+async def download_from_pixeldrain(url: str, output_path: str) -> bool:
+    """Download audio file from PixelDrain"""
+    try:
+        import httpx
+        import base64
+
+        # Ensure URL has ?download parameter for direct download
+        if "?download" not in url:
+            url = url + "?download"
+
+        print(f"📥 Downloading from PixelDrain: {url[:60]}...")
+
+        # Use API key for authenticated download
+        auth_str = base64.b64encode(f":{PIXELDRAIN_API_KEY}".encode()).decode()
+
+        async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client:
+            response = await client.get(url, headers={
+                "Authorization": f"Basic {auth_str}"
+            })
+
+            if response.status_code != 200:
+                print(f"❌ PixelDrain download failed: {response.status_code}")
+                return False
+
+            content = response.content
+
+            # Validate it's not HTML (error page)
+            if content[:15].lower().startswith(b'<!doctype') or content[:6].lower().startswith(b'<html'):
+                print(f"❌ PixelDrain returned HTML instead of audio")
+                return False
+
+            with open(output_path, "wb") as f:
+                f.write(content)
+
+            print(f"✅ Downloaded {len(content)} bytes from PixelDrain")
+            return True
+    except Exception as e:
+        print(f"❌ PixelDrain download error: {e}")
+        return False
+
+
 async def download_audio_from_url(url: str, output_path: str) -> bool:
     """Download audio from URL - handles PixelDrain, GoFile, and direct HTTP URLs"""
     if "pixeldrain.com" in url:
-        # PixelDrain hotlinks work as direct downloads
-        return await download_from_direct_url(url, output_path)
+        return await download_from_pixeldrain(url, output_path)
     elif "gofile.io" in url:
         return await download_from_gofile(url, output_path)
     else:
