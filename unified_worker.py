@@ -5,8 +5,8 @@ Runs on Vast.ai - Downloads external audio and creates video
 
 Flow:
 1. Claim Job (must have existing_audio_link set by folder watcher)
-2. Download Audio from existing_audio_link
-3. Generate Video (using l.py) -> Upload to Gofile
+2. Download Audio from existing_audio_link (PixelDrain/direct URL)
+3. Generate Video (using l.py) -> Upload to PixelDrain
 4. Send Telegram notifications
 5. Loop back
 
@@ -50,6 +50,7 @@ except ImportError as e:
 
 FILE_SERVER_URL = os.getenv("FILE_SERVER_URL")
 FILE_SERVER_API_KEY = os.getenv("FILE_SERVER_API_KEY")
+PIXELDRAIN_API_KEY = os.getenv("PIXELDRAIN_API_KEY", "19deea31-df50-4e0a-8a47-8ba0a17102dc")
 
 if not FILE_SERVER_URL or not FILE_SERVER_API_KEY:
     raise ValueError("FILE_SERVER_URL and FILE_SERVER_API_KEY must be set")
@@ -251,19 +252,30 @@ async def upload_to_gofile(file_path: str, custom_filename: str = None) -> Optio
         return None
 
 async def upload_to_pixeldrain(file_path: str, custom_filename: str = None) -> Optional[str]:
-    """Fallback upload to Pixeldrain"""
+    """Upload to Pixeldrain with API key - returns direct hotlink"""
     try:
         import httpx
+        import base64
+
+        filename = custom_filename or os.path.basename(file_path)
+        # Basic auth with empty username and API key as password
+        auth_str = base64.b64encode(f":{PIXELDRAIN_API_KEY}".encode()).decode()
+
         async with httpx.AsyncClient(timeout=600.0) as client:
             with open(file_path, 'rb') as f:
-                filename = custom_filename or os.path.basename(file_path)
-                up = await client.post(
-                    "https://pixeldrain.com/api/file",
-                    files={'file': (filename, f)}
+                up = await client.put(
+                    f"https://pixeldrain.com/api/file/{filename}",
+                    content=f.read(),
+                    headers={
+                        "Authorization": f"Basic {auth_str}",
+                        "Content-Type": "application/octet-stream"
+                    }
                 )
-            if up.status_code == 201:
+            if up.status_code in [200, 201]:
                 file_id = up.json()["id"]
-                return f"https://pixeldrain.com/u/{file_id}"
+                # Return direct hotlink for download
+                return f"https://pixeldrain.com/api/file/{file_id}?download"
+            print(f"Pixeldrain upload failed: {up.status_code} - {up.text}")
             return None
     except Exception as e:
         print(f"Pixeldrain error: {e}")
@@ -286,7 +298,7 @@ async def upload_to_contabo(file_path: str, username: str, video_number: int, fi
         return None
 
 async def upload_file(file_path: str, username: str = "default", video_number: int = 0, file_type: str = "video", channel_code: str = "") -> Optional[str]:
-    """Upload file to Gofile, fallback to Pixeldrain, then Contabo. On Windows, save locally."""
+    """Upload file to PixelDrain (primary), fallback to Contabo. On Windows, save locally."""
     # Create descriptive filename: V489_channel.mp4 or V489.mp4
     ext = os.path.splitext(file_path)[1] or ".mp4"
     if channel_code:
@@ -303,15 +315,11 @@ async def upload_file(file_path: str, username: str = "default", video_number: i
         print(f"💾 Saved locally: {output_path}")
         return f"local://{output_path}"
 
-    print(f"📤 Uploading to Gofile as {custom_filename}...")
-    link = await upload_to_gofile(file_path, custom_filename)
-    if link:
-        return link
-    print(f"⚠️ Gofile failed, trying Pixeldrain...")
+    print(f"📤 Uploading to PixelDrain as {custom_filename}...")
     link = await upload_to_pixeldrain(file_path, custom_filename)
     if link:
         return link
-    print(f"⚠️ Pixeldrain failed, trying Contabo...")
+    print(f"⚠️ PixelDrain failed, trying Contabo...")
     link = await upload_to_contabo(file_path, username, video_number, file_type)
     if link:
         return link
@@ -342,8 +350,11 @@ async def download_from_direct_url(url: str, output_path: str) -> bool:
 
 
 async def download_audio_from_url(url: str, output_path: str) -> bool:
-    """Download audio from URL - handles both GoFile and direct HTTP URLs"""
-    if "gofile.io" in url:
+    """Download audio from URL - handles PixelDrain, GoFile, and direct HTTP URLs"""
+    if "pixeldrain.com" in url:
+        # PixelDrain hotlinks work as direct downloads
+        return await download_from_direct_url(url, output_path)
+    elif "gofile.io" in url:
         return await download_from_gofile(url, output_path)
     else:
         return await download_from_direct_url(url, output_path)

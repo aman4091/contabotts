@@ -327,7 +327,7 @@ export default function JobsPage() {
             <span className="hidden sm:inline">Copy</span>
           </Button>
 
-          {/* GoFile Video Link */}
+          {/* Video Download Link */}
           {currentJob?.gofile_link && (
             <a href={currentJob.gofile_link} target="_blank" rel="noopener noreferrer">
               <Button variant="outline" size="sm" className="gap-1 bg-purple-500/10 border-purple-500/30 hover:bg-purple-500/20">
@@ -337,7 +337,7 @@ export default function JobsPage() {
             </a>
           )}
 
-          {/* GoFile Audio Link */}
+          {/* Audio Download Link */}
           {currentJob?.gofile_audio_link && (
             <a href={currentJob.gofile_audio_link} target="_blank" rel="noopener noreferrer">
               <Button variant="outline" size="sm" className="gap-1 bg-green-500/10 border-green-500/30 hover:bg-green-500/20">

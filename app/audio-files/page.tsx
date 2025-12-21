@@ -73,7 +73,7 @@ export default function AudioFilesPage() {
   const [pausing, setPausing] = useState<string | null>(null)
   const [skipping, setSkipping] = useState<string | null>(null)
 
-  // GoFile Link Dialog
+  // Audio Link Dialog (PixelDrain)
   const [gofileLinkDialog, setGofileLinkDialog] = useState(false)
   const [selectedJob, setSelectedJob] = useState<Job | null>(null)
   const [gofileLink, setGofileLink] = useState("")
@@ -208,13 +208,13 @@ export default function AudioFilesPage() {
 
   async function submitGofileLink() {
     if (!selectedJob || !gofileLink.trim()) {
-      toast.error("Please enter a GoFile link")
+      toast.error("Please enter an audio link")
       return
     }
 
-    // Validate GoFile link format
-    if (!gofileLink.includes("gofile.io")) {
-      toast.error("Please enter a valid GoFile link")
+    // Validate link format - accept PixelDrain or direct URLs
+    if (!gofileLink.includes("pixeldrain.com") && !gofileLink.startsWith("http")) {
+      toast.error("Please enter a valid PixelDrain or HTTP link")
       return
     }
 
@@ -609,13 +609,13 @@ export default function AudioFilesPage() {
                                       className="flex items-center gap-1 text-xs px-2 py-1.5 rounded-lg bg-pink-500/10 text-pink-400 hover:bg-pink-500/20 transition-colors border border-pink-500/30"
                                     >
                                       <ExternalLink className="w-3 h-3" />
-                                      GoFile
+                                      Download
                                     </a>
                                   )}
                                 </>
                               )}
 
-                              {/* GoFile Link button for pending/paused jobs */}
+                              {/* Audio Link button for pending/paused jobs */}
                               {(job.status === "pending" || job.status === "paused") && (
                                 <Button
                                   size="sm"
@@ -730,24 +730,24 @@ export default function AudioFilesPage() {
         </TabsContent>
       </Tabs>
 
-      {/* GoFile Link Dialog */}
+      {/* Audio Link Dialog */}
       <Dialog open={gofileLinkDialog} onOpenChange={setGofileLinkDialog}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Link2 className="w-5 h-5 text-purple-400" />
-              Add Audio GoFile Link
+              Add Audio Link
             </DialogTitle>
             <DialogDescription>
-              Enter the GoFile link where audio is already uploaded. Worker will skip audio generation and use this audio directly for video.
+              Enter the PixelDrain link where audio is uploaded. Worker will download and use this audio for video.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="gofile-link">GoFile Link</Label>
+              <Label htmlFor="gofile-link">Audio Link (PixelDrain)</Label>
               <Input
                 id="gofile-link"
-                placeholder="https://gofile.io/d/xxxxx"
+                placeholder="https://pixeldrain.com/api/file/xxxxx?download"
                 value={gofileLink}
                 onChange={(e) => setGofileLink(e.target.value)}
                 className="font-mono text-sm"

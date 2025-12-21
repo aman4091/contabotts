@@ -43,6 +43,9 @@ export async function GET(request: NextRequest) {
           // Filter by username if provided
           if (username && job.username !== username) continue
 
+          // Skip shorts
+          if (job.is_short === true || job.channel_code === "SHORTS") continue
+
           allJobs.push({
             job_id: job.job_id,
             script_text: job.script_text || "",

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Audio Folder Watcher
-Watches external-audio folder, matches audio by video_number in filename
-Example: "script_475.wav" matches job with video_number=475
+Audio Link Watcher
+Watches for text files containing PixelDrain links
+Example: "V715.txt" contains "https://pixeldrain.com/api/file/xxxxx?download"
+Matches job by video_number in filename and updates with the link
 """
 
 import os
@@ -12,13 +13,11 @@ import time
 import re
 import logging
 import requests
-import shutil
 from pathlib import Path
 
 # Config
 WATCH_FOLDER = "/root/tts/data/external-audio"
 FILE_SERVER_URL = "http://localhost:8000"
-FILE_SERVER_EXTERNAL_URL = "http://38.242.144.132:8000"
 FILE_SERVER_API_KEY = "tts-secret-key-2024"
 POLL_INTERVAL = 5
 
@@ -77,9 +76,8 @@ def find_job_by_video_number(jobs: list, video_number: int) -> dict:
     return None
 
 
-def get_audio_files():
-    """Get audio files from watch folder"""
-    audio_extensions = {'.wav', '.mp3', '.m4a', '.ogg', '.flac'}
+def get_link_files():
+    """Get text files containing PixelDrain links from watch folder"""
     files = []
 
     watch_path = Path(WATCH_FOLDER)
@@ -87,11 +85,24 @@ def get_audio_files():
         return []
 
     for f in watch_path.iterdir():
-        if f.is_file() and f.suffix.lower() in audio_extensions:
+        if f.is_file() and f.suffix.lower() == '.txt':
             if str(f) not in processed_files:
                 files.append(f)
 
     return files
+
+
+def read_pixeldrain_link(txt_file: Path) -> str:
+    """Read PixelDrain link from text file"""
+    try:
+        content = txt_file.read_text().strip()
+        # Check if it's a valid PixelDrain link or any HTTP link
+        if content.startswith("http"):
+            return content
+        return None
+    except Exception as e:
+        logger.error(f"Error reading {txt_file.name}: {e}")
+        return None
 
 
 def update_job_with_audio(job_id: str, audio_url: str):
@@ -112,52 +123,54 @@ def update_job_with_audio(job_id: str, audio_url: str):
         return False
 
 
-def move_audio_to_ready(audio_file: Path, job: dict) -> str:
-    """Move audio to ready folder with proper naming"""
+def archive_link_file(txt_file: Path, job: dict):
+    """Move processed text file to archive folder"""
     try:
         username = job.get("username", "default")
         video_number = job.get("video_number", 0)
-        audio_counter = job.get("audio_counter", 0)
 
-        ready_folder = Path(f"/root/tts/data/audio-ready/{username}")
-        ready_folder.mkdir(parents=True, exist_ok=True)
+        archive_folder = Path(f"/root/tts/data/external-audio/processed")
+        archive_folder.mkdir(parents=True, exist_ok=True)
 
-        new_filename = f"{audio_counter}_video_{video_number}{audio_file.suffix}"
-        ready_file = ready_folder / new_filename
+        new_filename = f"V{video_number}_{txt_file.name}"
+        archive_file = archive_folder / new_filename
 
-        shutil.move(str(audio_file), str(ready_file))
-        logger.info(f"Moved: {audio_file.name} -> {username}/{new_filename}")
-
-        relative_path = f"audio-ready/{username}/{new_filename}"
-        return f"{FILE_SERVER_EXTERNAL_URL}/files/{relative_path}"
+        txt_file.rename(archive_file)
+        logger.info(f"Archived: {txt_file.name} -> processed/{new_filename}")
     except Exception as e:
-        logger.error(f"Error moving audio: {e}")
-        return None
+        logger.error(f"Error archiving file: {e}")
 
 
 def main_loop():
-    """Main watching loop - matches audio by video_number in filename"""
+    """Main watching loop - reads PixelDrain links from text files"""
     logger.info("=" * 50)
-    logger.info("Audio Folder Watcher Started")
+    logger.info("Audio Link Watcher Started")
     logger.info(f"Watching: {WATCH_FOLDER}")
-    logger.info("Matching: audio filename number -> job video_number")
+    logger.info("Looking for: .txt files with PixelDrain links")
+    logger.info("Naming: V715.txt or script_V715.txt")
     logger.info("=" * 50)
 
     Path(WATCH_FOLDER).mkdir(parents=True, exist_ok=True)
 
     while True:
         try:
-            audio_files = get_audio_files()
+            link_files = get_link_files()
 
-            if audio_files:
+            if link_files:
                 jobs = get_pending_jobs()
 
-                for audio_file in audio_files:
+                for txt_file in link_files:
                     # Extract number from filename
-                    video_number = extract_number_from_filename(audio_file.name)
+                    video_number = extract_number_from_filename(txt_file.name)
 
                     if video_number is None:
-                        logger.warning(f"No number in filename: {audio_file.name}")
+                        logger.warning(f"No number in filename: {txt_file.name}")
+                        continue
+
+                    # Read PixelDrain link from file
+                    pixeldrain_link = read_pixeldrain_link(txt_file)
+                    if not pixeldrain_link:
+                        logger.warning(f"No valid link in: {txt_file.name}")
                         continue
 
                     # Find matching job
@@ -167,19 +180,19 @@ def main_loop():
                         job_id = job.get("job_id", "")[:8]
                         audio_counter = job.get("audio_counter", 0)
 
-                        logger.info(f">>> Match: {audio_file.name} -> V{video_number} (#{audio_counter})")
+                        logger.info(f">>> Match: {txt_file.name} -> V{video_number} (#{audio_counter})")
+                        logger.info(f"    Link: {pixeldrain_link[:50]}...")
 
-                        # Move and update
-                        audio_url = move_audio_to_ready(audio_file, job)
-
-                        if audio_url and update_job_with_audio(job.get("job_id"), audio_url):
-                            logger.info(f"Job #{audio_counter} V{video_number} ready!")
-                            processed_files.add(str(audio_file))
+                        # Update job with PixelDrain link
+                        if update_job_with_audio(job.get("job_id"), pixeldrain_link):
+                            logger.info(f"Job #{audio_counter} V{video_number} updated with PixelDrain link!")
+                            processed_files.add(str(txt_file))
+                            archive_link_file(txt_file, job)
                         else:
                             logger.error(f"Failed to update job #{audio_counter}")
                     else:
                         # No matching job - ignore this file
-                        logger.debug(f"No job for V{video_number}, ignoring: {audio_file.name}")
+                        logger.debug(f"No job for V{video_number}, ignoring: {txt_file.name}")
 
         except Exception as e:
             logger.error(f"Error in main loop: {e}")
