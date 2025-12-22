@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Loader2, ChevronLeft, ChevronRight, Video, Music, Copy, Search, Star } from "lucide-react"
+import { Loader2, ChevronLeft, ChevronRight, Video, Music, Copy, Search, Star, Type } from "lucide-react"
 import { toast } from "sonner"
 
 interface Job {
@@ -124,7 +124,7 @@ export default function JobsPage() {
     }
   }
 
-  function fallbackCopy(text: string) {
+  function fallbackCopy(text: string, successMsg: string = "Copied!") {
     const textarea = document.createElement("textarea")
     textarea.value = text
     textarea.style.position = "fixed"
@@ -133,11 +133,51 @@ export default function JobsPage() {
     textarea.select()
     try {
       document.execCommand("copy")
-      toast.success("Script copied!")
+      toast.success(successMsg)
     } catch (e) {
       toast.error("Copy failed - manually select text")
     }
     document.body.removeChild(textarea)
+  }
+
+  async function copyTitlePrompt() {
+    if (!currentJob?.script_text) return
+
+    try {
+      // Fetch title prompt from settings
+      const res = await fetch("/api/settings")
+      const settings = await res.json()
+
+      const defaultPrompt = `Generate exactly 20 unique, viral YouTube video titles for the following script.
+
+Requirements:
+- Each title should be catchy and attention-grabbing
+- Titles should be optimized for clicks (curiosity gap, emotional triggers)
+- Keep titles under 70 characters
+- Use power words and emotional language
+- Make titles relevant to the script content
+- Number each title from 1 to 20
+
+Format your response as a numbered list:
+1. Title one
+2. Title two
+... and so on
+
+Script:
+`
+      const titlePrompt = settings.prompts?.title || defaultPrompt
+      const fullText = `${titlePrompt}\n\n${currentJob.script_text}`
+
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(fullText)
+          .then(() => toast.success("Title prompt + script copied!"))
+          .catch(() => fallbackCopy(fullText, "Title prompt + script copied!"))
+      } else {
+        fallbackCopy(fullText, "Title prompt + script copied!")
+      }
+    } catch (error) {
+      toast.error("Failed to get title prompt")
+    }
   }
 
   function toggleMark(videoNumber: number) {
@@ -325,6 +365,12 @@ export default function JobsPage() {
           <Button variant="outline" size="sm" onClick={copyScript} className="gap-1">
             <Copy className="h-4 w-4" />
             <span className="hidden sm:inline">Copy</span>
+          </Button>
+
+          {/* Title Prompt + Script */}
+          <Button variant="outline" size="sm" onClick={copyTitlePrompt} className="gap-1 bg-orange-500/10 border-orange-500/30 hover:bg-orange-500/20">
+            <Type className="h-4 w-4 text-orange-400" />
+            <span className="text-orange-400">Title</span>
           </Button>
 
           {/* Video Download Link */}

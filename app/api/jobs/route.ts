@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { cookies } from "next/headers"
 import fs from "fs"
 import path from "path"
 
@@ -19,10 +20,17 @@ interface Job {
 
 const QUEUE_DIR = "/root/tts/data/audio-queue"
 
+async function getUser() {
+  const cookieStore = await cookies()
+  return cookieStore.get("user")?.value
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
-    const username = searchParams.get("username")
+    // Get username from cookie (logged-in user) or query param
+    const loggedInUser = await getUser()
+    const username = searchParams.get("username") || loggedInUser
     const status = searchParams.get("status") // optional filter
 
     const allJobs: Job[] = []
