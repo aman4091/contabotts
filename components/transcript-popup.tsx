@@ -72,8 +72,8 @@ export function TranscriptPopup({
   // Audio only mode
   const [audioOnly, setAudioOnly] = useState(false)
 
-  // AI Image generation mode
-  const [aiImageMode, setAiImageMode] = useState(false)
+  // AI Image generation mode (default ON for 12 sec per image)
+  const [aiImageMode, setAiImageMode] = useState(true)
 
   // Video only mode (wait for external audio link)
   const [videoOnlyMode, setVideoOnlyMode] = useState(false)

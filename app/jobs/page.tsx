@@ -17,6 +17,11 @@ interface Job {
   status: string
   gofile_link?: string
   gofile_audio_link?: string
+  video_links?: {
+    primary?: string
+    pixeldrain?: string
+    gofile?: string
+  }
   created_at: string
   completed_at?: string
 }
@@ -373,12 +378,22 @@ Script:
             <span className="text-orange-400">Title</span>
           </Button>
 
-          {/* Video Download Link */}
-          {currentJob?.gofile_link && (
-            <a href={currentJob.gofile_link} target="_blank" rel="noopener noreferrer">
+          {/* PixelDrain Video Link */}
+          {(currentJob?.video_links?.pixeldrain || currentJob?.gofile_link) && (
+            <a href={currentJob?.video_links?.pixeldrain || currentJob.gofile_link} target="_blank" rel="noopener noreferrer">
+              <Button variant="outline" size="sm" className="gap-1 bg-blue-500/10 border-blue-500/30 hover:bg-blue-500/20">
+                <Video className="h-4 w-4 text-blue-400" />
+                <span className="text-blue-400">PD</span>
+              </Button>
+            </a>
+          )}
+
+          {/* GoFile Video Link */}
+          {currentJob?.video_links?.gofile && (
+            <a href={currentJob.video_links.gofile} target="_blank" rel="noopener noreferrer">
               <Button variant="outline" size="sm" className="gap-1 bg-purple-500/10 border-purple-500/30 hover:bg-purple-500/20">
                 <Video className="h-4 w-4 text-purple-400" />
-                <span className="text-purple-400">Video</span>
+                <span className="text-purple-400">GF</span>
               </Button>
             </a>
           )}

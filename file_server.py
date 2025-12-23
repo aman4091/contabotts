@@ -48,6 +48,7 @@ class ClaimRequest(BaseModel):
 class CompleteRequest(BaseModel):
     worker_id: str
     gofile_link: Optional[str] = None
+    video_links: Optional[dict] = None  # {primary, pixeldrain, gofile}
 
 class FailRequest(BaseModel):
     worker_id: str
@@ -718,6 +719,8 @@ async def complete_job(
     job_data["completed_at"] = datetime.now().isoformat()
     if request.gofile_link:
         job_data["gofile_link"] = request.gofile_link
+    if request.video_links:
+        job_data["video_links"] = request.video_links
     job_data["status"] = "completed"
 
     # Move to completed folder

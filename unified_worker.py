@@ -148,9 +148,12 @@ class FileServerQueue:
             return r.json().get("job") if r.status_code == 200 else None
         except: return None
 
-    def complete_audio_job(self, job_id: str, worker_id: str, gofile_link: str = None) -> bool:
+    def complete_audio_job(self, job_id: str, worker_id: str, gofile_link: str = None, all_links: dict = None) -> bool:
         try:
-            r = requests.post(f"{self.base_url}/queue/audio/jobs/{job_id}/complete", json={"worker_id": worker_id, "gofile_link": gofile_link}, headers=self.headers, timeout=30)
+            payload = {"worker_id": worker_id, "gofile_link": gofile_link}
+            if all_links:
+                payload["video_links"] = all_links
+            r = requests.post(f"{self.base_url}/queue/audio/jobs/{job_id}/complete", json=payload, headers=self.headers, timeout=30)
             return r.status_code == 200
         except: return False
 
@@ -228,7 +231,7 @@ queue = FileServerQueue(FILE_SERVER_URL, FILE_SERVER_API_KEY)
 async def upload_to_gofile(file_path: str, custom_filename: str = None) -> Optional[str]:
     try:
         import httpx
-        async with httpx.AsyncClient(timeout=600.0) as client:
+        async with httpx.AsyncClient(timeout=1800.0) as client:  # 30 min for large files
             srv = await client.get("https://api.gofile.io/servers")
             if srv.status_code != 200: return None
             data = srv.json()["data"]
@@ -261,7 +264,7 @@ async def upload_to_pixeldrain(file_path: str, custom_filename: str = None) -> O
         # Basic auth with empty username and API key as password
         auth_str = base64.b64encode(f":{PIXELDRAIN_API_KEY}".encode()).decode()
 
-        async with httpx.AsyncClient(timeout=600.0) as client:
+        async with httpx.AsyncClient(timeout=1800.0) as client:  # 30 min for large files
             with open(file_path, 'rb') as f:
                 up = await client.put(
                     f"https://pixeldrain.com/api/file/{filename}",
@@ -297,8 +300,10 @@ async def upload_to_contabo(file_path: str, username: str, video_number: int, fi
         print(f"Contabo upload error: {e}")
         return None
 
-async def upload_file(file_path: str, username: str = "default", video_number: int = 0, file_type: str = "video", channel_code: str = "") -> Optional[str]:
-    """Upload file to PixelDrain (primary), fallback to Contabo. On Windows, save locally."""
+async def upload_file(file_path: str, username: str = "default", video_number: int = 0, file_type: str = "video", channel_code: str = "") -> Optional[dict]:
+    """Upload file to PixelDrain + GoFile (parallel), fallback to Contabo. Returns dict with links."""
+    import asyncio
+
     # Create descriptive filename: V489_channel.mp4 or V489.mp4
     ext = os.path.splitext(file_path)[1] or ".mp4"
     if channel_code:
@@ -313,16 +318,51 @@ async def upload_file(file_path: str, username: str = "default", video_number: i
         output_path = os.path.join(output_dir, custom_filename)
         shutil.copy2(file_path, output_path)
         print(f"💾 Saved locally: {output_path}")
-        return f"local://{output_path}"
+        return {"primary": f"local://{output_path}", "pixeldrain": None, "gofile": None}
 
-    print(f"📤 Uploading to PixelDrain as {custom_filename}...")
-    link = await upload_to_pixeldrain(file_path, custom_filename)
-    if link:
-        return link
-    print(f"⚠️ PixelDrain failed, trying Contabo...")
-    link = await upload_to_contabo(file_path, username, video_number, file_type)
-    if link:
-        return link
+    # Upload to both PixelDrain and GoFile in parallel
+    print(f"📤 Uploading to PixelDrain + GoFile as {custom_filename}...")
+
+    async def pixeldrain_upload():
+        return await upload_to_pixeldrain(file_path, custom_filename)
+
+    async def gofile_upload():
+        return await upload_to_gofile(file_path, custom_filename)
+
+    # Run both uploads in parallel
+    pixeldrain_link, gofile_link = await asyncio.gather(
+        pixeldrain_upload(),
+        gofile_upload(),
+        return_exceptions=True
+    )
+
+    # Handle exceptions
+    if isinstance(pixeldrain_link, Exception):
+        print(f"⚠️ PixelDrain error: {pixeldrain_link}")
+        pixeldrain_link = None
+    if isinstance(gofile_link, Exception):
+        print(f"⚠️ GoFile error: {gofile_link}")
+        gofile_link = None
+
+    # Log results
+    if pixeldrain_link:
+        print(f"✅ PixelDrain: {pixeldrain_link}")
+    if gofile_link:
+        print(f"✅ GoFile: {gofile_link}")
+
+    # If at least one succeeded, return the links
+    if pixeldrain_link or gofile_link:
+        return {
+            "primary": pixeldrain_link or gofile_link,
+            "pixeldrain": pixeldrain_link,
+            "gofile": gofile_link
+        }
+
+    # Fallback to Contabo
+    print(f"⚠️ Both PixelDrain and GoFile failed, trying Contabo...")
+    contabo_link = await upload_to_contabo(file_path, username, video_number, file_type)
+    if contabo_link:
+        return {"primary": contabo_link, "pixeldrain": None, "gofile": None, "contabo": contabo_link}
     print(f"❌ All upload methods failed")
     return None
 
@@ -995,6 +1035,10 @@ async def process_job(job: Dict) -> bool:
         username = job.get("username", "default")
         save_local = job.get("save_local", False)
 
+        # Initialize links
+        pixeldrain_link = None
+        gofile_link = None
+
         if save_local:
             # Save video locally instead of uploading to GoFile
             local_save_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "local_videos")
@@ -1004,9 +1048,12 @@ async def process_job(job: Dict) -> bool:
             video_gofile = f"LOCAL:{local_save_path}"
             print(f"✅ Video saved locally: {local_save_path}")
         else:
-            video_gofile = await upload_file(local_video_out, username, video_number, "video", channel)
-            if not video_gofile:
+            upload_result = await upload_file(local_video_out, username, video_number, "video", channel)
+            if not upload_result:
                 raise Exception("Video upload failed")
+            video_gofile = upload_result["primary"]
+            pixeldrain_link = upload_result.get("pixeldrain")
+            gofile_link = upload_result.get("gofile")
             print(f"✅ Video uploaded: {video_gofile}")
 
         if server_image_path:
@@ -1016,11 +1063,26 @@ async def process_job(job: Dict) -> bool:
                 print(f"⚠️ Failed to delete image: {server_image_path}")
 
         # ========== STEP 3: COMPLETE JOB ==========
-        queue.complete_audio_job(job_id, WORKER_ID, video_gofile)
+        # Store all links in job
+        all_links = {
+            "primary": video_gofile,
+            "pixeldrain": pixeldrain_link if not save_local else None,
+            "gofile": gofile_link if not save_local else None
+        }
+        queue.complete_audio_job(job_id, WORKER_ID, video_gofile, all_links)
         queue.increment_worker_stat(WORKER_ID, "jobs_completed")
 
         video_type = "📱 Shorts" if is_short else "🎬 Video"
         script = job.get('script_text') or queue.get_script(org_path)
+
+        # Build video links message for Telegram
+        video_links_msg = ""
+        if pixeldrain_link:
+            video_links_msg += f"<b>📥 PixelDrain:</b> {pixeldrain_link}\n"
+        if gofile_link:
+            video_links_msg += f"<b>📥 GoFile:</b> {gofile_link}\n"
+        if not video_links_msg:
+            video_links_msg = f"<b>🔗 Video:</b> {video_gofile}\n"
 
         # Send completion telegram
         script_filename = f"{channel}_V{video_number}_{job.get('date', 'unknown')}_script.txt"
@@ -1030,7 +1092,7 @@ async def process_job(job: Dict) -> bool:
                 caption=f"{video_type} <b>Complete</b>\n"
                         f"<b>Channel:</b> {channel} | <b>Video:</b> #{video_number}\n"
                         f"<b>Date:</b> {job.get('date', 'N/A')}\n\n"
-                        f"<b>🔗 Video:</b> {video_gofile}",
+                        f"{video_links_msg}",
                 filename=script_filename,
                 username=job.get("username")
             )
@@ -1039,7 +1101,7 @@ async def process_job(job: Dict) -> bool:
                 f"{video_type} <b>Complete</b>\n"
                 f"<b>Channel:</b> {channel} | <b>Video:</b> #{video_number}\n"
                 f"<b>Date:</b> {job.get('date', 'N/A')}\n\n"
-                f"<b>🔗 Video:</b> {video_gofile}",
+                f"{video_links_msg}",
                 username=job.get("username")
             )
 
@@ -1047,6 +1109,8 @@ async def process_job(job: Dict) -> bool:
         print(f"✅ JOB COMPLETE: {job_id[:8]} {'(SHORT)' if is_short else ''}")
         print(f"   Audio: {audio_gofile}")
         print(f"   Video: {video_gofile}")
+        if pixeldrain_link: print(f"   PixelDrain: {pixeldrain_link}")
+        if gofile_link: print(f"   GoFile: {gofile_link}")
         print("="*50)
 
         return True

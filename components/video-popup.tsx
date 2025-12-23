@@ -106,8 +106,8 @@ export function VideoPopup({
   const [showImageSection, setShowImageSection] = useState(false)
   const [uploadingImages, setUploadingImages] = useState(false)
 
-  // AI Image generation mode
-  const [aiImageMode, setAiImageMode] = useState(false)
+  // AI Image generation mode (default ON for 12 sec per image)
+  const [aiImageMode, setAiImageMode] = useState(true)
 
   useEffect(() => {
     // If initialTranscript is provided, use it instead of fetching

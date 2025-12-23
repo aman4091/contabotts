@@ -56,6 +56,11 @@ interface Job {
   gofile_link?: string
   audio_link?: string
   video_link?: string
+  video_links?: {
+    primary?: string
+    pixeldrain?: string
+    gofile?: string
+  }
   existing_audio_link?: string
   video_only_waiting?: boolean
   error_message?: string
@@ -590,26 +595,28 @@ export default function AudioFilesPage() {
                                       Audio
                                     </Button>
                                   )}
-                                  {(job.video_link || job.gofile_link) && (
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() => downloadFile(job, "video")}
-                                      className="flex items-center gap-1 text-xs px-2 py-1 h-auto border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10"
-                                    >
-                                      <Video className="w-3 h-3" />
-                                      Video
-                                    </Button>
-                                  )}
-                                  {job.gofile_link && (
+                                  {/* PixelDrain Video Link */}
+                                  {(job.video_links?.pixeldrain || job.gofile_link) && (
                                     <a
-                                      href={job.gofile_link}
+                                      href={job.video_links?.pixeldrain || job.gofile_link}
                                       target="_blank"
                                       rel="noopener noreferrer"
-                                      className="flex items-center gap-1 text-xs px-2 py-1.5 rounded-lg bg-pink-500/10 text-pink-400 hover:bg-pink-500/20 transition-colors border border-pink-500/30"
+                                      className="flex items-center gap-1 text-xs px-2 py-1.5 rounded-lg bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-colors border border-blue-500/30"
                                     >
-                                      <ExternalLink className="w-3 h-3" />
-                                      Download
+                                      <Video className="w-3 h-3" />
+                                      PD
+                                    </a>
+                                  )}
+                                  {/* GoFile Video Link */}
+                                  {job.video_links?.gofile && (
+                                    <a
+                                      href={job.video_links.gofile}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="flex items-center gap-1 text-xs px-2 py-1.5 rounded-lg bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 transition-colors border border-purple-500/30"
+                                    >
+                                      <Video className="w-3 h-3" />
+                                      GF
                                     </a>
                                   )}
                                 </>
