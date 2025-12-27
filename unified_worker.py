@@ -311,8 +311,27 @@ async def upload_file(file_path: str, username: str = "default", video_number: i
     else:
         custom_filename = f"V{video_number}{ext}"
 
-    # On Windows, save locally instead of uploading
+    # On Windows: Anu gets GoFile upload, others get local save
     if IS_WINDOWS:
+        if username == "anu":
+            # Anu: Try GoFile first, then Contabo, finally local
+            print(f"📤 [Windows] Uploading Anu's video to GoFile as {custom_filename}...")
+            gofile_link = await upload_to_gofile(file_path, custom_filename)
+
+            if gofile_link:
+                print(f"✅ GoFile: {gofile_link}")
+                return {"primary": gofile_link, "pixeldrain": None, "gofile": gofile_link}
+
+            # Fallback to Contabo
+            print(f"⚠️ GoFile failed, trying Contabo...")
+            contabo_link = await upload_to_contabo(file_path, username, video_number, file_type)
+            if contabo_link:
+                return {"primary": contabo_link, "pixeldrain": None, "gofile": None, "contabo": contabo_link}
+
+            # Last resort: local save
+            print(f"⚠️ All uploads failed, saving locally...")
+
+        # Local save for non-Anu users OR as fallback for Anu
         output_dir = os.path.join(os.path.expanduser("~"), "Desktop", "TTS_Videos")
         os.makedirs(output_dir, exist_ok=True)
         output_path = os.path.join(output_dir, custom_filename)
