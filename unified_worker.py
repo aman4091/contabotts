@@ -873,7 +873,7 @@ async def process_job(job: Dict) -> bool:
             folder_map = {
                 'nature': 'nature',
                 'ai': 'nature',  # AI doesn't use folder, just fallback
-                'jesus': 'Jesus',
+                'jesus': 'jesus',  # lowercase folder name
                 'archangel': 'Archangel Michael'
             }
             image_folder = folder_map.get(image_source, 'nature')
