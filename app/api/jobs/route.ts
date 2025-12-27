@@ -14,6 +14,11 @@ interface Job {
   status: string
   gofile_link?: string
   gofile_audio_link?: string
+  video_links?: {
+    primary?: string
+    pixeldrain?: string
+    gofile?: string
+  }
   created_at: string
   completed_at?: string
 }
@@ -65,6 +70,7 @@ export async function GET(request: NextRequest) {
             status: statusDir,
             gofile_link: job.gofile_link || "",
             gofile_audio_link: job.gofile_audio_link || "",
+            video_links: job.video_links || undefined,
             created_at: job.created_at || "",
             completed_at: job.completed_at || ""
           })

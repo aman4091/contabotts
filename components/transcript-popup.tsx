@@ -24,7 +24,8 @@ import {
   ChevronUp,
   Volume2,
   Mic2,
-  Zap
+  Zap,
+  ImageIcon
 } from "lucide-react"
 
 interface AudioFile {
@@ -72,8 +73,8 @@ export function TranscriptPopup({
   // Audio only mode
   const [audioOnly, setAudioOnly] = useState(false)
 
-  // AI Image generation mode (default ON for 12 sec per image)
-  const [aiImageMode, setAiImageMode] = useState(true)
+  // Image source dropdown (nature=single image, others=12 sec per image rule)
+  const [imageSource, setImageSource] = useState("nature")
 
   // Video only mode (wait for external audio link)
   const [videoOnlyMode, setVideoOnlyMode] = useState(false)
@@ -340,7 +341,7 @@ export function TranscriptPopup({
           referenceAudio: selectedAudio,
           audioEnabled: true,
           audioOnly,
-          aiImageMode,
+          imageSource,  // nature=single image, ai/jesus/archangel=12 sec per image
           videoOnlyMode,
           enhanceAudio,
           priorityQueue
@@ -690,16 +691,20 @@ export function TranscriptPopup({
               <Mic2 className="w-4 h-4 text-orange-400" />
               <span className="text-sm text-muted-foreground">Video Only</span>
             </label>
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={aiImageMode}
-                onChange={e => setAiImageMode(e.target.checked)}
-                className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-violet-500 focus:ring-violet-500"
-              />
-              <Sparkles className="w-4 h-4 text-violet-400" />
-              <span className="text-sm text-muted-foreground">AI Images</span>
-            </label>
+            <div className="flex items-center gap-2">
+              <ImageIcon className="w-4 h-4 text-violet-400" />
+              <Select value={imageSource} onValueChange={setImageSource}>
+                <SelectTrigger className="w-32 h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="nature">Nature</SelectItem>
+                  <SelectItem value="ai">AI Images</SelectItem>
+                  <SelectItem value="jesus">Jesus</SelectItem>
+                  <SelectItem value="archangel">Archangel</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <label className="flex items-center gap-2 cursor-pointer select-none">
               <input
                 type="checkbox"

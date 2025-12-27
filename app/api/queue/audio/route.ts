@@ -52,6 +52,7 @@ async function createAudioJob(job: {
   reference_audio?: string
   custom_images?: string[]
   use_ai_image?: boolean
+  image_source?: string  // nature, ai, jesus, archangel
 }): Promise<{ success: boolean; job_id?: string; error?: string }> {
   try {
     const response = await fetch(`${FILE_SERVER_URL}/queue/audio/jobs`, {
@@ -153,8 +154,11 @@ export async function POST(request: NextRequest) {
       audioEnabled = true,
       referenceAudio: customReferenceAudio,
       customImages,
-      aiImageMode = false
+      imageSource = "nature"  // nature=single image, ai/jesus/archangel=12 sec per image
     } = body
+
+    // Determine if multi-image mode (12 sec per image) based on imageSource
+    const useAiImage = imageSource !== "nature"
 
     if (!script) {
       return NextResponse.json({ error: "Script required" }, { status: 400 })
@@ -207,7 +211,8 @@ export async function POST(request: NextRequest) {
       username,
       reference_audio: referenceAudio,
       custom_images: customImages,
-      use_ai_image: aiImageMode
+      use_ai_image: useAiImage,
+      image_source: imageSource
     })
 
     if (!result.success) {

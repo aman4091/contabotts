@@ -115,6 +115,9 @@ def send_script_to_telegram(job: dict):
         temp_file = f.name
 
     try:
+        # Mark as processed FIRST to prevent duplicates
+        processed_jobs.add(job_id)
+
         # Rename to proper filename with video_number
         filename = f"script_{video_number}.txt"
         new_path = os.path.join(os.path.dirname(temp_file), filename)
@@ -127,10 +130,10 @@ def send_script_to_telegram(job: dict):
         if send_script_document(temp_file, caption):
             logger.info(f"Sent script #{audio_counter} V{video_number}")
             mark_job_as_sent(job_id)
-            processed_jobs.add(job_id)
             return True
         else:
             logger.error(f"Failed to send script #{audio_counter}")
+            processed_jobs.discard(job_id)  # Allow retry if send failed
             return False
     finally:
         if os.path.exists(temp_file):

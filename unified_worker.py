@@ -843,15 +843,29 @@ async def process_job(job: Dict) -> bool:
             print("🎬 STEP 2: Video Generation (1920x1080) using l.py")
         print("="*50)
 
+        # Get image source: nature (single), ai/jesus/archangel (12 sec per image)
+        image_source = job.get('image_source', 'nature')
+        use_ai_image = job.get('use_ai_image', False)
+
         if is_short:
             image_folder = 'shorts'
         else:
-            image_folder = job.get('image_folder', 'nature')
+            # Map image_source to folder names
+            folder_map = {
+                'nature': 'nature',
+                'ai': 'nature',  # AI doesn't use folder, just fallback
+                'jesus': 'Jesus',
+                'archangel': 'Archangel Michael'
+            }
+            image_folder = folder_map.get(image_source, 'nature')
+
+        print(f"   📁 Image Source: {image_source} | Multi-image: {use_ai_image}")
 
         # Check for custom images (multiple images with fade transition)
         custom_images = job.get('custom_images', [])
         local_images = []  # List for multiple images
         server_image_path = None  # Track if we need to delete server image
+        folder_images_used = []  # Track server paths for deletion
 
         if custom_images and len(custom_images) > 0 and not is_short:
             # Download custom images from file server
@@ -876,123 +890,109 @@ async def process_job(job: Dict) -> bool:
 
             if len(local_images) == 0:
                 print("⚠️ No custom images downloaded, falling back to random image")
-                local_image, server_image_path = queue.get_random_image(image_folder)
+                local_image, server_image_path = queue.get_random_image('nature')
                 local_images = [local_image] if local_image else []
-        elif job.get('use_ai_image', False) and AI_IMAGE_AVAILABLE:
-            # AI Image Generation: First use Archangel folder, then AI for remaining
-            if is_short:
-                print("🤖 Using AI Image Generation (SHORTS 1080x1920)...")
-            else:
-                print("🤖 Using Archangel + AI Multi-Image Generation...")
+        elif use_ai_image and not is_short:
+            # Multi-image mode: 12 sec per image based on image_source
+            print(f"🤖 Multi-Image Mode ({image_source}) - 12 sec per image...")
 
-            # Get script text for AI image
+            # Get script text for AI image generation
             ai_script = job.get('script_text') or queue.get_script(org_path)
+            img_width, img_height = 1920, 1080
 
-            if ai_script:
-                # Use 1080x1920 for shorts, 1920x1080 for landscape
-                img_width = 1080 if is_short else 1920
-                img_height = 1920 if is_short else 1080
+            # Calculate number of images based on audio duration
+            audio_duration = landscape_gen.get_audio_duration(local_audio_out)
+            duration_minutes = audio_duration / 60
+            IMAGE_DISPLAY_DURATION = 12  # Each image shows for 12 seconds
 
-                # Calculate number of images based on audio duration
-                audio_duration = landscape_gen.get_audio_duration(local_audio_out)
-                duration_minutes = audio_duration / 60
-                IMAGE_DISPLAY_DURATION = 12  # Each image shows for 12 seconds
+            # Calculate total slots and unique images needed
+            total_slots = max(1, int(audio_duration / IMAGE_DISPLAY_DURATION))
+            num_unique_images = max(1, int(duration_minutes / 2))  # 10 min = 5 unique images
+            print(f"   📊 Duration: {duration_minutes:.1f} min -> {num_unique_images} unique images, {total_slots} display slots ({IMAGE_DISPLAY_DURATION}s each)")
 
-                # Calculate total slots and unique images needed
-                total_slots = max(1, int(audio_duration / IMAGE_DISPLAY_DURATION))
-                num_unique_images = max(1, int(duration_minutes / 2))  # 10 min = 5 unique images
-                print(f"   📊 Duration: {duration_minutes:.1f} min -> {num_unique_images} unique images, {total_slots} display slots ({IMAGE_DISPLAY_DURATION}s each)")
+            unique_images = []  # Pool of unique images to randomly pick from
 
-                # Step 1: Get unique images from Archangel Michael folder first
-                archangel_folder = "Archangel Michael"
-                archangel_images_used = []  # Track server paths for deletion
-                unique_images = []  # Pool of unique images to randomly pick from
-
+            if image_source == "ai":
+                # Pure AI image generation
+                if ai_script and AI_IMAGE_AVAILABLE:
+                    print(f"   🤖 Generating {num_unique_images} AI images...")
+                    ai_images = generate_multiple_ai_images(ai_script, TEMP_DIR, num_unique_images, width=img_width, height=img_height)
+                    if ai_images:
+                        unique_images.extend(ai_images)
+                        print(f"   ✅ Generated {len(ai_images)} AI images")
+                    else:
+                        print("   ⚠️ AI generation failed")
+            else:
+                # Folder-based: jesus or archangel
                 try:
-                    arch_response = requests.get(
-                        f"{FILE_SERVER_URL}/images/{archangel_folder}",
+                    folder_response = requests.get(
+                        f"{FILE_SERVER_URL}/images/{image_folder}",
                         headers={"x-api-key": FILE_SERVER_API_KEY},
                         timeout=30
                     )
-                    if arch_response.status_code == 200:
-                        arch_available = arch_response.json().get("images", [])
-                        # Take only what we need for unique pool (not total_slots!)
-                        arch_to_use = arch_available[:num_unique_images]
+                    if folder_response.status_code == 200:
+                        available_images = folder_response.json().get("images", [])
+                        images_to_use = available_images[:num_unique_images]
 
-                        if arch_to_use:
-                            print(f"   📂 Found {len(arch_available)} Archangel images, using {len(arch_to_use)} unique")
+                        if images_to_use:
+                            print(f"   📂 Found {len(available_images)} images in {image_folder}, using {len(images_to_use)}")
 
-                            # Download Archangel images
-                            for i, img_name in enumerate(arch_to_use):
+                            # Download images
+                            for i, img_name in enumerate(images_to_use):
                                 try:
-                                    img_url = f"{FILE_SERVER_URL}/files/images/{archangel_folder}/{img_name}"
-                                    local_img_path = os.path.join(TEMP_DIR, f"arch_img_{job_id}_{i}.jpg")
+                                    img_url = f"{FILE_SERVER_URL}/files/images/{image_folder}/{img_name}"
+                                    local_img_path = os.path.join(TEMP_DIR, f"folder_img_{job_id}_{i}.jpg")
 
                                     dl_response = requests.get(img_url, headers={"x-api-key": FILE_SERVER_API_KEY}, timeout=60)
                                     if dl_response.status_code == 200:
                                         with open(local_img_path, 'wb') as f:
                                             f.write(dl_response.content)
                                         unique_images.append(local_img_path)
-                                        archangel_images_used.append(f"images/{archangel_folder}/{img_name}")
+                                        folder_images_used.append(f"images/{image_folder}/{img_name}")
                                 except Exception as e:
-                                    print(f"   ⚠️ Failed to download Archangel image {i}: {e}")
+                                    print(f"   ⚠️ Failed to download image {i}: {e}")
 
-                            print(f"   ✅ Downloaded {len(unique_images)} Archangel images")
+                            print(f"   ✅ Downloaded {len(unique_images)} images from {image_folder}")
                 except Exception as e:
-                    print(f"   ⚠️ Could not fetch Archangel folder: {e}")
+                    print(f"   ⚠️ Could not fetch {image_folder} folder: {e}")
 
-                # Step 2: If we need more unique images, generate AI images
+                # If folder didn't have enough, fill with AI images
                 remaining_unique = num_unique_images - len(unique_images)
-
-                if remaining_unique > 0 and not is_short:
-                    print(f"   🤖 Generating {remaining_unique} AI images for remaining unique pool...")
-
+                if remaining_unique > 0 and ai_script and AI_IMAGE_AVAILABLE:
+                    print(f"   🤖 Generating {remaining_unique} AI images to fill pool...")
                     ai_images = generate_multiple_ai_images(ai_script, TEMP_DIR, remaining_unique, width=img_width, height=img_height)
-
                     if ai_images:
                         unique_images.extend(ai_images)
-                        print(f"   ✅ Added {len(ai_images)} AI images to pool")
-                    else:
-                        print("   ⚠️ AI generation failed, continuing with Archangel images only")
+                        print(f"   ✅ Added {len(ai_images)} AI images")
 
-                # Step 3: Fill all slots by randomly picking from unique pool
-                if unique_images:
-                    local_images = [random.choice(unique_images) for _ in range(total_slots)]
-                    print(f"   📷 {total_slots} slots filled randomly from {len(unique_images)} unique images")
+            # Fill all slots by randomly picking from unique pool
+            if unique_images:
+                local_images = [random.choice(unique_images) for _ in range(total_slots)]
+                print(f"   📷 {total_slots} slots filled randomly from {len(unique_images)} unique images")
 
-                # Step 4: Delete used Archangel images from server
-                if archangel_images_used:
-                    print(f"   🗑️ Deleting {len(archangel_images_used)} used Archangel images from server...")
-                    for img_path in archangel_images_used:
-                        try:
-                            del_response = requests.delete(
-                                f"{FILE_SERVER_URL}/files/{img_path}",
-                                headers={"x-api-key": FILE_SERVER_API_KEY},
-                                timeout=30
-                            )
-                            if del_response.status_code != 200:
-                                print(f"   ⚠️ Failed to delete: {img_path}")
-                        except Exception as e:
-                            print(f"   ⚠️ Delete error: {e}")
-                    print(f"   ✅ Cleanup done")
+            # Delete used folder images from server (archangel/jesus)
+            if folder_images_used:
+                print(f"   🗑️ Deleting {len(folder_images_used)} used images from server...")
+                for img_path in folder_images_used:
+                    try:
+                        del_response = requests.delete(
+                            f"{FILE_SERVER_URL}/files/{img_path}",
+                            headers={"x-api-key": FILE_SERVER_API_KEY},
+                            timeout=30
+                        )
+                    except:
+                        pass
+                print(f"   ✅ Cleanup done")
 
-                # Fallback if no images at all
-                if not local_images:
-                    print("⚠️ No images available, trying single AI image...")
-                    local_image = os.path.join(TEMP_DIR, f"ai_image_{job_id}.jpg")
-                    if generate_ai_image(ai_script, local_image, width=img_width, height=img_height):
-                        local_images = [local_image]
-                    else:
-                        print("⚠️ AI image failed, falling back to random image")
-                        local_image, server_image_path = queue.get_random_image(image_folder)
-                        local_images = [local_image] if local_image else []
-            else:
-                print("⚠️ No script for AI image, falling back to random image")
-                local_image, server_image_path = queue.get_random_image(image_folder)
+            # Fallback if no images at all
+            if not local_images:
+                print("⚠️ No images available, falling back to single nature image")
+                local_image, server_image_path = queue.get_random_image('nature')
                 local_images = [local_image] if local_image else []
         else:
-            # Use random image from folder (original behavior)
-            local_image, server_image_path = queue.get_random_image(image_folder)
+            # Nature mode: Single image for entire video
+            print(f"🖼️ Single Image Mode (nature folder)")
+            local_image, server_image_path = queue.get_random_image('nature')
             local_images = [local_image] if local_image else []
 
         if not local_images or len(local_images) == 0:
