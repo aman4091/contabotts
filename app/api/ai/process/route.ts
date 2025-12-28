@@ -12,11 +12,6 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const { transcript, prompt: customPrompt } = body
 
-    const GEMINI_API_KEY = process.env.GEMINI_API_KEY
-    if (!GEMINI_API_KEY) {
-      return NextResponse.json({ error: "Gemini API key not configured" }, { status: 500 })
-    }
-
     if (!transcript) {
       return NextResponse.json({ error: "Transcript required" }, { status: 400 })
     }
@@ -25,6 +20,18 @@ export async function POST(request: NextRequest) {
     const settings = getSettings(username)
     const prompt = customPrompt || settings.prompts.youtube
     const maxChunkSize = settings.ai.max_chunk_size || 7000
+    const provider = settings.ai.provider || "gemini"
+
+    // Check API keys based on provider
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY
+    const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY
+
+    if (provider === "gemini" && !GEMINI_API_KEY) {
+      return NextResponse.json({ error: "Gemini API key not configured" }, { status: 500 })
+    }
+    if (provider === "deepseek" && !DEEPSEEK_API_KEY) {
+      return NextResponse.json({ error: "DeepSeek API key not configured" }, { status: 500 })
+    }
 
     // Split transcript into chunks if too large
     const chunks = splitIntoChunks(transcript, maxChunkSize)
@@ -36,7 +43,13 @@ export async function POST(request: NextRequest) {
         ? `${prompt}\n\n[Part ${i + 1} of ${chunks.length}]\n\n${chunk}`
         : `${prompt}\n\n${chunk}`
 
-      const result = await callGemini(chunkPrompt, settings.ai.model, GEMINI_API_KEY)
+      let result: string | null = null
+      if (provider === "deepseek") {
+        result = await callDeepSeek(chunkPrompt, settings.ai.model || "deepseek-chat", DEEPSEEK_API_KEY!)
+      } else {
+        result = await callGemini(chunkPrompt, settings.ai.model || "gemini-2.5-flash", GEMINI_API_KEY!)
+      }
+
       if (result) {
         results.push(result)
       } else {
@@ -54,7 +67,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       result: finalResult,
-      chunks: chunks.length
+      chunks: chunks.length,
+      provider
     })
   } catch (error) {
     console.error("Error processing with AI:", error)
@@ -87,7 +101,7 @@ function splitIntoChunks(text: string, maxSize: number): string[] {
   return chunks
 }
 
-async function callGemini(prompt: string, model: string = "gemini-2.0-flash-exp", apiKey: string): Promise<string | null> {
+async function callGemini(prompt: string, model: string = "gemini-2.5-flash", apiKey: string): Promise<string | null> {
   try {
     // Use v1beta for all models
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
@@ -138,6 +152,52 @@ async function callGemini(prompt: string, model: string = "gemini-2.0-flash-exp"
     return null
   } catch (error) {
     console.error("Error calling Gemini:", error)
+    return null
+  }
+}
+
+async function callDeepSeek(prompt: string, model: string = "deepseek-chat", apiKey: string): Promise<string | null> {
+  try {
+    const url = "https://api.deepseek.com/chat/completions"
+
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 300000) // 5 min timeout
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: model,
+        messages: [
+          { role: "user", content: prompt }
+        ],
+        temperature: 0.7,
+        max_tokens: 8192
+      }),
+      signal: controller.signal
+    })
+
+    clearTimeout(timeout)
+
+    if (!res.ok) {
+      const errorText = await res.text()
+      console.error("DeepSeek API error:", res.status, errorText)
+      return null
+    }
+
+    const data = await res.json()
+
+    if (data.choices?.[0]?.message?.content) {
+      return data.choices[0].message.content
+    }
+
+    console.error("No text in DeepSeek response:", JSON.stringify(data).slice(0, 500))
+    return null
+  } catch (error) {
+    console.error("Error calling DeepSeek:", error)
     return null
   }
 }

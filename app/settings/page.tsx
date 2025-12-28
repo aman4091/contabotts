@@ -27,8 +27,16 @@ import {
   RefreshCw,
   Edit2,
   X,
-  MessageSquare
+  MessageSquare,
+  Sparkles
 } from "lucide-react"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from "@/components/ui/select"
 
 interface Settings {
   prompts: {
@@ -996,29 +1004,82 @@ export default function SettingsPage() {
               <CardDescription>Configure AI model and parameters</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* AI Provider Selection */}
+              <div className="p-4 border border-dashed border-violet-500/30 rounded-lg bg-violet-500/5 space-y-4">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-violet-400" />
+                  <Label className="text-base font-medium">AI Provider</Label>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-sm text-muted-foreground">Provider</Label>
+                    <Select
+                      value={settings?.ai.provider || "gemini"}
+                      onValueChange={(value) => {
+                        const defaultModel = value === "deepseek" ? "deepseek-chat" : "gemini-2.5-flash"
+                        setSettings(s => s ? {
+                          ...s,
+                          ai: { ...s.ai, provider: value, model: defaultModel }
+                        } : s)
+                      }}
+                    >
+                      <SelectTrigger className="mt-1">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="gemini">
+                          <div className="flex items-center gap-2">
+                            <div className="w-2 h-2 rounded-full bg-blue-500" />
+                            Gemini (Google)
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="deepseek">
+                          <div className="flex items-center gap-2">
+                            <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                            DeepSeek
+                          </div>
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label className="text-sm text-muted-foreground">Model</Label>
+                    <Select
+                      value={settings?.ai.model || "gemini-2.0-flash"}
+                      onValueChange={(value) => setSettings(s => s ? {
+                        ...s,
+                        ai: { ...s.ai, model: value }
+                      } : s)}
+                    >
+                      <SelectTrigger className="mt-1">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {settings?.ai.provider === "deepseek" ? (
+                          <>
+                            <SelectItem value="deepseek-chat">DeepSeek V3.2 Chat (Fast)</SelectItem>
+                            <SelectItem value="deepseek-reasoner">DeepSeek V3.2 Reasoner (Thinking)</SelectItem>
+                          </>
+                        ) : (
+                          <>
+                            <SelectItem value="gemini-3-pro-preview">Gemini 3 Pro (Latest)</SelectItem>
+                            <SelectItem value="gemini-3-flash-preview">Gemini 3 Flash (Fast)</SelectItem>
+                            <SelectItem value="gemini-2.5-pro">Gemini 2.5 Pro</SelectItem>
+                            <SelectItem value="gemini-2.5-flash">Gemini 2.5 Flash</SelectItem>
+                          </>
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {settings?.ai.provider === "deepseek"
+                    ? "DeepSeek provides fast and cost-effective AI processing"
+                    : "Gemini is Google's AI with strong reasoning capabilities"}
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <Label>Provider</Label>
-                  <Input
-                    value={settings?.ai.provider || "gemini"}
-                    onChange={e => setSettings(s => s ? {
-                      ...s,
-                      ai: { ...s.ai, provider: e.target.value }
-                    } : s)}
-                    className="mt-1"
-                  />
-                </div>
-                <div>
-                  <Label>Model</Label>
-                  <Input
-                    value={settings?.ai.model || "gemini-2.0-flash"}
-                    onChange={e => setSettings(s => s ? {
-                      ...s,
-                      ai: { ...s.ai, model: e.target.value }
-                    } : s)}
-                    className="mt-1"
-                  />
-                </div>
                 <div>
                   <Label>Max Chunk Size</Label>
                   <Input

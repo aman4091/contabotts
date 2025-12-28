@@ -862,9 +862,8 @@ async def process_job(job: Dict) -> bool:
             print("🎬 STEP 2: Video Generation (1920x1080) using l.py")
         print("="*50)
 
-        # Get image source: nature (single), ai/jesus/archangel (12 sec per image)
+        # Get image source - all sources now use multi-image mode (12 sec per image)
         image_source = job.get('image_source', 'nature')
-        use_ai_image = job.get('use_ai_image', False)
 
         if is_short:
             image_folder = 'shorts'
@@ -878,7 +877,7 @@ async def process_job(job: Dict) -> bool:
             }
             image_folder = folder_map.get(image_source, 'nature')
 
-        print(f"   📁 Image Source: {image_source} | Multi-image: {use_ai_image}")
+        print(f"   📁 Image Source: {image_source} | Folder: {image_folder}")
 
         # Check for custom images (multiple images with fade transition)
         custom_images = job.get('custom_images', [])
@@ -911,9 +910,9 @@ async def process_job(job: Dict) -> bool:
                 print("⚠️ No custom images downloaded, falling back to random image")
                 local_image, server_image_path = queue.get_random_image('nature')
                 local_images = [local_image] if local_image else []
-        elif use_ai_image and not is_short:
-            # Multi-image mode: 12 sec per image based on image_source
-            print(f"🤖 Multi-Image Mode ({image_source}) - 12 sec per image...")
+        elif not is_short:
+            # Multi-image mode for ALL sources: 12 sec per image
+            print(f"🖼️ Multi-Image Mode ({image_source}) - 12 sec per image...")
 
             # Get script text for AI image generation
             ai_script = job.get('script_text') or queue.get_script(org_path)
@@ -942,7 +941,7 @@ async def process_job(job: Dict) -> bool:
                     else:
                         print("   ⚠️ AI generation failed")
             else:
-                # Folder-based: jesus or archangel
+                # Folder-based: nature, jesus, or archangel
                 try:
                     folder_response = requests.get(
                         f"{FILE_SERVER_URL}/images/{image_folder}",
@@ -951,6 +950,8 @@ async def process_job(job: Dict) -> bool:
                     )
                     if folder_response.status_code == 200:
                         available_images = folder_response.json().get("images", [])
+                        # Randomly select images from folder
+                        random.shuffle(available_images)
                         images_to_use = available_images[:num_unique_images]
 
                         if images_to_use:
@@ -989,8 +990,8 @@ async def process_job(job: Dict) -> bool:
                 local_images = [random.choice(unique_images) for _ in range(total_slots)]
                 print(f"   📷 {total_slots} slots filled randomly from {len(unique_images)} unique images")
 
-            # Delete used folder images from server (archangel/jesus)
-            if folder_images_used:
+            # Delete used folder images from server (only archangel/jesus, NOT nature)
+            if folder_images_used and image_source in ['archangel', 'jesus']:
                 print(f"   🗑️ Deleting {len(folder_images_used)} used images from server...")
                 for img_path in folder_images_used:
                     try:
@@ -1008,11 +1009,6 @@ async def process_job(job: Dict) -> bool:
                 print("⚠️ No images available, falling back to single nature image")
                 local_image, server_image_path = queue.get_random_image('nature')
                 local_images = [local_image] if local_image else []
-        else:
-            # Nature mode: Single image for entire video
-            print(f"🖼️ Single Image Mode (nature folder)")
-            local_image, server_image_path = queue.get_random_image('nature')
-            local_images = [local_image] if local_image else []
 
         if not local_images or len(local_images) == 0:
             raise Exception(f"Image fetch failed from {image_folder}")
