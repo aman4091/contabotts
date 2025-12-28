@@ -210,6 +210,54 @@ Each prompt should be 50-100 words.
 Image prompts:"""
 
 
+def fetch_shorts_folder_images(output_dir: str, count: int) -> list:
+    """Fetch images from shorts folder on server, download them locally"""
+    try:
+        # Get list of images in shorts folder
+        response = requests.get(
+            f"{FILE_SERVER_URL}/images/shorts",
+            headers={"x-api-key": FILE_SERVER_API_KEY},
+            timeout=30
+        )
+
+        if response.status_code != 200:
+            print(f"Failed to fetch shorts folder: {response.status_code}")
+            return []
+
+        available_images = response.json().get("images", [])
+        if not available_images:
+            print("No images in shorts folder")
+            return []
+
+        # Randomly select images (up to count)
+        import random
+        random.shuffle(available_images)
+        images_to_use = available_images[:count]
+
+        print(f"📂 Found {len(available_images)} images in shorts folder, using {len(images_to_use)}")
+
+        # Download images locally
+        local_paths = []
+        for i, img_name in enumerate(images_to_use):
+            try:
+                img_url = f"{FILE_SERVER_URL}/files/images/shorts/{img_name}"
+                local_path = os.path.join(output_dir, f"shorts_img_{i}.jpg")
+
+                dl_response = requests.get(img_url, headers={"x-api-key": FILE_SERVER_API_KEY}, timeout=60)
+                if dl_response.status_code == 200:
+                    with open(local_path, 'wb') as f:
+                        f.write(dl_response.content)
+                    local_paths.append(local_path)
+                    print(f"   Downloaded: {img_name}")
+            except Exception as e:
+                print(f"   Failed to download {img_name}: {e}")
+
+        return local_paths
+    except Exception as e:
+        print(f"Error fetching shorts folder: {e}")
+        return []
+
+
 def get_archangel_prompt() -> Optional[str]:
     """Get Archangel Michael image prompt from Gemini"""
     if not GEMINI_API_KEY:
@@ -890,18 +938,30 @@ async def process_job(job: Dict) -> bool:
         num_images = min(MAX_IMAGES, max(1, int(audio_duration / IMAGE_DISPLAY_DURATION) + 1))
         print(f"Audio: {audio_duration:.1f}s -> {num_images} images (12s each)")
 
-        # Step 2: Generate AI Images
-        print(f"\n[2/4] Generating {num_images} AI Images...")
-        local_images = generate_multiple_ai_images(OUTPUT_DIR, num_images)
+        # Step 2: Get Images (shorts folder first, then AI)
+        print(f"\n[2/4] Getting {num_images} Images...")
+
+        # First try shorts folder
+        local_images = fetch_shorts_folder_images(OUTPUT_DIR, num_images)
+        folder_count = len(local_images)
+
+        # If not enough images, fill with AI
+        remaining = num_images - folder_count
+        if remaining > 0:
+            print(f"📷 Need {remaining} more images, generating AI images...")
+            ai_images = generate_multiple_ai_images(OUTPUT_DIR, remaining)
+            if ai_images:
+                local_images.extend(ai_images)
+                print(f"✅ Total: {folder_count} from folder + {len(ai_images)} AI = {len(local_images)} images")
 
         if not local_images:
-            # Fallback to single image
-            print("Multiple images failed, trying single image...")
+            # Fallback to single AI image
+            print("No images available, trying single AI image...")
             single_image = os.path.join(OUTPUT_DIR, f"image_{job_id}.jpg")
             if generate_ai_image(single_image):
                 local_images = [single_image]
             else:
-                raise Exception("Failed to generate AI images")
+                raise Exception("Failed to get any images")
 
         # Step 3: Generate Subtitles
         print("\n[3/4] Generating Subtitles...")
