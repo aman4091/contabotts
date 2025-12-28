@@ -12,7 +12,6 @@ import {
   ExternalLink,
   Loader2,
   Plus,
-  Music,
   Youtube,
   Scissors,
   ChevronRight,
@@ -22,9 +21,6 @@ import {
   RotateCcw,
   ChevronDown,
   ChevronUp,
-  Volume2,
-  Mic2,
-  Zap,
   ImageIcon
 } from "lucide-react"
 
@@ -56,7 +52,6 @@ export function TranscriptPopup({
   const [script, setScript] = useState("")
   const [processing, setProcessing] = useState(false)
   const [addingToQueue, setAddingToQueue] = useState(false)
-  const [selectedAudio, setSelectedAudio] = useState(defaultReferenceAudio)
 
   // Custom prompt (editable, starts with default)
   const [customPrompt, setCustomPrompt] = useState(prompt)
@@ -70,20 +65,8 @@ export function TranscriptPopup({
   const [chunkInput, setChunkInput] = useState("")
   const [autoProcessing, setAutoProcessing] = useState(false)
 
-  // Audio only mode
-  const [audioOnly, setAudioOnly] = useState(false)
-
-  // Image source dropdown (nature=single image, others=12 sec per image rule)
+  // Image source dropdown
   const [imageSource, setImageSource] = useState("nature")
-
-  // Video only mode (wait for external audio link)
-  const [videoOnlyMode, setVideoOnlyMode] = useState(false)
-
-  // Enhance audio (ON by default)
-  const [enhanceAudio, setEnhanceAudio] = useState(true)
-
-  // Priority queue
-  const [priorityQueue, setPriorityQueue] = useState(false)
 
   async function handleCopy() {
     if (!transcript) {
@@ -322,8 +305,8 @@ export function TranscriptPopup({
       return
     }
 
-    if (!selectedAudio) {
-      toast.error("Please select a voice")
+    if (!defaultReferenceAudio) {
+      toast.error("Please set a default voice in Settings")
       return
     }
 
@@ -338,13 +321,8 @@ export function TranscriptPopup({
           videoTitle: `YouTube Video ${videoId}`,
           videoId,
           channelCode: channelCode || "VIDEO",
-          referenceAudio: selectedAudio,
-          audioEnabled: true,
-          audioOnly,
-          imageSource,  // nature=single image, ai/jesus/archangel=12 sec per image
-          videoOnlyMode,
-          enhanceAudio,
-          priorityQueue
+          referenceAudio: defaultReferenceAudio,
+          imageSource
         })
       })
 
@@ -647,50 +625,7 @@ export function TranscriptPopup({
 
         {/* Footer */}
         <div className="border-t border-border p-4">
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="flex items-center gap-2 flex-1">
-              <Music className="w-4 h-4 text-muted-foreground" />
-              <Select value={selectedAudio} onValueChange={setSelectedAudio}>
-                <SelectTrigger className="flex-1">
-                  <SelectValue placeholder="Select voice" />
-                </SelectTrigger>
-                <SelectContent>
-                  {audioFiles.map(audio => (
-                    <SelectItem key={audio.name} value={audio.name}>
-                      {audio.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={audioOnly}
-                onChange={e => {
-                  setAudioOnly(e.target.checked)
-                  if (e.target.checked) setVideoOnlyMode(false)
-                }}
-                disabled={videoOnlyMode}
-                className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-cyan-500 focus:ring-cyan-500"
-              />
-              <Volume2 className="w-4 h-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">Audio Only</span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={videoOnlyMode}
-                onChange={e => {
-                  setVideoOnlyMode(e.target.checked)
-                  if (e.target.checked) setAudioOnly(false)
-                }}
-                disabled={audioOnly}
-                className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-orange-500 focus:ring-orange-500"
-              />
-              <Mic2 className="w-4 h-4 text-orange-400" />
-              <span className="text-sm text-muted-foreground">Video Only</span>
-            </label>
+          <div className="flex flex-col sm:flex-row gap-3 items-center">
             <div className="flex items-center gap-2">
               <ImageIcon className="w-4 h-4 text-violet-400" />
               <Select value={imageSource} onValueChange={setImageSource}>
@@ -705,29 +640,9 @@ export function TranscriptPopup({
                 </SelectContent>
               </Select>
             </div>
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={enhanceAudio}
-                onChange={e => setEnhanceAudio(e.target.checked)}
-                className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-emerald-500 focus:ring-emerald-500"
-              />
-              <Mic2 className="w-4 h-4 text-emerald-400" />
-              <span className="text-sm text-muted-foreground">Enhance</span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={priorityQueue}
-                onChange={e => setPriorityQueue(e.target.checked)}
-                className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-yellow-500 focus:ring-yellow-500"
-              />
-              <Zap className="w-4 h-4 text-yellow-400" />
-              <span className="text-sm text-muted-foreground">Priority</span>
-            </label>
             <Button
               onClick={handleAddToQueue}
-              disabled={!script.trim() || !selectedAudio || addingToQueue}
+              disabled={!script.trim() || addingToQueue}
               className="bg-gradient-to-r from-emerald-600 to-cyan-500 hover:from-emerald-500 hover:to-cyan-400 text-white"
             >
               {addingToQueue ? (

@@ -14,7 +14,6 @@ import {
   ExternalLink,
   Loader2,
   Plus,
-  Music,
   Scissors,
   ChevronRight,
   Check,
@@ -87,7 +86,6 @@ export function VideoPopup({
   const [loading, setLoading] = useState(true)
   const [processing, setProcessing] = useState(false)
   const [addingToQueue, setAddingToQueue] = useState(false)
-  const [selectedAudio, setSelectedAudio] = useState(defaultReferenceAudio)
 
   // Chunks mode state
   const [chunksMode, setChunksMode] = useState(false)
@@ -373,8 +371,8 @@ export function VideoPopup({
       return
     }
 
-    if (!selectedAudio) {
-      toast.error("Please select a voice")
+    if (!defaultReferenceAudio) {
+      toast.error("Please set a default voice in Settings")
       return
     }
 
@@ -416,9 +414,9 @@ export function VideoPopup({
           videoTitle: video.title,
           videoId: video.videoId,
           channelCode: channelCode || "VIDEO",
-          referenceAudio: selectedAudio,
+          referenceAudio: defaultReferenceAudio,
           customImages: uploadedImagePaths.length > 0 ? uploadedImagePaths : undefined,
-          imageSource  // nature=single image, ai/jesus/archangel=12 sec per image
+          imageSource
         })
       })
 
@@ -829,22 +827,7 @@ export function VideoPopup({
 
         {/* Footer */}
         <div className="border-t border-border p-4">
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="flex items-center gap-2 flex-1">
-              <Music className="w-4 h-4 text-muted-foreground" />
-              <Select value={selectedAudio} onValueChange={setSelectedAudio}>
-                <SelectTrigger className="flex-1">
-                  <SelectValue placeholder="Select voice" />
-                </SelectTrigger>
-                <SelectContent>
-                  {audioFiles.map(audio => (
-                    <SelectItem key={audio.name} value={audio.name}>
-                      {audio.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="flex flex-col sm:flex-row gap-3 items-center">
             <div className="flex items-center gap-2">
               <ImageIcon className="w-4 h-4 text-violet-400" />
               <Select value={imageSource} onValueChange={setImageSource}>
@@ -861,7 +844,7 @@ export function VideoPopup({
             </div>
             <Button
               onClick={handleAddToQueue}
-              disabled={!script.trim() || !selectedAudio || addingToQueue}
+              disabled={!script.trim() || addingToQueue}
               className="bg-gradient-to-r from-emerald-600 to-cyan-500 hover:from-emerald-500 hover:to-cyan-400 text-white"
             >
               {addingToQueue ? (

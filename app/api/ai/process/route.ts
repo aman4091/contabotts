@@ -26,6 +26,8 @@ export async function POST(request: NextRequest) {
     const GEMINI_API_KEY = process.env.GEMINI_API_KEY
     const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY
 
+    console.log(`[AI Process] Provider: ${provider} | Model: ${settings.ai.model}`)
+
     if (provider === "gemini" && !GEMINI_API_KEY) {
       return NextResponse.json({ error: "Gemini API key not configured" }, { status: 500 })
     }
