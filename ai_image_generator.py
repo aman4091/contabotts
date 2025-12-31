@@ -421,63 +421,77 @@ def analyze_script_for_multiple_images(script_text: str, count: int, max_chars: 
 def generate_multiple_ai_images(script_text: str, output_dir: str, count: int,
                                  width: int = 1920, height: int = 1080) -> List[str]:
     """
-    Generate multiple AI images - FAST parallel processing!
-    1. Generate all prompts quickly (parallel Gemini calls)
-    2. Generate all images in parallel (concurrent Replicate API calls)
-
-    Args:
-        script_text: Script to analyze for scene prompts
-        output_dir: Directory to save images
-        count: Number of images to generate
-        width: Image width
-        height: Image height
-
-    Returns:
-        List of generated image paths
+    Generate multiple AI images - STREAMING pipeline!
+    As soon as a prompt is ready, image generation starts in background.
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    import time
+    from queue import Queue
+    import threading
 
-    is_shorts = width == 1080 and height == 1920
     print("\n" + "="*50)
-    print(f"🤖 AI SCENE IMAGES (Replicate API - PARALLEL) - {count} images")
+    print(f"🤖 AI SCENE IMAGES (STREAMING PIPELINE) - {count} images")
     print("="*50)
 
-    # Step 1: Generate all scene prompts in PARALLEL (fast!)
-    prompts = generate_scene_prompts_parallel(script_text, count)
+    # Split script into chunks
+    chunks = split_script_into_chunks(script_text, count)
+    print(f"   📝 Split script into {len(chunks)} chunks")
 
-    if not prompts:
-        print("❌ Failed to get scene prompts from Gemini")
-        return []
+    generated_paths = [None] * count
+    fallback_prompt = "Divine heavenly scene with golden light rays, ethereal clouds, peaceful atmosphere, cinematic lighting, spiritual imagery, 8K quality"
 
-    # Step 2: Generate all images in PARALLEL using ThreadPool
-    print(f"\n🚀 Starting parallel image generation ({len(prompts)} images)...")
+    # Queue for passing prompts from generator to image creator
+    prompt_queue = Queue()
+    prompts_done = threading.Event()
 
-    generated_paths = [None] * len(prompts)  # Preserve order
+    def prompt_generator():
+        """Generate prompts and add to queue as they're ready"""
+        for idx, chunk in enumerate(chunks):
+            prompt = generate_scene_prompt_for_chunk(chunk, idx+1, count)
+            if not prompt:
+                prompt = fallback_prompt
+            prompt_queue.put((idx, prompt))
+            print(f"   🎬 [{idx+1}/{count}] Prompt ready")
+        prompts_done.set()
 
-    def generate_single_image(args):
-        idx, prompt = args
-        output_path = os.path.join(output_dir, f"ai_image_{idx+1}.jpg")
-        print(f"   📸 [{idx+1}/{count}] Starting...")
-        success = generate_image_with_flux(prompt, output_path, width=width, height=height, max_retries=2)
-        if success:
-            return idx, output_path
-        return idx, None
-
-    # Use ThreadPoolExecutor for parallel API calls (max 4 concurrent)
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = {executor.submit(generate_single_image, (i, p)): i for i, p in enumerate(prompts)}
-
-        for future in as_completed(futures):
+    def image_generator():
+        """Pull prompts from queue and generate images"""
+        while True:
             try:
-                idx, path = future.result()
-                if path:
-                    generated_paths[idx] = path
-                    print(f"   ✅ [{idx+1}/{count}] Done!")
+                # Wait for prompt with timeout
+                idx, prompt = prompt_queue.get(timeout=2)
+                output_path = os.path.join(output_dir, f"ai_image_{idx+1}.jpg")
+                print(f"   📸 [{idx+1}/{count}] Image starting...")
+
+                success = generate_image_with_flux(prompt, output_path, width=width, height=height, max_retries=2)
+                if success:
+                    generated_paths[idx] = output_path
+                    print(f"   ✅ [{idx+1}/{count}] Image done!")
                 else:
-                    print(f"   ⚠️ [{idx+1}/{count}] Failed")
-            except Exception as e:
-                print(f"   ❌ Error: {e}")
+                    print(f"   ⚠️ [{idx+1}/{count}] Image failed")
+
+                prompt_queue.task_done()
+            except:
+                # Queue empty and prompts done
+                if prompts_done.is_set() and prompt_queue.empty():
+                    break
+
+    # Start prompt generator thread
+    prompt_thread = threading.Thread(target=prompt_generator)
+    prompt_thread.start()
+
+    # Start multiple image generator threads (4 parallel)
+    image_threads = []
+    for _ in range(4):
+        t = threading.Thread(target=image_generator)
+        t.start()
+        image_threads.append(t)
+
+    # Wait for all to complete
+    prompt_thread.join()
+    prompt_queue.join()  # Wait for all images to finish
+
+    # Signal image threads to stop
+    for t in image_threads:
+        t.join(timeout=5)
 
     # Filter out None values
     final_paths = [p for p in generated_paths if p is not None]
