@@ -172,55 +172,89 @@ def analyze_script_for_image(script_text: str, max_chars: int = 3000) -> Optiona
 
 def generate_image_with_flux(prompt: str, output_path: str, max_retries: int = 3, width: int = 1920, height: int = 1080) -> bool:
     """
-    Generate image using FLUX.1-schnell (exact same as vast_ai_image_generator.py)
+    Generate image using vast_ai_image_generator.py as subprocess (guaranteed to work)
     """
-    import torch
+    import subprocess
+    import tempfile
+    import json
 
-    # Make dimensions divisible by 16 (FLUX requirement)
-    width = (width // 16) * 16
-    height = (height // 16) * 16
-
-    print(f"🎨 Generating image with FLUX.1-schnell - {width}x{height}...")
+    print(f"🎨 Generating image via subprocess - {width}x{height}...")
     print(f"   Prompt: {prompt[:80]}...")
 
-    pipe = load_flux_model()
-    if pipe is None:
-        print("❌ FLUX model not available")
-        return False
+    # Create a temp script that generates one image
+    script_content = f'''
+import sys
+sys.path.insert(0, "/workspace")
+import torch
+import random
+from diffusers import FluxPipeline
+from huggingface_hub import login
+
+# HF Token
+HF_TOKEN = "{os.getenv("HF_TOKEN", "")}"
+if HF_TOKEN:
+    login(token=HF_TOKEN)
+
+print("Loading FLUX.1-schnell...")
+pipe = FluxPipeline.from_pretrained(
+    "black-forest-labs/FLUX.1-schnell",
+    torch_dtype=torch.bfloat16
+)
+pipe.enable_model_cpu_offload()
+pipe.enable_attention_slicing()
+pipe.enable_vae_slicing()
+pipe.vae.enable_tiling()
+print("Model loaded!")
+
+seed = random.randint(0, 2**32 - 1)
+generator = torch.Generator("cuda").manual_seed(seed)
+
+prompt = """{prompt.replace('"', '\\"')}"""
+
+image = pipe(
+    prompt=prompt,
+    num_inference_steps=4,
+    guidance_scale=0.0,
+    height={height},
+    width={width},
+    generator=generator
+).images[0]
+
+image.save("{output_path}", "JPEG", quality=95, optimize=True)
+print(f"Image saved: {output_path}")
+'''
+
+    # Write temp script
+    script_path = "/tmp/flux_gen_temp.py"
+    with open(script_path, "w") as f:
+        f.write(script_content)
 
     for attempt in range(max_retries):
         try:
-            print(f"   Attempt {attempt + 1}/{max_retries} - Generating...")
+            print(f"   Attempt {attempt + 1}/{max_retries} - Running subprocess...")
 
-            seed = random.randint(0, 2**32 - 1)
-            generator = torch.Generator("cuda").manual_seed(seed)
+            result = subprocess.run(
+                ["python3", script_path],
+                capture_output=True,
+                text=True,
+                timeout=300
+            )
 
-            # FLUX.1-schnell optimized settings (exact same as vast_ai_image_generator.py)
-            image = pipe(
-                prompt=prompt,
-                num_inference_steps=4,  # schnell works best with 1-4 steps
-                guidance_scale=0.0,     # schnell doesn't use guidance
-                height=height,
-                width=width,
-                generator=generator
-            ).images[0]
+            if result.returncode == 0 and os.path.exists(output_path):
+                print(f"✅ Image saved: {output_path}")
+                return True
+            else:
+                print(f"   ⚠️ Subprocess failed: {result.stderr[:200] if result.stderr else 'Unknown error'}")
 
-            # Save as JPEG (same quality as vast_ai_image_generator.py)
-            image.save(output_path, "JPEG", quality=95, optimize=True)
-            print(f"✅ Image saved (seed={seed}): {output_path}")
-            return True
-
+        except subprocess.TimeoutExpired:
+            print(f"   ⚠️ Timeout after 5 minutes")
         except Exception as e:
-            print(f"   ⚠️ Attempt {attempt + 1} error: {e}")
+            print(f"   ⚠️ Error: {e}")
 
-            if attempt < max_retries - 1:
-                import time
-                import gc
-                # Clear GPU memory before retry
-                gc.collect()
-                torch.cuda.empty_cache()
-                print(f"   Retrying in 3 seconds...")
-                time.sleep(3)
+        if attempt < max_retries - 1:
+            import time
+            print(f"   Retrying in 3 seconds...")
+            time.sleep(3)
 
     print("   ❌ All attempts failed")
     return False
@@ -515,7 +549,11 @@ def generate_scene_prompt_for_chunk(chunk_text: str, chunk_num: int, total_chunk
                 if text and len(text) > 20:
                     return text
             else:
-                print(f"      ⚠️ {model_name}: HTTP {response.status_code}")
+                try:
+                    error_msg = response.json().get("error", {}).get("message", "")[:100]
+                except:
+                    error_msg = response.text[:100]
+                print(f"      ⚠️ {model_name}: HTTP {response.status_code} - {error_msg}")
 
         except Exception as e:
             print(f"      ⚠️ {model_name}: {e}")
