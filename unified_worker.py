@@ -923,17 +923,24 @@ async def process_job(job: Dict) -> bool:
             duration_minutes = audio_duration / 60
             IMAGE_DISPLAY_DURATION = 12  # Each image shows for 12 seconds
 
-            # Calculate total slots and unique images needed
+            # Calculate total slots
             total_slots = max(1, int(audio_duration / IMAGE_DISPLAY_DURATION))
-            num_unique_images = max(1, int(duration_minutes / 2))  # 10 min = 5 unique images
-            print(f"   📊 Duration: {duration_minutes:.1f} min -> {num_unique_images} unique images, {total_slots} display slots ({IMAGE_DISPLAY_DURATION}s each)")
+
+            # For AI: generate unique image for EACH 12-sec slot
+            # For folders: use duration/2 logic (10 min = 5 unique, then randomly pick)
+            if image_source == "ai":
+                num_unique_images = total_slots  # AI: har 12 sec = 1 unique image
+                print(f"   📊 Duration: {duration_minutes:.1f} min -> {num_unique_images} AI images (1 per 12 sec)")
+            else:
+                num_unique_images = max(1, int(duration_minutes / 2))  # Folders: 10 min = 5 unique
+                print(f"   📊 Duration: {duration_minutes:.1f} min -> {num_unique_images} unique images, {total_slots} display slots")
 
             unique_images = []  # Pool of unique images to randomly pick from
 
             if image_source == "ai":
-                # Pure AI image generation
+                # Pure AI image generation - one unique image per 12-sec slot
                 if ai_script and AI_IMAGE_AVAILABLE:
-                    print(f"   🤖 Generating {num_unique_images} AI images...")
+                    print(f"   🤖 Generating {num_unique_images} AI scene images (Gemini 2.5 Pro + FLUX)...")
                     ai_images = generate_multiple_ai_images(ai_script, TEMP_DIR, num_unique_images, width=img_width, height=img_height)
                     if ai_images:
                         unique_images.extend(ai_images)
@@ -985,10 +992,19 @@ async def process_job(job: Dict) -> bool:
                         unique_images.extend(ai_images)
                         print(f"   ✅ Added {len(ai_images)} AI images")
 
-            # Fill all slots by randomly picking from unique pool
+            # Fill all slots
             if unique_images:
-                local_images = [random.choice(unique_images) for _ in range(total_slots)]
-                print(f"   📷 {total_slots} slots filled randomly from {len(unique_images)} unique images")
+                if image_source == "ai":
+                    # AI: use images in order (each slot has its unique scene)
+                    local_images = unique_images[:total_slots]
+                    # If we have fewer images than slots (fallback), repeat last image
+                    while len(local_images) < total_slots:
+                        local_images.append(local_images[-1])
+                    print(f"   📷 {len(local_images)} AI scene images for {total_slots} slots")
+                else:
+                    # Folders: randomly pick from unique pool
+                    local_images = [random.choice(unique_images) for _ in range(total_slots)]
+                    print(f"   📷 {total_slots} slots filled randomly from {len(unique_images)} unique images")
 
             # Delete used folder images from server (only archangel/jesus, NOT nature)
             if folder_images_used and image_source in ['archangel', 'jesus']:

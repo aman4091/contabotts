@@ -6,7 +6,7 @@ Creates YouTube Shorts (1080x1920) from audio with AI images
 Flow:
 1. Claim Shorts Job (is_short=true with existing_audio_link)
 2. Download Audio from existing_audio_link
-3. Generate AI Image (Archangel Michael theme via Gemini + Nebius)
+3. Generate AI Image (via FLUX.1-schnell from ai_image_generator)
 4. Create Video with Subtitles (1080x1920)
 5. Upload to Gofile
 6. Send Telegram notification
@@ -26,6 +26,16 @@ from typing import Optional, Dict
 
 import requests
 
+# Import AI image generator (uses FLUX.1-schnell)
+try:
+    from ai_image_generator import generate_ai_image as flux_generate_image
+    from ai_image_generator import generate_multiple_ai_images as flux_generate_multiple_images
+    AI_IMAGE_AVAILABLE = True
+    print("✅ AI Image Generator loaded (FLUX.1-schnell)")
+except ImportError as e:
+    AI_IMAGE_AVAILABLE = False
+    print(f"⚠️ AI Image Generator not available: {e}")
+
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
@@ -34,7 +44,6 @@ FILE_SERVER_URL = os.getenv("FILE_SERVER_URL")
 FILE_SERVER_API_KEY = os.getenv("FILE_SERVER_API_KEY")
 FILE_SERVER_EXTERNAL_URL = os.getenv("FILE_SERVER_EXTERNAL_URL", FILE_SERVER_URL)  # Fallback to FILE_SERVER_URL
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-NEBIUS_API_KEY = os.getenv("NEBIUS_API_KEY")
 
 if not FILE_SERVER_URL or not FILE_SERVER_API_KEY:
     raise ValueError("FILE_SERVER_URL and FILE_SERVER_API_KEY must be set")
@@ -149,66 +158,8 @@ class FileServerQueue:
 queue = FileServerQueue(FILE_SERVER_URL, FILE_SERVER_API_KEY)
 
 # ============================================================================
-# AI IMAGE GENERATION (Archangel Michael theme)
+# AI IMAGE GENERATION (Using ai_image_generator.py with FLUX.1-schnell)
 # ============================================================================
-
-def get_gemini_model_from_settings() -> str:
-    """Fetch Gemini model name from settings API"""
-    try:
-        # Use external IP to fetch settings from webapp
-        webapp_url = FILE_SERVER_URL.replace(":8000", ":3000")
-        api_url = f"{webapp_url}/api/settings"
-        response = requests.get(api_url, timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            model = data.get("ai", {}).get("model", "gemini-2.5-flash")
-            print(f"Using Gemini model from settings: {model}")
-            return model
-    except Exception as e:
-        print(f"Could not fetch settings, using default: {e}")
-    return "gemini-2.5-flash"
-
-ARCHANGEL_PROMPT = """Generate a SINGLE unique image prompt featuring Archangel Michael.
-
-The prompt must:
-1. Feature Archangel Michael as the main subject
-2. Be suitable as a cinematic vertical video background (1080x1920)
-3. NOT contain any text or letters
-4. Be highly detailed and visually stunning
-
-Vary these elements:
-- Poses: standing, flying, fighting, meditating, protecting, descending
-- Settings: heaven, clouds, mountains, cosmic space, battlefields
-- Lighting: golden hour, divine rays, aurora, sunrise
-- Armor: golden, silver, white, crystalline, radiant
-- Wings: spread wide, glowing, ethereal
-
-Output ONLY the image prompt in English, 50-100 words, nothing else.
-
-Image prompt:"""
-
-ARCHANGEL_MULTI_PROMPT = """Generate {count} DIFFERENT and UNIQUE image prompts featuring Archangel Michael.
-
-Each prompt must:
-1. Feature Archangel Michael as the main subject
-2. Have DIFFERENT poses, settings, lighting, and moods
-3. Be suitable as a cinematic video background
-4. NOT contain any text or letters
-5. Be highly detailed and visually stunning
-
-Vary these elements across prompts:
-- Poses: standing, flying, fighting, meditating, protecting, descending, ascending
-- Settings: heaven, clouds, mountains, ancient temples, cosmic space, battlefields, gardens
-- Lighting: golden hour, moonlight, divine rays, aurora, sunrise, dramatic shadows
-- Armor: golden, silver, white, crystalline, ancient, radiant
-- Wings: spread wide, folded, glowing, feathered, ethereal
-- Mood: powerful, peaceful, fierce, serene, majestic, mysterious
-
-Output EXACTLY {count} prompts, one per line, numbered 1-{count}.
-Each prompt should be 50-100 words.
-
-Image prompts:"""
-
 
 def fetch_shorts_folder_images(output_dir: str, count: int) -> list:
     """Fetch images from shorts folder on server, download them locally"""
@@ -258,258 +209,30 @@ def fetch_shorts_folder_images(output_dir: str, count: int) -> list:
         return []
 
 
-def get_archangel_prompt() -> Optional[str]:
-    """Get Archangel Michael image prompt from Gemini"""
-    if not GEMINI_API_KEY:
-        print("GEMINI_API_KEY not set")
-        return None
-
-    # Get model from settings, fallback to defaults
-    settings_model = get_gemini_model_from_settings()
-    models = [settings_model, 'gemini-2.5-flash', 'gemini-2.0-flash-exp']
-    # Remove duplicates
-    models = list(dict.fromkeys(models))
-
-    for model in models:
-        try:
-            print(f"Generating prompt with {model}...")
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
-
-            response = requests.post(url, json={
-                "contents": [{"parts": [{"text": ARCHANGEL_PROMPT}]}],
-                "generationConfig": {
-                    "temperature": 0.9,
-                    "maxOutputTokens": 500,
-                    "thinkingConfig": {"thinkingBudget": 0}
-                }
-            }, timeout=60)
-
-            if response.status_code == 200:
-                data = response.json()
-                if data.get("candidates", [{}])[0].get("finishReason") == "SAFETY":
-                    continue
-                text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
-                if text:
-                    print(f"Prompt: {text[:80]}...")
-                    return text
-        except Exception as e:
-            print(f"{model} error: {e}")
-            continue
-
-    return None
-
-
-def generate_ai_image(output_path: str) -> bool:
-    """Generate AI image with Archangel Michael theme"""
-    import base64
-
-    if not NEBIUS_API_KEY:
-        print("NEBIUS_API_KEY not set")
+def generate_ai_image(output_path: str, script_text: str = "") -> bool:
+    """Generate AI image using FLUX.1-schnell via ai_image_generator"""
+    if not AI_IMAGE_AVAILABLE:
+        print("❌ AI Image Generator not available")
         return False
 
-    prompt = get_archangel_prompt()
-    if not prompt:
-        print("Failed to get prompt from Gemini")
-        return False
+    # Use default script if none provided
+    if not script_text:
+        script_text = "Archangel Michael, divine warrior, majestic presence, heavenly scene"
 
-    print(f"Generating AI image (1080x1920)...")
-
-    try:
-        from openai import OpenAI
-
-        client = OpenAI(
-            base_url="https://api.tokenfactory.nebius.com/v1/",
-            api_key=NEBIUS_API_KEY
-        )
-
-        for attempt in range(3):
-            try:
-                print(f"Attempt {attempt + 1}/3...")
-
-                response = client.images.generate(
-                    model="black-forest-labs/flux-dev",
-                    response_format="b64_json",
-                    extra_body={
-                        "response_extension": "png",
-                        "width": SHORTS_W,
-                        "height": SHORTS_H,
-                        "num_inference_steps": 28,
-                        "negative_prompt": "",
-                        "seed": -1
-                    },
-                    prompt=prompt
-                )
-
-                if response.data and len(response.data) > 0:
-                    image_data = base64.b64decode(response.data[0].b64_json)
-
-                    with open(output_path, 'wb') as f:
-                        f.write(image_data)
-
-                    # Convert to JPEG
-                    try:
-                        from PIL import Image
-                        img = Image.open(output_path)
-                        if img.mode == 'RGBA':
-                            img = img.convert('RGB')
-                        img.save(output_path, "JPEG", quality=95)
-                    except ImportError:
-                        pass
-
-                    print(f"AI image saved: {output_path}")
-                    return True
-
-            except Exception as e:
-                print(f"Attempt {attempt + 1} error: {e}")
-
-            if attempt < 2:
-                time.sleep(5)
-
-        return False
-
-    except ImportError:
-        print("openai package not installed. Run: pip install openai")
-        return False
+    return flux_generate_image(script_text, output_path, width=SHORTS_W, height=SHORTS_H)
 
 
-def get_multiple_archangel_prompts(count: int) -> list:
-    """Get multiple Archangel Michael image prompts from Gemini"""
-    if not GEMINI_API_KEY:
-        print("GEMINI_API_KEY not set")
+def generate_multiple_ai_images(output_dir: str, count: int, script_text: str = "") -> list:
+    """Generate multiple AI images using FLUX.1-schnell via ai_image_generator"""
+    if not AI_IMAGE_AVAILABLE:
+        print("❌ AI Image Generator not available")
         return []
 
-    settings_model = get_gemini_model_from_settings()
-    models = [settings_model, 'gemini-2.5-flash', 'gemini-2.0-flash-exp']
-    models = list(dict.fromkeys(models))
+    # Use default script if none provided
+    if not script_text:
+        script_text = "Archangel Michael, divine warrior, majestic presence, heavenly scene"
 
-    prompt = ARCHANGEL_MULTI_PROMPT.format(count=count)
-
-    for model in models:
-        try:
-            print(f"Generating {count} prompts with {model}...")
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
-
-            response = requests.post(url, json={
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {
-                    "temperature": 0.9,
-                    "maxOutputTokens": 2000,
-                    "thinkingConfig": {"thinkingBudget": 0}
-                }
-            }, timeout=90)
-
-            if response.status_code == 200:
-                data = response.json()
-                if data.get("candidates", [{}])[0].get("finishReason") == "SAFETY":
-                    continue
-
-                text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
-                if text:
-                    # Parse numbered prompts
-                    prompts = []
-                    lines = text.split('\n')
-                    for line in lines:
-                        line = line.strip()
-                        if line and line[0].isdigit():
-                            for i, char in enumerate(line):
-                                if char in '.):' and i < 3:
-                                    line = line[i+1:].strip()
-                                    break
-                        if line and len(line) > 20:
-                            prompts.append(line)
-
-                    if len(prompts) >= count:
-                        print(f"Generated {len(prompts)} prompts")
-                        return prompts[:count]
-                    elif prompts:
-                        print(f"Got {len(prompts)} prompts, needed {count}")
-                        while len(prompts) < count:
-                            prompts.append(prompts[len(prompts) % len(prompts)])
-                        return prompts
-
-        except Exception as e:
-            print(f"{model} error: {e}")
-            continue
-
-    return []
-
-
-def generate_multiple_ai_images(output_dir: str, count: int) -> list:
-    """Generate multiple AI images with Archangel Michael theme"""
-    import base64
-
-    if not NEBIUS_API_KEY:
-        print("NEBIUS_API_KEY not set")
-        return []
-
-    prompts = get_multiple_archangel_prompts(count)
-    if not prompts:
-        print("Failed to get prompts from Gemini")
-        return []
-
-    print(f"Generating {count} AI images (1080x1920)...")
-
-    try:
-        from openai import OpenAI
-
-        client = OpenAI(
-            base_url="https://api.tokenfactory.nebius.com/v1/",
-            api_key=NEBIUS_API_KEY
-        )
-
-        generated_paths = []
-        for i, prompt in enumerate(prompts):
-            output_path = os.path.join(output_dir, f"ai_image_{i+1}.jpg")
-            print(f"Image {i+1}/{count}: {prompt[:60]}...")
-
-            for attempt in range(3):
-                try:
-                    response = client.images.generate(
-                        model="black-forest-labs/flux-dev",
-                        response_format="b64_json",
-                        extra_body={
-                            "response_extension": "png",
-                            "width": SHORTS_W,
-                            "height": SHORTS_H,
-                            "num_inference_steps": 28,
-                            "negative_prompt": "",
-                            "seed": -1
-                        },
-                        prompt=prompt
-                    )
-
-                    if response.data and len(response.data) > 0:
-                        image_data = base64.b64decode(response.data[0].b64_json)
-
-                        with open(output_path, 'wb') as f:
-                            f.write(image_data)
-
-                        try:
-                            from PIL import Image
-                            img = Image.open(output_path)
-                            if img.mode == 'RGBA':
-                                img = img.convert('RGB')
-                            img.save(output_path, "JPEG", quality=95)
-                        except ImportError:
-                            pass
-
-                        generated_paths.append(output_path)
-                        print(f"   Saved: {output_path}")
-                        break
-
-                except Exception as e:
-                    print(f"   Attempt {attempt + 1} error: {e}")
-                    if attempt < 2:
-                        time.sleep(3)
-
-            time.sleep(2)  # Delay between images
-
-        print(f"Generated {len(generated_paths)}/{count} images")
-        return generated_paths
-
-    except ImportError:
-        print("openai package not installed")
-        return []
+    return flux_generate_multiple_images(script_text, output_dir, count, width=SHORTS_W, height=SHORTS_H)
 
 # ============================================================================
 # SUBTITLE GENERATION
@@ -913,6 +636,7 @@ async def process_job(job: Dict) -> bool:
 
     short_number = job.get("short_number", job.get("video_number", 0))
     source_video = job.get("source_video", "SHORTS")
+    script_text = job.get("script_text", "")  # Get script for AI image prompts
 
     print(f"\n{'='*50}")
     print(f"SHORTS JOB: {job_id[:8]} (#{short_number})")
@@ -949,7 +673,7 @@ async def process_job(job: Dict) -> bool:
         remaining = num_images - folder_count
         if remaining > 0:
             print(f"📷 Need {remaining} more images, generating AI images...")
-            ai_images = generate_multiple_ai_images(OUTPUT_DIR, remaining)
+            ai_images = generate_multiple_ai_images(OUTPUT_DIR, remaining, script_text)
             if ai_images:
                 local_images.extend(ai_images)
                 print(f"✅ Total: {folder_count} from folder + {len(ai_images)} AI = {len(local_images)} images")
@@ -958,7 +682,7 @@ async def process_job(job: Dict) -> bool:
             # Fallback to single AI image
             print("No images available, trying single AI image...")
             single_image = os.path.join(OUTPUT_DIR, f"image_{job_id}.jpg")
-            if generate_ai_image(single_image):
+            if generate_ai_image(single_image, script_text):
                 local_images = [single_image]
             else:
                 raise Exception("Failed to get any images")

@@ -1,33 +1,63 @@
 #!/usr/bin/env python3
 """
 AI Image Generator
-Uses Gemini to analyze script and Pollinations.ai to generate images
+Uses Gemini to generate scene prompts and FLUX.1-schnell for image generation
 
 Flow:
-1. Script -> Gemini -> Image generation prompt
-2. Image prompt -> Pollinations.ai -> Generated image
+1. Script -> Gemini -> Scene image prompt (every 12 sec)
+2. Image prompt -> FLUX.1-schnell (local GPU) -> Generated image
 """
 
 import os
 import requests
+import random
 from typing import Optional, List
-from urllib.parse import quote
 
-# Google Generative AI (for text generation)
-try:
-    import google.generativeai as genai
-    GENAI_AVAILABLE = True
-except ImportError:
-    GENAI_AVAILABLE = False
-    print("⚠️ google-generativeai not installed. Run: pip install google-generativeai")
+# FLUX model (loaded lazily)
+FLUX_PIPE = None
+FLUX_AVAILABLE = False
+
+def load_flux_model():
+    """Load FLUX.1-schnell model lazily"""
+    global FLUX_PIPE, FLUX_AVAILABLE
+    if FLUX_PIPE is not None:
+        return FLUX_PIPE
+
+    try:
+        import torch
+        from diffusers import FluxPipeline
+        from huggingface_hub import login
+
+        print("🔄 Loading FLUX.1-schnell model...")
+
+        # HF Token from environment
+        HF_TOKEN = os.getenv("HF_TOKEN")
+        if HF_TOKEN:
+            login(token=HF_TOKEN)
+
+        FLUX_PIPE = FluxPipeline.from_pretrained(
+            "black-forest-labs/FLUX.1-schnell",
+            torch_dtype=torch.bfloat16
+        )
+
+        # Memory optimizations
+        FLUX_PIPE.enable_model_cpu_offload()
+        FLUX_PIPE.enable_attention_slicing()
+        FLUX_PIPE.enable_vae_slicing()
+        FLUX_PIPE.vae.enable_tiling()
+
+        FLUX_AVAILABLE = True
+        print("✅ FLUX.1-schnell loaded!")
+        return FLUX_PIPE
+    except Exception as e:
+        print(f"❌ Failed to load FLUX: {e}")
+        FLUX_AVAILABLE = False
+        return None
 
 
 # Configure API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 FILE_SERVER_URL = os.getenv("FILE_SERVER_URL", "http://38.242.144.132:8000")
-
-if GEMINI_API_KEY and GENAI_AVAILABLE:
-    genai.configure(api_key=GEMINI_API_KEY)
 
 
 def get_gemini_model_from_settings() -> str:
@@ -137,9 +167,9 @@ def analyze_script_for_image(script_text: str, max_chars: int = 3000) -> Optiona
     return None
 
 
-def generate_image_with_nebius(prompt: str, output_path: str, max_retries: int = 3, width: int = 1920, height: int = 1080) -> bool:
+def generate_image_with_flux(prompt: str, output_path: str, max_retries: int = 3, width: int = 1920, height: int = 1080) -> bool:
     """
-    Generate image using Nebius API (Flux model)
+    Generate image using FLUX.1-schnell (local GPU)
 
     Args:
         prompt: Image generation prompt
@@ -151,79 +181,52 @@ def generate_image_with_nebius(prompt: str, output_path: str, max_retries: int =
     Returns:
         True if successful, False otherwise
     """
-    import base64
+    import torch
 
-    NEBIUS_API_KEY = os.getenv("NEBIUS_API_KEY")
-    if not NEBIUS_API_KEY:
-        print("❌ NEBIUS_API_KEY not set")
-        return False
+    # Make dimensions divisible by 16 (FLUX requirement)
+    width = (width // 16) * 16
+    height = (height // 16) * 16
 
-    print(f"🎨 Generating image with Nebius (Flux) - {width}x{height}...")
+    print(f"🎨 Generating image with FLUX.1-schnell - {width}x{height}...")
     print(f"   Prompt: {prompt[:80]}...")
 
-    try:
-        from openai import OpenAI
+    pipe = load_flux_model()
+    if pipe is None:
+        print("❌ FLUX model not available")
+        return False
 
-        client = OpenAI(
-            base_url="https://api.tokenfactory.nebius.com/v1/",
-            api_key=NEBIUS_API_KEY
-        )
+    for attempt in range(max_retries):
+        try:
+            print(f"   Attempt {attempt + 1}/{max_retries} - Generating...")
 
-        for attempt in range(max_retries):
-            try:
-                print(f"   Attempt {attempt + 1}/{max_retries} - Generating with Flux...")
+            seed = random.randint(0, 2**32 - 1)
+            generator = torch.Generator("cuda").manual_seed(seed)
 
-                response = client.images.generate(
-                    model="black-forest-labs/flux-dev",
-                    response_format="b64_json",
-                    extra_body={
-                        "response_extension": "png",
-                        "width": width,
-                        "height": height,
-                        "num_inference_steps": 28,
-                        "negative_prompt": "",
-                        "seed": -1
-                    },
-                    prompt=prompt
-                )
+            # FLUX.1-schnell settings
+            image = pipe(
+                prompt=prompt,
+                num_inference_steps=4,  # schnell works best with 1-4 steps
+                guidance_scale=0.0,     # schnell doesn't use guidance
+                height=height,
+                width=width,
+                generator=generator
+            ).images[0]
 
-                if response.data and len(response.data) > 0:
-                    # Decode base64 image
-                    image_data = base64.b64decode(response.data[0].b64_json)
+            # Save as JPEG
+            image.save(output_path, "JPEG", quality=95, optimize=True)
+            print(f"✅ Image saved ({width}x{height}): {output_path}")
+            return True
 
-                    # Save the image
-                    with open(output_path, 'wb') as f:
-                        f.write(image_data)
-
-                    # Convert to JPEG if needed
-                    try:
-                        from PIL import Image
-                        img = Image.open(output_path)
-                        if img.mode == 'RGBA':
-                            img = img.convert('RGB')
-                        img.save(output_path, "JPEG", quality=95)
-                        print(f"✅ Image saved ({width}x{height}): {output_path}")
-                    except ImportError:
-                        print(f"✅ Image saved (PNG): {output_path}")
-
-                    return True
-                else:
-                    print(f"   ⚠️ No image data in response")
-
-            except Exception as e:
-                print(f"   ⚠️ Attempt {attempt + 1} error: {e}")
+        except Exception as e:
+            print(f"   ⚠️ Attempt {attempt + 1} error: {e}")
 
             if attempt < max_retries - 1:
                 import time
-                print(f"   Retrying in 5 seconds...")
-                time.sleep(5)
+                print(f"   Retrying in 3 seconds...")
+                time.sleep(3)
 
-        print("   ❌ All attempts failed")
-        return False
-
-    except ImportError:
-        print("❌ openai package not installed. Run: pip install openai")
-        return False
+    print("   ❌ All attempts failed")
+    return False
 
 
 def generate_ai_image(script_text: str, output_path: str, width: int = 1920, height: int = 1080) -> bool:
@@ -241,7 +244,7 @@ def generate_ai_image(script_text: str, output_path: str, width: int = 1920, hei
     """
     is_shorts = width == 1080 and height == 1920
     print("\n" + "="*50)
-    print(f"🤖 AI IMAGE GENERATION (Nebius Flux) - {'SHORTS 1080x1920' if is_shorts else '1920x1080'}")
+    print(f"🤖 AI IMAGE GENERATION (FLUX.1-schnell) - {'SHORTS 1080x1920' if is_shorts else '1920x1080'}")
     print("="*50)
 
     # Step 1: Analyze script and get image prompt using Gemini
@@ -251,8 +254,8 @@ def generate_ai_image(script_text: str, output_path: str, width: int = 1920, hei
         print("❌ Failed to generate image prompt")
         return False
 
-    # Step 2: Generate image with Nebius (Flux model)
-    success = generate_image_with_nebius(image_prompt, output_path, width=width, height=height)
+    # Step 2: Generate image with FLUX.1-schnell (local GPU)
+    success = generate_image_with_flux(image_prompt, output_path, width=width, height=height)
 
     if success:
         print("✅ AI image generation complete!")
@@ -373,10 +376,11 @@ def analyze_script_for_multiple_images(script_text: str, count: int, max_chars: 
 def generate_multiple_ai_images(script_text: str, output_dir: str, count: int,
                                  width: int = 1920, height: int = 1080) -> List[str]:
     """
-    Generate multiple AI images with Archangel Michael theme
+    Generate multiple AI images - uses Gemini 2.5 Pro for scene prompts, FLUX for generation.
+    Each image gets a unique scene prompt based on the script content.
 
     Args:
-        script_text: Script (not used, kept for compatibility)
+        script_text: Script to analyze for scene prompts
         output_dir: Directory to save images
         count: Number of images to generate
         width: Image width
@@ -386,42 +390,171 @@ def generate_multiple_ai_images(script_text: str, output_dir: str, count: int,
         List of generated image paths
     """
     import time
-    import random
 
     is_shorts = width == 1080 and height == 1920
     print("\n" + "="*50)
-    print(f"🤖 ARCHANGEL MICHAEL IMAGES - {count} images ({'SHORTS' if is_shorts else 'LANDSCAPE'})")
+    print(f"🤖 AI SCENE IMAGES (FLUX.1-schnell) - {count} images ({'SHORTS' if is_shorts else 'LANDSCAPE'})")
     print("="*50)
 
-    # Get Archangel Michael prompts from Gemini
-    prompts = analyze_script_for_multiple_images("", count)
+    # Generate scene prompts using Gemini 2.5 Pro
+    prompts = generate_scene_prompts(script_text, count)
 
     if not prompts:
-        print("❌ Failed to get prompts from Gemini")
+        print("❌ Failed to get scene prompts from Gemini")
         return []
 
-    # Generate each image
+    # Generate each image with FLUX
     generated_paths = []
     for i, prompt in enumerate(prompts):
         output_path = os.path.join(output_dir, f"ai_image_{i+1}.jpg")
-        print(f"\n📸 Generating image {i+1}/{count}...")
+        print(f"\n📸 Generating scene {i+1}/{count}...")
         print(f"   Prompt: {prompt[:60]}...")
 
-        success = generate_image_with_nebius(prompt, output_path, width=width, height=height)
+        success = generate_image_with_flux(prompt, output_path, width=width, height=height)
 
         if success:
             generated_paths.append(output_path)
         else:
             print(f"   ⚠️ Failed to generate image {i+1}")
 
-        # Small delay between requests
+        # Small delay between generations (GPU memory)
         if i < len(prompts) - 1:
-            time.sleep(2)
+            time.sleep(1)
 
     print(f"\n✅ Generated {len(generated_paths)}/{count} images")
     print("="*50 + "\n")
 
     return generated_paths
+
+
+# ============================================================================
+# SCENE PROMPT GENERATION (Gemini 3 Pro - Chunk-based)
+# ============================================================================
+
+CHUNK_SCENE_PROMPT = """Analyze this script segment and generate ONE vivid visual scene description.
+
+Script segment:
+{chunk}
+
+Create a cinematic image prompt that:
+1. Captures the emotion and theme of these sentences
+2. Is suitable as a video background (no text, no letters)
+3. Includes: setting, lighting, atmosphere, colors, artistic style
+4. Is 50-80 words
+5. If spiritual/religious content: include divine elements, heavenly imagery
+
+Output ONLY the image prompt, nothing else.
+
+Image prompt:"""
+
+
+def split_script_into_chunks(script_text: str, num_chunks: int) -> List[str]:
+    """
+    Split script into equal chunks for scene generation.
+    Each chunk represents ~12 seconds of video content.
+    """
+    # Clean and split into sentences
+    import re
+    sentences = re.split(r'(?<=[।.!?])\s+', script_text.strip())
+    sentences = [s.strip() for s in sentences if s.strip()]
+
+    if not sentences:
+        return [script_text] * num_chunks
+
+    # Distribute sentences across chunks
+    chunks = []
+    sentences_per_chunk = max(1, len(sentences) // num_chunks)
+
+    for i in range(num_chunks):
+        start_idx = i * sentences_per_chunk
+        if i == num_chunks - 1:
+            # Last chunk gets remaining sentences
+            chunk_sentences = sentences[start_idx:]
+        else:
+            chunk_sentences = sentences[start_idx:start_idx + sentences_per_chunk]
+
+        if chunk_sentences:
+            chunks.append(' '.join(chunk_sentences))
+        else:
+            # If no sentences left, repeat last chunk
+            chunks.append(chunks[-1] if chunks else script_text[:500])
+
+    return chunks
+
+
+def generate_scene_prompt_for_chunk(chunk_text: str, chunk_num: int, total_chunks: int) -> Optional[str]:
+    """
+    Generate a single scene prompt for a script chunk using Gemini 2.5 Pro.
+    """
+    if not GEMINI_API_KEY:
+        return None
+
+    # Use Gemini 3 Pro (latest and best)
+    models_to_try = ['gemini-3-pro-preview', 'gemini-3-flash-preview', 'gemini-2.5-pro']
+
+    prompt = CHUNK_SCENE_PROMPT.format(chunk=chunk_text[:1000])  # Limit chunk size
+
+    for model_name in models_to_try:
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
+
+            response = requests.post(url, json={
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "temperature": 0.8,
+                    "maxOutputTokens": 300,
+                    "thinkingConfig": {"thinkingBudget": 0}
+                }
+            }, timeout=30)
+
+            if response.status_code == 200:
+                data = response.json()
+
+                if data.get("candidates", [{}])[0].get("finishReason") == "SAFETY":
+                    continue
+
+                text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+                if text and len(text) > 20:
+                    return text
+
+        except Exception as e:
+            continue
+
+    return None
+
+
+def generate_scene_prompts(script_text: str, count: int) -> List[str]:
+    """
+    Generate scene-based image prompts using Gemini 2.5 Pro.
+    Splits script into chunks and generates prompt for each chunk separately.
+    """
+    if not GEMINI_API_KEY:
+        print("❌ GEMINI_API_KEY not set")
+        return []
+
+    print(f"🧠 Generating {count} scene prompts (chunk-based, Gemini 3 Pro)...")
+
+    # Split script into chunks
+    chunks = split_script_into_chunks(script_text, count)
+    print(f"   📝 Split script into {len(chunks)} chunks")
+
+    prompts = []
+    for i, chunk in enumerate(chunks):
+        print(f"   🎬 Scene {i+1}/{count}: analyzing chunk...")
+
+        scene_prompt = generate_scene_prompt_for_chunk(chunk, i+1, count)
+
+        if scene_prompt:
+            prompts.append(scene_prompt)
+            print(f"      ✓ {scene_prompt[:50]}...")
+        else:
+            # Fallback: use a generic spiritual scene
+            fallback = "Divine heavenly scene with golden light rays, ethereal clouds, peaceful atmosphere, cinematic lighting, spiritual imagery, 8K quality"
+            prompts.append(fallback)
+            print(f"      ⚠️ Using fallback prompt")
+
+    print(f"✅ Generated {len(prompts)} scene prompts")
+    return prompts
 
 
 # For testing
