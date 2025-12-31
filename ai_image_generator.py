@@ -420,8 +420,9 @@ def analyze_script_for_multiple_images(script_text: str, count: int, max_chars: 
 def generate_multiple_ai_images(script_text: str, output_dir: str, count: int,
                                  width: int = 1920, height: int = 1080) -> List[str]:
     """
-    Generate multiple AI images - uses Gemini for scene prompts, Replicate API for generation.
-    Each image gets a unique scene prompt based on the script content.
+    Generate multiple AI images - FAST parallel processing!
+    1. Generate all prompts quickly (parallel Gemini calls)
+    2. Generate all images in parallel (concurrent Replicate API calls)
 
     Args:
         script_text: Script to analyze for scene prompts
@@ -433,42 +434,98 @@ def generate_multiple_ai_images(script_text: str, output_dir: str, count: int,
     Returns:
         List of generated image paths
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     import time
 
     is_shorts = width == 1080 and height == 1920
     print("\n" + "="*50)
-    print(f"🤖 AI SCENE IMAGES (Replicate API) - {count} images ({'SHORTS' if is_shorts else 'LANDSCAPE'})")
+    print(f"🤖 AI SCENE IMAGES (Replicate API - PARALLEL) - {count} images")
     print("="*50)
 
-    # Generate scene prompts using Gemini 2.5 Pro
-    prompts = generate_scene_prompts(script_text, count)
+    # Step 1: Generate all scene prompts in PARALLEL (fast!)
+    prompts = generate_scene_prompts_parallel(script_text, count)
 
     if not prompts:
         print("❌ Failed to get scene prompts from Gemini")
         return []
 
-    # Generate each image with FLUX
-    generated_paths = []
-    for i, prompt in enumerate(prompts):
-        output_path = os.path.join(output_dir, f"ai_image_{i+1}.jpg")
-        print(f"\n📸 Generating scene {i+1}/{count}...")
-        print(f"   Prompt: {prompt[:60]}...")
+    # Step 2: Generate all images in PARALLEL using ThreadPool
+    print(f"\n🚀 Starting parallel image generation ({len(prompts)} images)...")
 
-        success = generate_image_with_flux(prompt, output_path, width=width, height=height)
+    generated_paths = [None] * len(prompts)  # Preserve order
 
+    def generate_single_image(args):
+        idx, prompt = args
+        output_path = os.path.join(output_dir, f"ai_image_{idx+1}.jpg")
+        print(f"   📸 [{idx+1}/{count}] Starting...")
+        success = generate_image_with_flux(prompt, output_path, width=width, height=height, max_retries=2)
         if success:
-            generated_paths.append(output_path)
-        else:
-            print(f"   ⚠️ Failed to generate image {i+1}")
+            return idx, output_path
+        return idx, None
 
-        # Small delay between generations (GPU memory)
-        if i < len(prompts) - 1:
-            time.sleep(1)
+    # Use ThreadPoolExecutor for parallel API calls (max 4 concurrent)
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {executor.submit(generate_single_image, (i, p)): i for i, p in enumerate(prompts)}
 
-    print(f"\n✅ Generated {len(generated_paths)}/{count} images")
+        for future in as_completed(futures):
+            try:
+                idx, path = future.result()
+                if path:
+                    generated_paths[idx] = path
+                    print(f"   ✅ [{idx+1}/{count}] Done!")
+                else:
+                    print(f"   ⚠️ [{idx+1}/{count}] Failed")
+            except Exception as e:
+                print(f"   ❌ Error: {e}")
+
+    # Filter out None values
+    final_paths = [p for p in generated_paths if p is not None]
+
+    print(f"\n✅ Generated {len(final_paths)}/{count} images")
     print("="*50 + "\n")
 
-    return generated_paths
+    return final_paths
+
+
+def generate_scene_prompts_parallel(script_text: str, count: int) -> List[str]:
+    """
+    Generate scene prompts in PARALLEL for speed!
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    if not GEMINI_API_KEY:
+        print("❌ GEMINI_API_KEY not set")
+        return []
+
+    print(f"🧠 Generating {count} scene prompts (PARALLEL)...")
+
+    # Split script into chunks
+    chunks = split_script_into_chunks(script_text, count)
+    print(f"   📝 Split script into {len(chunks)} chunks")
+
+    prompts = [None] * len(chunks)  # Preserve order
+    fallback = "Divine heavenly scene with golden light rays, ethereal clouds, peaceful atmosphere, cinematic lighting, spiritual imagery, 8K quality"
+
+    def generate_single_prompt(args):
+        idx, chunk = args
+        result = generate_scene_prompt_for_chunk(chunk, idx+1, count)
+        return idx, result if result else fallback
+
+    # Parallel prompt generation (max 6 concurrent Gemini calls)
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        futures = {executor.submit(generate_single_prompt, (i, c)): i for i, c in enumerate(chunks)}
+
+        for future in as_completed(futures):
+            try:
+                idx, prompt = future.result()
+                prompts[idx] = prompt
+                print(f"   🎬 [{idx+1}/{count}] ✓ {prompt[:40]}...")
+            except Exception as e:
+                prompts[futures[future]] = fallback
+                print(f"   ⚠️ Error, using fallback")
+
+    print(f"✅ Generated {len([p for p in prompts if p])} prompts")
+    return prompts
 
 
 # ============================================================================
