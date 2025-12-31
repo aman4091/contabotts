@@ -247,7 +247,12 @@ print("Image saved!")
                 print(f"✅ Image saved: {output_path}")
                 return True
             else:
-                print(f"   ⚠️ Subprocess failed: {result.stderr[:200] if result.stderr else 'Unknown error'}")
+                # Show both stdout and stderr for debugging
+                if result.stdout:
+                    print(f"   stdout: {result.stdout[-500:]}")
+                if result.stderr:
+                    print(f"   stderr: {result.stderr[-500:]}")
+                print(f"   ⚠️ Subprocess failed (code {result.returncode})")
 
         except subprocess.TimeoutExpired:
             print(f"   ⚠️ Timeout after 5 minutes")
