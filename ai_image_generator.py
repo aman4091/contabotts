@@ -215,6 +215,10 @@ def generate_image_with_flux(prompt: str, output_path: str, max_retries: int = 3
 
             if attempt < max_retries - 1:
                 import time
+                import gc
+                # Clear GPU memory before retry
+                gc.collect()
+                torch.cuda.empty_cache()
                 print(f"   Retrying in 3 seconds...")
                 time.sleep(3)
 
