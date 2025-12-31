@@ -513,8 +513,8 @@ def generate_scene_prompts_parallel(script_text: str, count: int) -> List[str]:
         result = generate_scene_prompt_for_chunk(chunk, idx+1, count)
         return idx, result if result else fallback
 
-    # Parallel prompt generation (max 6 concurrent Gemini calls)
-    with ThreadPoolExecutor(max_workers=6) as executor:
+    # Parallel prompt generation (max 2 concurrent - Gemini rate limits)
+    with ThreadPoolExecutor(max_workers=2) as executor:
         futures = {executor.submit(generate_single_prompt, (i, c)): i for i, c in enumerate(chunks)}
 
         for future in as_completed(futures):
@@ -592,9 +592,9 @@ def generate_scene_prompt_for_chunk(chunk_text: str, chunk_num: int, total_chunk
     """
     prompt = CHUNK_SCENE_PROMPT.format(chunk=chunk_text[:1000])  # Limit chunk size
 
-    # Try Gemini 2.5 Pro first
+    # Try Gemini 3 Flash first (fast + cheap), fallback to 2.5 Flash
     if GEMINI_API_KEY:
-        models_to_try = ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.0-flash-exp']
+        models_to_try = ['gemini-3-flash-preview', 'gemini-2.5-flash']
 
         for model_name in models_to_try:
             try:
