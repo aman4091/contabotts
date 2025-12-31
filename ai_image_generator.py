@@ -428,7 +428,7 @@ def generate_multiple_ai_images(script_text: str, output_dir: str, count: int,
 
 
 # ============================================================================
-# SCENE PROMPT GENERATION (Gemini 2.5 Pro - Chunk-based)
+# SCENE PROMPT GENERATION (Gemini 3 Pro - Chunk-based)
 # ============================================================================
 
 CHUNK_SCENE_PROMPT = """Analyze this script segment and generate ONE vivid visual scene description.
@@ -491,7 +491,7 @@ def generate_scene_prompt_for_chunk(chunk_text: str, chunk_num: int, total_chunk
         return None
 
     # Use Gemini 3 Pro (latest and best), fallback to 2.5
-    models_to_try = ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.0-flash']
+    models_to_try = ['gemini-3-pro-preview', 'gemini-3-flash-preview', 'gemini-2.5-pro']
 
     prompt = CHUNK_SCENE_PROMPT.format(chunk=chunk_text[:1000])  # Limit chunk size
 
@@ -536,7 +536,7 @@ def generate_scene_prompts(script_text: str, count: int) -> List[str]:
         print("❌ GEMINI_API_KEY not set")
         return []
 
-    print(f"🧠 Generating {count} scene prompts (chunk-based, Gemini 2.5 Pro)...")
+    print(f"🧠 Generating {count} scene prompts (chunk-based, Gemini 3 Pro)...")
 
     # Split script into chunks
     chunks = split_script_into_chunks(script_text, count)
