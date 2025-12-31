@@ -256,10 +256,9 @@ class LandscapeGenerator:
     def __init__(self):
         try:
             import whisper
-            import torch
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-            print(f"🔄 Loading Whisper on {device.upper()}...")
-            self.model = whisper.load_model("base", device=device)
+            # Always load Whisper on CPU - GPU reserved for FLUX image generation
+            print(f"🔄 Loading Whisper on CPU (GPU reserved for FLUX)...")
+            self.model = whisper.load_model("base", device="cpu")
         except:
             print("❌ Whisper Load Failed"); sys.exit(1)
 
