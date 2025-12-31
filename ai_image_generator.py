@@ -15,6 +15,7 @@ from typing import Optional, List
 
 # Configure API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
 FILE_SERVER_URL = os.getenv("FILE_SERVER_URL", "http://38.242.144.132:8000")
 
@@ -490,14 +491,15 @@ def generate_multiple_ai_images(script_text: str, output_dir: str, count: int,
 def generate_scene_prompts_parallel(script_text: str, count: int) -> List[str]:
     """
     Generate scene prompts in PARALLEL for speed!
+    Uses Gemini 2.5 Pro with DeepSeek fallback.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    if not GEMINI_API_KEY:
-        print("❌ GEMINI_API_KEY not set")
+    if not GEMINI_API_KEY and not DEEPSEEK_API_KEY:
+        print("❌ Neither GEMINI_API_KEY nor DEEPSEEK_API_KEY set")
         return []
 
-    print(f"🧠 Generating {count} scene prompts (PARALLEL)...")
+    print(f"🧠 Generating {count} scene prompts (PARALLEL - Gemini 2.5 + DeepSeek fallback)...")
 
     # Split script into chunks
     chunks = split_script_into_chunks(script_text, count)
@@ -585,63 +587,93 @@ def split_script_into_chunks(script_text: str, num_chunks: int) -> List[str]:
 
 def generate_scene_prompt_for_chunk(chunk_text: str, chunk_num: int, total_chunks: int) -> Optional[str]:
     """
-    Generate a single scene prompt for a script chunk using Gemini 3 Pro.
+    Generate a single scene prompt for a script chunk.
+    Uses Gemini 2.5 Pro first, then falls back to DeepSeek.
     """
-    if not GEMINI_API_KEY:
-        print("      ❌ GEMINI_API_KEY not set")
-        return None
-
-    # Use Gemini 3 Pro (latest and best), fallback to 2.5
-    models_to_try = ['gemini-3-pro-preview', 'gemini-3-flash-preview', 'gemini-2.5-pro']
-
     prompt = CHUNK_SCENE_PROMPT.format(chunk=chunk_text[:1000])  # Limit chunk size
 
-    for model_name in models_to_try:
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
+    # Try Gemini 2.5 Pro first
+    if GEMINI_API_KEY:
+        models_to_try = ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.0-flash-exp']
 
-            response = requests.post(url, json={
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {
+        for model_name in models_to_try:
+            try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
+
+                response = requests.post(url, json={
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {
+                        "temperature": 0.8,
+                        "maxOutputTokens": 300
+                    }
+                }, timeout=30)
+
+                if response.status_code == 200:
+                    data = response.json()
+
+                    if data.get("candidates", [{}])[0].get("finishReason") == "SAFETY":
+                        print(f"      ⚠️ {model_name}: blocked by safety")
+                        continue
+
+                    text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+                    if text and len(text) > 20:
+                        return text
+                elif response.status_code == 429:
+                    print(f"      ⚠️ {model_name}: quota exceeded, trying DeepSeek...")
+                    break  # Exit Gemini loop, try DeepSeek
+                else:
+                    try:
+                        error_msg = response.json().get("error", {}).get("message", "")[:100]
+                    except:
+                        error_msg = response.text[:100]
+                    print(f"      ⚠️ {model_name}: HTTP {response.status_code} - {error_msg}")
+
+            except Exception as e:
+                print(f"      ⚠️ {model_name}: {e}")
+                continue
+
+    # Fallback to DeepSeek
+    if DEEPSEEK_API_KEY:
+        try:
+            response = requests.post(
+                "https://api.deepseek.com/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "deepseek-chat",
+                    "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.8,
-                    "maxOutputTokens": 300
-                }
-            }, timeout=30)
+                    "max_tokens": 300
+                },
+                timeout=30
+            )
 
             if response.status_code == 200:
                 data = response.json()
-
-                if data.get("candidates", [{}])[0].get("finishReason") == "SAFETY":
-                    print(f"      ⚠️ {model_name}: blocked by safety")
-                    continue
-
-                text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+                text = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
                 if text and len(text) > 20:
+                    print(f"      ✓ DeepSeek fallback success")
                     return text
             else:
-                try:
-                    error_msg = response.json().get("error", {}).get("message", "")[:100]
-                except:
-                    error_msg = response.text[:100]
-                print(f"      ⚠️ {model_name}: HTTP {response.status_code} - {error_msg}")
-
+                print(f"      ⚠️ DeepSeek: HTTP {response.status_code}")
         except Exception as e:
-            print(f"      ⚠️ {model_name}: {e}")
-            continue
+            print(f"      ⚠️ DeepSeek: {e}")
 
     return None
 
 
 def generate_scene_prompts(script_text: str, count: int) -> List[str]:
     """
-    Generate scene-based image prompts using Gemini 2.5 Pro.
+    Generate scene-based image prompts using Gemini 2.5 Pro (fallback: DeepSeek).
     Splits script into chunks and generates prompt for each chunk separately.
     """
-    if not GEMINI_API_KEY:
-        print("❌ GEMINI_API_KEY not set")
+    if not GEMINI_API_KEY and not DEEPSEEK_API_KEY:
+        print("❌ Neither GEMINI_API_KEY nor DEEPSEEK_API_KEY set")
         return []
 
-    print(f"🧠 Generating {count} scene prompts (chunk-based, Gemini 3 Pro)...")
+    print(f"🧠 Generating {count} scene prompts (chunk-based, Gemini 2.5 Pro + DeepSeek fallback)...")
 
     # Split script into chunks
     chunks = split_script_into_chunks(script_text, count)
