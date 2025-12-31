@@ -18,7 +18,7 @@ FLUX_PIPE = None
 FLUX_AVAILABLE = False
 
 def load_flux_model():
-    """Load FLUX.1-schnell model lazily"""
+    """Load FLUX.1-schnell model lazily (same as vast_ai_image_generator.py)"""
     global FLUX_PIPE, FLUX_AVAILABLE
     if FLUX_PIPE is not None:
         return FLUX_PIPE
@@ -34,14 +34,23 @@ def load_flux_model():
         HF_TOKEN = os.getenv("HF_TOKEN")
         if HF_TOKEN:
             login(token=HF_TOKEN)
+            print("   ✓ HuggingFace authenticated")
 
+        # Load FLUX.1-schnell (same as vast_ai_image_generator.py)
         FLUX_PIPE = FluxPipeline.from_pretrained(
             "black-forest-labs/FLUX.1-schnell",
             torch_dtype=torch.bfloat16
-        ).to("cuda")
+        )
+
+        # Memory optimization for 24GB VRAM (exact same as vast_ai_image_generator.py)
+        print("   ✓ Enabling memory optimizations...")
+        FLUX_PIPE.enable_model_cpu_offload()
+        FLUX_PIPE.enable_attention_slicing()
+        FLUX_PIPE.enable_vae_slicing()
+        FLUX_PIPE.vae.enable_tiling()
 
         FLUX_AVAILABLE = True
-        print("✅ FLUX.1-schnell loaded on CUDA!")
+        print("✅ FLUX.1-schnell loaded successfully!")
         return FLUX_PIPE
     except Exception as e:
         print(f"❌ Failed to load FLUX: {e}")
@@ -163,17 +172,7 @@ def analyze_script_for_image(script_text: str, max_chars: int = 3000) -> Optiona
 
 def generate_image_with_flux(prompt: str, output_path: str, max_retries: int = 3, width: int = 1920, height: int = 1080) -> bool:
     """
-    Generate image using FLUX.1-schnell (local GPU)
-
-    Args:
-        prompt: Image generation prompt
-        output_path: Path to save the generated image
-        max_retries: Number of retry attempts
-        width: Image width (default 1920 for landscape)
-        height: Image height (default 1080 for landscape)
-
-    Returns:
-        True if successful, False otherwise
+    Generate image using FLUX.1-schnell (exact same as vast_ai_image_generator.py)
     """
     import torch
 
@@ -196,7 +195,7 @@ def generate_image_with_flux(prompt: str, output_path: str, max_retries: int = 3
             seed = random.randint(0, 2**32 - 1)
             generator = torch.Generator("cuda").manual_seed(seed)
 
-            # FLUX.1-schnell settings
+            # FLUX.1-schnell optimized settings (exact same as vast_ai_image_generator.py)
             image = pipe(
                 prompt=prompt,
                 num_inference_steps=4,  # schnell works best with 1-4 steps
@@ -206,9 +205,9 @@ def generate_image_with_flux(prompt: str, output_path: str, max_retries: int = 3
                 generator=generator
             ).images[0]
 
-            # Save as JPEG
+            # Save as JPEG (same quality as vast_ai_image_generator.py)
             image.save(output_path, "JPEG", quality=95, optimize=True)
-            print(f"✅ Image saved ({width}x{height}): {output_path}")
+            print(f"✅ Image saved (seed={seed}): {output_path}")
             return True
 
         except Exception as e:
