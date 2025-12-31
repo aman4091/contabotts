@@ -38,16 +38,10 @@ def load_flux_model():
         FLUX_PIPE = FluxPipeline.from_pretrained(
             "black-forest-labs/FLUX.1-schnell",
             torch_dtype=torch.bfloat16
-        )
-
-        # Memory optimizations
-        FLUX_PIPE.enable_model_cpu_offload()
-        FLUX_PIPE.enable_attention_slicing()
-        FLUX_PIPE.enable_vae_slicing()
-        FLUX_PIPE.vae.enable_tiling()
+        ).to("cuda")
 
         FLUX_AVAILABLE = True
-        print("✅ FLUX.1-schnell loaded!")
+        print("✅ FLUX.1-schnell loaded on CUDA!")
         return FLUX_PIPE
     except Exception as e:
         print(f"❌ Failed to load FLUX: {e}")
