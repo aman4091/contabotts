@@ -170,99 +170,94 @@ def analyze_script_for_image(script_text: str, max_chars: int = 3000) -> Optiona
     return None
 
 
+def apply_vignette(image, strength: float = 0.4):
+    """Apply vignette effect to image"""
+    import numpy as np
+    from PIL import Image
+
+    img_array = np.array(image, dtype=np.float32)
+    rows, cols = img_array.shape[:2]
+
+    # Create vignette mask
+    X = np.arange(0, cols)
+    Y = np.arange(0, rows)
+    X, Y = np.meshgrid(X, Y)
+
+    center_x, center_y = cols / 2, rows / 2
+
+    # Distance from center (normalized)
+    dist = np.sqrt((X - center_x) ** 2 + (Y - center_y) ** 2)
+    max_dist = np.sqrt(center_x ** 2 + center_y ** 2)
+    dist = dist / max_dist
+
+    # Vignette formula (smooth falloff)
+    vignette = 1 - (dist ** 2) * strength
+    vignette = np.clip(vignette, 0, 1)
+
+    # Apply to all channels
+    if len(img_array.shape) == 3:
+        vignette = np.dstack([vignette] * img_array.shape[2])
+
+    vignetted = img_array * vignette
+    vignetted = np.clip(vignetted, 0, 255).astype(np.uint8)
+
+    return Image.fromarray(vignetted)
+
+
 def generate_image_with_flux(prompt: str, output_path: str, max_retries: int = 3, width: int = 1920, height: int = 1080) -> bool:
     """
-    Generate image using vast_ai_image_generator.py as subprocess (guaranteed to work)
+    Generate image using FLUX.1-schnell directly (no subprocess)
     """
-    import subprocess
-    import json
+    import torch
 
-    print(f"🎨 Generating image via subprocess - {width}x{height}...")
+    # Make dimensions divisible by 16 (FLUX requirement)
+    width = (width // 16) * 16
+    height = (height // 16) * 16
+
+    print(f"🎨 Generating image with FLUX.1-schnell - {width}x{height}...")
     print(f"   Prompt: {prompt[:80]}...")
 
-    # Escape prompt for Python string
-    escaped_prompt = prompt.replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
-    hf_token = os.getenv("HF_TOKEN", "")
-
-    # Create a temp script that generates one image
-    script_content = '''
-import sys
-sys.path.insert(0, "/workspace")
-import torch
-import random
-from diffusers import FluxPipeline
-from huggingface_hub import login
-
-# HF Token
-HF_TOKEN = "''' + hf_token + '''"
-if HF_TOKEN:
-    login(token=HF_TOKEN)
-
-print("Loading FLUX.1-schnell...")
-pipe = FluxPipeline.from_pretrained(
-    "black-forest-labs/FLUX.1-schnell",
-    torch_dtype=torch.bfloat16
-)
-pipe.enable_model_cpu_offload()
-pipe.enable_attention_slicing()
-pipe.enable_vae_slicing()
-pipe.vae.enable_tiling()
-print("Model loaded!")
-
-seed = random.randint(0, 2**32 - 1)
-generator = torch.Generator("cuda").manual_seed(seed)
-
-prompt = "''' + escaped_prompt + '''"
-
-image = pipe(
-    prompt=prompt,
-    num_inference_steps=4,
-    guidance_scale=0.0,
-    height=''' + str(height) + ''',
-    width=''' + str(width) + ''',
-    generator=generator
-).images[0]
-
-image.save("''' + output_path + '''", "JPEG", quality=95, optimize=True)
-print("Image saved!")
-'''
-
-    # Write temp script
-    script_path = "/tmp/flux_gen_temp.py"
-    with open(script_path, "w") as f:
-        f.write(script_content)
+    pipe = load_flux_model()
+    if pipe is None:
+        print("❌ FLUX model not available")
+        return False
 
     for attempt in range(max_retries):
         try:
-            print(f"   Attempt {attempt + 1}/{max_retries} - Running subprocess...")
+            print(f"   Attempt {attempt + 1}/{max_retries} - Generating...")
 
-            result = subprocess.run(
-                ["python3", script_path],
-                capture_output=True,
-                text=True,
-                timeout=300
-            )
+            seed = random.randint(0, 2**32 - 1)
+            generator = torch.Generator("cuda").manual_seed(seed)
 
-            if result.returncode == 0 and os.path.exists(output_path):
-                print(f"✅ Image saved: {output_path}")
-                return True
-            else:
-                # Show both stdout and stderr for debugging
-                if result.stdout:
-                    print(f"   stdout: {result.stdout[-500:]}")
-                if result.stderr:
-                    print(f"   stderr: {result.stderr[-500:]}")
-                print(f"   ⚠️ Subprocess failed (code {result.returncode})")
+            # FLUX.1-schnell optimized settings
+            image = pipe(
+                prompt=prompt,
+                num_inference_steps=4,
+                guidance_scale=0.0,
+                height=height,
+                width=width,
+                generator=generator
+            ).images[0]
 
-        except subprocess.TimeoutExpired:
-            print(f"   ⚠️ Timeout after 5 minutes")
+            # Apply vignette effect
+            print(f"   Applying vignette effect...")
+            image = apply_vignette(image, strength=0.4)
+
+            # Save as JPEG
+            image.save(output_path, "JPEG", quality=95, optimize=True)
+            print(f"✅ Image saved (seed={seed}): {output_path}")
+            return True
+
         except Exception as e:
-            print(f"   ⚠️ Error: {e}")
+            print(f"   ⚠️ Attempt {attempt + 1} error: {e}")
 
-        if attempt < max_retries - 1:
-            import time
-            print(f"   Retrying in 3 seconds...")
-            time.sleep(3)
+            if attempt < max_retries - 1:
+                import time
+                import gc
+                gc.collect()
+                torch.cuda.empty_cache()
+                print(f"   Retrying in 3 seconds...")
+                time.sleep(3)
 
     print("   ❌ All attempts failed")
     return False
