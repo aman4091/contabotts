@@ -175,14 +175,17 @@ def generate_image_with_flux(prompt: str, output_path: str, max_retries: int = 3
     Generate image using vast_ai_image_generator.py as subprocess (guaranteed to work)
     """
     import subprocess
-    import tempfile
     import json
 
     print(f"🎨 Generating image via subprocess - {width}x{height}...")
     print(f"   Prompt: {prompt[:80]}...")
 
+    # Escape prompt for Python string
+    escaped_prompt = prompt.replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
+    hf_token = os.getenv("HF_TOKEN", "")
+
     # Create a temp script that generates one image
-    script_content = f'''
+    script_content = '''
 import sys
 sys.path.insert(0, "/workspace")
 import torch
@@ -191,7 +194,7 @@ from diffusers import FluxPipeline
 from huggingface_hub import login
 
 # HF Token
-HF_TOKEN = "{os.getenv("HF_TOKEN", "")}"
+HF_TOKEN = "''' + hf_token + '''"
 if HF_TOKEN:
     login(token=HF_TOKEN)
 
@@ -209,19 +212,19 @@ print("Model loaded!")
 seed = random.randint(0, 2**32 - 1)
 generator = torch.Generator("cuda").manual_seed(seed)
 
-prompt = """{prompt.replace('"', '\\"')}"""
+prompt = "''' + escaped_prompt + '''"
 
 image = pipe(
     prompt=prompt,
     num_inference_steps=4,
     guidance_scale=0.0,
-    height={height},
-    width={width},
+    height=''' + str(height) + ''',
+    width=''' + str(width) + ''',
     generator=generator
 ).images[0]
 
-image.save("{output_path}", "JPEG", quality=95, optimize=True)
-print(f"Image saved: {output_path}")
+image.save("''' + output_path + '''", "JPEG", quality=95, optimize=True)
+print("Image saved!")
 '''
 
     # Write temp script
