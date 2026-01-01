@@ -469,6 +469,8 @@ def generate_multiple_ai_images(script_text: str, output_dir: str, count: int,
                     print(f"   ⚠️ [{idx+1}/{count}] Image failed")
 
                 prompt_queue.task_done()
+                import time
+                time.sleep(3)  # Rate limit: 1 request per 3 seconds
             except:
                 # Queue empty and prompts done
                 if prompts_done.is_set() and prompt_queue.empty():
@@ -478,9 +480,9 @@ def generate_multiple_ai_images(script_text: str, output_dir: str, count: int,
     prompt_thread = threading.Thread(target=prompt_generator)
     prompt_thread.start()
 
-    # Start multiple image generator threads (4 parallel)
+    # Single image generator thread (1 req/3 sec)
     image_threads = []
-    for _ in range(4):
+    for _ in range(1):
         t = threading.Thread(target=image_generator)
         t.start()
         image_threads.append(t)
