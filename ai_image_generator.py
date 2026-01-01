@@ -114,7 +114,7 @@ def analyze_script_for_image(script_text: str, max_chars: int = 3000) -> Optiona
 
     # Get model from settings, with fallbacks
     settings_model = get_gemini_model_from_settings()
-    models_to_try = [settings_model, 'gemini-2.0-flash-exp', 'gemini-1.5-flash']
+    models_to_try = ['gemini-3-flash-preview', 'gemini-2.5-flash', settings_model]
     # Remove duplicates while preserving order
     models_to_try = list(dict.fromkeys(models_to_try))
 
@@ -342,7 +342,7 @@ def analyze_script_for_multiple_images(script_text: str, count: int, max_chars: 
         return []
 
     settings_model = get_gemini_model_from_settings()
-    models_to_try = [settings_model, 'gemini-2.0-flash-exp', 'gemini-1.5-flash']
+    models_to_try = ['gemini-3-flash-preview', 'gemini-2.5-flash', settings_model]
     models_to_try = list(dict.fromkeys(models_to_try))
 
     # Use Archangel Michael prompt instead of script analysis
@@ -525,7 +525,7 @@ def generate_scene_prompt_for_chunk(chunk_text: str, chunk_num: int, total_chunk
         return None
 
     # Use Gemini 3 Pro (latest and best), fallback to 2.5
-    models_to_try = ['gemini-3-pro-preview', 'gemini-3-flash-preview', 'gemini-2.5-pro']
+    models_to_try = ['gemini-3-flash-preview', 'gemini-2.5-flash']
 
     prompt = CHUNK_SCENE_PROMPT.format(chunk=chunk_text[:1000])  # Limit chunk size
 
