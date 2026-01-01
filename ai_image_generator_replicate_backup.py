@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
 AI Image Generator
-Uses Gemini to generate scene prompts and FLUX.1-schnell for image generation
+Uses Gemini to generate scene prompts and Replicate API for FLUX.1-schnell image generation
 
 Flow:
 1. Script -> Gemini -> Scene image prompt (every 12 sec)
-2. Image prompt -> FLUX.1-schnell (local GPU) -> Generated image
+2. Image prompt -> Replicate API (FLUX.1-schnell) -> Generated image
 """
 
 import os
@@ -13,53 +13,10 @@ import requests
 import random
 from typing import Optional, List
 
-# FLUX model (loaded lazily)
-FLUX_PIPE = None
-FLUX_AVAILABLE = False
-
-def load_flux_model():
-    """Load FLUX.1-schnell model lazily (same as vast_ai_image_generator.py)"""
-    global FLUX_PIPE, FLUX_AVAILABLE
-    if FLUX_PIPE is not None:
-        return FLUX_PIPE
-
-    try:
-        import torch
-        from diffusers import FluxPipeline
-        from huggingface_hub import login
-
-        print("🔄 Loading FLUX.1-schnell model...")
-
-        # HF Token from environment
-        HF_TOKEN = os.getenv("HF_TOKEN")
-        if HF_TOKEN:
-            login(token=HF_TOKEN)
-            print("   ✓ HuggingFace authenticated")
-
-        # Load FLUX.1-schnell (same as vast_ai_image_generator.py)
-        FLUX_PIPE = FluxPipeline.from_pretrained(
-            "black-forest-labs/FLUX.1-schnell",
-            torch_dtype=torch.bfloat16
-        )
-
-        # Memory optimization for 24GB VRAM (exact same as vast_ai_image_generator.py)
-        print("   ✓ Enabling memory optimizations...")
-        FLUX_PIPE.enable_model_cpu_offload()
-        FLUX_PIPE.enable_attention_slicing()
-        FLUX_PIPE.enable_vae_slicing()
-        FLUX_PIPE.vae.enable_tiling()
-
-        FLUX_AVAILABLE = True
-        print("✅ FLUX.1-schnell loaded successfully!")
-        return FLUX_PIPE
-    except Exception as e:
-        print(f"❌ Failed to load FLUX: {e}")
-        FLUX_AVAILABLE = False
-        return None
-
-
 # Configure API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
 FILE_SERVER_URL = os.getenv("FILE_SERVER_URL", "http://38.242.144.132:8000")
 
 
@@ -170,11 +127,12 @@ def analyze_script_for_image(script_text: str, max_chars: int = 3000) -> Optiona
     return None
 
 
-def apply_vignette(image, strength: float = 0.4):
-    """Apply vignette effect to image"""
+def apply_vignette(image_path: str, strength: float = 0.4):
+    """Apply vignette effect to image file"""
     import numpy as np
     from PIL import Image
 
+    image = Image.open(image_path)
     img_array = np.array(image, dtype=np.float32)
     rows, cols = img_array.shape[:2]
 
@@ -201,63 +159,116 @@ def apply_vignette(image, strength: float = 0.4):
     vignetted = img_array * vignette
     vignetted = np.clip(vignetted, 0, 255).astype(np.uint8)
 
-    return Image.fromarray(vignetted)
+    # Save back
+    result = Image.fromarray(vignetted)
+    result.save(image_path, "JPEG", quality=95, optimize=True)
+    return True
 
 
 def generate_image_with_flux(prompt: str, output_path: str, max_retries: int = 3, width: int = 1920, height: int = 1080) -> bool:
     """
-    Generate image using FLUX.1-schnell directly (no subprocess)
+    Generate image using Replicate API (FLUX.1-schnell)
+    No GPU needed - runs on Replicate's servers
     """
-    import torch
+    import time
 
-    # Make dimensions divisible by 16 (FLUX requirement)
-    width = (width // 16) * 16
-    height = (height // 16) * 16
+    if not REPLICATE_API_TOKEN:
+        print("❌ REPLICATE_API_TOKEN not set")
+        return False
 
-    print(f"🎨 Generating image with FLUX.1-schnell - {width}x{height}...")
+    # Replicate aspect ratios
+    if width > height:
+        aspect_ratio = "16:9"  # Landscape
+    elif height > width:
+        aspect_ratio = "9:16"  # Portrait/Shorts
+    else:
+        aspect_ratio = "1:1"  # Square
+
+    print(f"🎨 Generating image via Replicate API ({aspect_ratio})...")
     print(f"   Prompt: {prompt[:80]}...")
 
-    pipe = load_flux_model()
-    if pipe is None:
-        print("❌ FLUX model not available")
-        return False
+    headers = {
+        "Authorization": f"Bearer {REPLICATE_API_TOKEN}",
+        "Content-Type": "application/json",
+        "Prefer": "wait"  # Wait for result
+    }
 
     for attempt in range(max_retries):
         try:
-            print(f"   Attempt {attempt + 1}/{max_retries} - Generating...")
+            print(f"   Attempt {attempt + 1}/{max_retries} - Calling Replicate API...")
 
-            seed = random.randint(0, 2**32 - 1)
-            generator = torch.Generator("cuda").manual_seed(seed)
+            # Create prediction
+            response = requests.post(
+                "https://api.replicate.com/v1/models/black-forest-labs/flux-schnell/predictions",
+                headers=headers,
+                json={
+                    "input": {
+                        "prompt": prompt,
+                        "aspect_ratio": aspect_ratio,
+                        "num_outputs": 1,
+                        "output_format": "jpg",
+                        "output_quality": 95
+                    }
+                },
+                timeout=120
+            )
 
-            # FLUX.1-schnell optimized settings
-            image = pipe(
-                prompt=prompt,
-                num_inference_steps=4,
-                guidance_scale=0.0,
-                height=height,
-                width=width,
-                generator=generator
-            ).images[0]
+            if response.status_code in [200, 201]:
+                data = response.json()
 
-            # Apply vignette effect
-            print(f"   Applying vignette effect...")
-            image = apply_vignette(image, strength=0.4)
+                # Check if completed
+                if data.get("status") == "succeeded" and data.get("output"):
+                    image_url = data["output"][0] if isinstance(data["output"], list) else data["output"]
 
-            # Save as JPEG
-            image.save(output_path, "JPEG", quality=95, optimize=True)
-            print(f"✅ Image saved (seed={seed}): {output_path}")
-            return True
+                    # Download image
+                    print(f"   Downloading image...")
+                    img_response = requests.get(image_url, timeout=60)
+                    if img_response.status_code == 200:
+                        with open(output_path, "wb") as f:
+                            f.write(img_response.content)
+
+                        # Apply vignette effect
+                        print(f"   Applying vignette effect...")
+                        apply_vignette(output_path, strength=0.4)
+
+                        print(f"✅ Image saved: {output_path}")
+                        return True
+
+                # If still processing, poll for result
+                elif data.get("status") in ["starting", "processing"]:
+                    prediction_url = data.get("urls", {}).get("get") or f"https://api.replicate.com/v1/predictions/{data['id']}"
+
+                    for _ in range(60):  # Wait up to 60 seconds
+                        time.sleep(1)
+                        poll_response = requests.get(prediction_url, headers=headers, timeout=30)
+                        if poll_response.status_code == 200:
+                            poll_data = poll_response.json()
+                            if poll_data.get("status") == "succeeded" and poll_data.get("output"):
+                                image_url = poll_data["output"][0] if isinstance(poll_data["output"], list) else poll_data["output"]
+
+                                img_response = requests.get(image_url, timeout=60)
+                                if img_response.status_code == 200:
+                                    with open(output_path, "wb") as f:
+                                        f.write(img_response.content)
+
+                                    apply_vignette(output_path, strength=0.4)
+                                    print(f"✅ Image saved: {output_path}")
+                                    return True
+                            elif poll_data.get("status") == "failed":
+                                print(f"   ⚠️ Prediction failed: {poll_data.get('error', 'Unknown error')}")
+                                break
+
+                print(f"   ⚠️ Unexpected response: {data.get('status', 'unknown')}")
+
+            else:
+                print(f"   ⚠️ API error {response.status_code}: {response.text[:200]}")
 
         except Exception as e:
             print(f"   ⚠️ Attempt {attempt + 1} error: {e}")
 
-            if attempt < max_retries - 1:
-                import time
-                import gc
-                gc.collect()
-                torch.cuda.empty_cache()
-                print(f"   Retrying in 3 seconds...")
-                time.sleep(3)
+        if attempt < max_retries - 1:
+            print(f"   Retrying in 3 seconds...")
+            time.sleep(3)
 
     print("   ❌ All attempts failed")
     return False
@@ -278,7 +289,7 @@ def generate_ai_image(script_text: str, output_path: str, width: int = 1920, hei
     """
     is_shorts = width == 1080 and height == 1920
     print("\n" + "="*50)
-    print(f"🤖 AI IMAGE GENERATION (FLUX.1-schnell) - {'SHORTS 1080x1920' if is_shorts else '1920x1080'}")
+    print(f"🤖 AI IMAGE GENERATION (Replicate API) - {'SHORTS 9:16' if is_shorts else '16:9'}")
     print("="*50)
 
     # Step 1: Analyze script and get image prompt using Gemini
@@ -288,7 +299,7 @@ def generate_ai_image(script_text: str, output_path: str, width: int = 1920, hei
         print("❌ Failed to generate image prompt")
         return False
 
-    # Step 2: Generate image with FLUX.1-schnell (local GPU)
+    # Step 2: Generate image with Replicate API (FLUX.1-schnell)
     success = generate_image_with_flux(image_prompt, output_path, width=width, height=height)
 
     if success:
@@ -410,55 +421,94 @@ def analyze_script_for_multiple_images(script_text: str, count: int, max_chars: 
 def generate_multiple_ai_images(script_text: str, output_dir: str, count: int,
                                  width: int = 1920, height: int = 1080) -> List[str]:
     """
-    Generate multiple AI images - uses Gemini 2.5 Pro for scene prompts, FLUX for generation.
-    Each image gets a unique scene prompt based on the script content.
-
-    Args:
-        script_text: Script to analyze for scene prompts
-        output_dir: Directory to save images
-        count: Number of images to generate
-        width: Image width
-        height: Image height
-
-    Returns:
-        List of generated image paths
+    Generate multiple AI images.
+    Step 1: Generate ALL prompts first (parallel)
+    Step 2: Generate images one by one with 3 sec gap
     """
     import time
 
-    is_shorts = width == 1080 and height == 1920
     print("\n" + "="*50)
-    print(f"🤖 AI SCENE IMAGES (FLUX.1-schnell) - {count} images ({'SHORTS' if is_shorts else 'LANDSCAPE'})")
+    print(f"🤖 AI SCENE IMAGES - {count} images")
     print("="*50)
 
-    # Generate scene prompts using Gemini 2.5 Pro
-    prompts = generate_scene_prompts(script_text, count)
+    # Step 1: Generate ALL prompts first
+    print("\n📝 STEP 1: Generating all prompts...")
+    prompts = generate_scene_prompts_parallel(script_text, count)
 
     if not prompts:
-        print("❌ Failed to get scene prompts from Gemini")
+        print("❌ Failed to generate prompts")
         return []
 
-    # Generate each image with FLUX
-    generated_paths = []
-    for i, prompt in enumerate(prompts):
-        output_path = os.path.join(output_dir, f"ai_image_{i+1}.jpg")
-        print(f"\n📸 Generating scene {i+1}/{count}...")
-        print(f"   Prompt: {prompt[:60]}...")
+    print(f"✅ {len(prompts)} prompts ready!\n")
 
-        success = generate_image_with_flux(prompt, output_path, width=width, height=height)
+    # Step 2: Generate images one by one with 3 sec gap
+    print("🖼️ STEP 2: Generating images (1 per 3 sec)...")
+    generated_paths = []
+
+    for idx, prompt in enumerate(prompts):
+        output_path = os.path.join(output_dir, f"ai_image_{idx+1}.jpg")
+        print(f"\n   📸 [{idx+1}/{count}] Starting...")
+        print(f"      Prompt: {prompt[:50]}...")
+
+        success = generate_image_with_flux(prompt, output_path, width=width, height=height, max_retries=2)
 
         if success:
             generated_paths.append(output_path)
+            print(f"   ✅ [{idx+1}/{count}] Done!")
         else:
-            print(f"   ⚠️ Failed to generate image {i+1}")
+            print(f"   ⚠️ [{idx+1}/{count}] Failed")
 
-        # Small delay between generations (GPU memory)
-        if i < len(prompts) - 1:
-            time.sleep(1)
+        # Wait 3 seconds before next request (rate limit)
+        if idx < len(prompts) - 1:
+            print(f"   ⏳ Waiting 3 sec...")
+            time.sleep(3)
 
     print(f"\n✅ Generated {len(generated_paths)}/{count} images")
     print("="*50 + "\n")
 
     return generated_paths
+
+
+def generate_scene_prompts_parallel(script_text: str, count: int) -> List[str]:
+    """
+    Generate scene prompts in PARALLEL for speed!
+    Uses Gemini 2.5 Pro with DeepSeek fallback.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    if not GEMINI_API_KEY and not DEEPSEEK_API_KEY:
+        print("❌ Neither GEMINI_API_KEY nor DEEPSEEK_API_KEY set")
+        return []
+
+    print(f"🧠 Generating {count} scene prompts (PARALLEL - Gemini 2.5 + DeepSeek fallback)...")
+
+    # Split script into chunks
+    chunks = split_script_into_chunks(script_text, count)
+    print(f"   📝 Split script into {len(chunks)} chunks")
+
+    prompts = [None] * len(chunks)  # Preserve order
+    fallback = "Divine heavenly scene with golden light rays, ethereal clouds, peaceful atmosphere, cinematic lighting, spiritual imagery, 8K quality"
+
+    def generate_single_prompt(args):
+        idx, chunk = args
+        result = generate_scene_prompt_for_chunk(chunk, idx+1, count)
+        return idx, result if result else fallback
+
+    # Parallel prompt generation (max 2 concurrent - Gemini rate limits)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = {executor.submit(generate_single_prompt, (i, c)): i for i, c in enumerate(chunks)}
+
+        for future in as_completed(futures):
+            try:
+                idx, prompt = future.result()
+                prompts[idx] = prompt
+                print(f"   🎬 [{idx+1}/{count}] ✓ {prompt[:40]}...")
+            except Exception as e:
+                prompts[futures[future]] = fallback
+                print(f"   ⚠️ Error, using fallback")
+
+    print(f"✅ Generated {len([p for p in prompts if p])} prompts")
+    return prompts
 
 
 # ============================================================================
@@ -518,63 +568,93 @@ def split_script_into_chunks(script_text: str, num_chunks: int) -> List[str]:
 
 def generate_scene_prompt_for_chunk(chunk_text: str, chunk_num: int, total_chunks: int) -> Optional[str]:
     """
-    Generate a single scene prompt for a script chunk using Gemini 3 Pro.
+    Generate a single scene prompt for a script chunk.
+    Uses Gemini 2.5 Pro first, then falls back to DeepSeek.
     """
-    if not GEMINI_API_KEY:
-        print("      ❌ GEMINI_API_KEY not set")
-        return None
-
-    # Use Gemini 3 Pro (latest and best), fallback to 2.5
-    models_to_try = ['gemini-3-pro-preview', 'gemini-3-flash-preview', 'gemini-2.5-pro']
-
     prompt = CHUNK_SCENE_PROMPT.format(chunk=chunk_text[:1000])  # Limit chunk size
 
-    for model_name in models_to_try:
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
+    # Try Gemini 3 Flash first (fast + cheap), fallback to 2.5 Flash
+    if GEMINI_API_KEY:
+        models_to_try = ['gemini-3-flash-preview', 'gemini-2.5-flash']
 
-            response = requests.post(url, json={
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {
+        for model_name in models_to_try:
+            try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
+
+                response = requests.post(url, json={
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {
+                        "temperature": 0.8,
+                        "maxOutputTokens": 300
+                    }
+                }, timeout=30)
+
+                if response.status_code == 200:
+                    data = response.json()
+
+                    if data.get("candidates", [{}])[0].get("finishReason") == "SAFETY":
+                        print(f"      ⚠️ {model_name}: blocked by safety")
+                        continue
+
+                    text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+                    if text and len(text) > 20:
+                        return text
+                elif response.status_code == 429:
+                    print(f"      ⚠️ {model_name}: quota exceeded, trying DeepSeek...")
+                    break  # Exit Gemini loop, try DeepSeek
+                else:
+                    try:
+                        error_msg = response.json().get("error", {}).get("message", "")[:100]
+                    except:
+                        error_msg = response.text[:100]
+                    print(f"      ⚠️ {model_name}: HTTP {response.status_code} - {error_msg}")
+
+            except Exception as e:
+                print(f"      ⚠️ {model_name}: {e}")
+                continue
+
+    # Fallback to DeepSeek
+    if DEEPSEEK_API_KEY:
+        try:
+            response = requests.post(
+                "https://api.deepseek.com/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "deepseek-chat",
+                    "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.8,
-                    "maxOutputTokens": 300
-                }
-            }, timeout=30)
+                    "max_tokens": 300
+                },
+                timeout=30
+            )
 
             if response.status_code == 200:
                 data = response.json()
-
-                if data.get("candidates", [{}])[0].get("finishReason") == "SAFETY":
-                    print(f"      ⚠️ {model_name}: blocked by safety")
-                    continue
-
-                text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+                text = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
                 if text and len(text) > 20:
+                    print(f"      ✓ DeepSeek fallback success")
                     return text
             else:
-                try:
-                    error_msg = response.json().get("error", {}).get("message", "")[:100]
-                except:
-                    error_msg = response.text[:100]
-                print(f"      ⚠️ {model_name}: HTTP {response.status_code} - {error_msg}")
-
+                print(f"      ⚠️ DeepSeek: HTTP {response.status_code}")
         except Exception as e:
-            print(f"      ⚠️ {model_name}: {e}")
-            continue
+            print(f"      ⚠️ DeepSeek: {e}")
 
     return None
 
 
 def generate_scene_prompts(script_text: str, count: int) -> List[str]:
     """
-    Generate scene-based image prompts using Gemini 2.5 Pro.
+    Generate scene-based image prompts using Gemini 2.5 Pro (fallback: DeepSeek).
     Splits script into chunks and generates prompt for each chunk separately.
     """
-    if not GEMINI_API_KEY:
-        print("❌ GEMINI_API_KEY not set")
+    if not GEMINI_API_KEY and not DEEPSEEK_API_KEY:
+        print("❌ Neither GEMINI_API_KEY nor DEEPSEEK_API_KEY set")
         return []
 
-    print(f"🧠 Generating {count} scene prompts (chunk-based, Gemini 3 Pro)...")
+    print(f"🧠 Generating {count} scene prompts (chunk-based, Gemini 2.5 Pro + DeepSeek fallback)...")
 
     # Split script into chunks
     chunks = split_script_into_chunks(script_text, count)
