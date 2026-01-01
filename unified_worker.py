@@ -1006,8 +1006,8 @@ async def process_job(job: Dict) -> bool:
                     local_images = [random.choice(unique_images) for _ in range(total_slots)]
                     print(f"   📷 {total_slots} slots filled randomly from {len(unique_images)} unique images")
 
-            # Delete used folder images from server (only archangel/jesus, NOT nature)
-            if folder_images_used and image_source in ['archangel', 'jesus']:
+            # Delete used folder images from server
+            if folder_images_used and image_source in ['archangel', 'jesus', 'nature']:
                 print(f"   🗑️ Deleting {len(folder_images_used)} used images from server...")
                 for img_path in folder_images_used:
                     try:
