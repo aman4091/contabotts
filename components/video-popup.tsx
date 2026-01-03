@@ -107,6 +107,9 @@ export function VideoPopup({
   // Image source dropdown (nature=single image, others=12 sec per image rule)
   const [imageSource, setImageSource] = useState("nature")
 
+  // Intro video selection (none, Jimmy, Gyh, etc.)
+  const [introVideo, setIntroVideo] = useState("none")
+
   useEffect(() => {
     // If initialTranscript is provided, use it instead of fetching
     if (initialTranscript) {
@@ -416,7 +419,8 @@ export function VideoPopup({
           channelCode: channelCode || "VIDEO",
           referenceAudio: defaultReferenceAudio,
           customImages: uploadedImagePaths.length > 0 ? uploadedImagePaths : undefined,
-          imageSource
+          imageSource,
+          introVideo: introVideo !== "none" ? introVideo : undefined
         })
       })
 
@@ -839,6 +843,19 @@ export function VideoPopup({
                   <SelectItem value="ai">AI Images</SelectItem>
                   <SelectItem value="jesus">Jesus</SelectItem>
                   <SelectItem value="archangel">Archangel</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Intro:</span>
+              <Select value={introVideo} onValueChange={setIntroVideo}>
+                <SelectTrigger className="w-24 h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  <SelectItem value="Jimmy">Jimmy</SelectItem>
+                  <SelectItem value="Gyh">Gyh</SelectItem>
                 </SelectContent>
               </Select>
             </div>

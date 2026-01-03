@@ -53,6 +53,7 @@ async function createAudioJob(job: {
   custom_images?: string[]
   use_ai_image?: boolean
   image_source?: string  // nature, ai, jesus, archangel
+  intro_video?: string  // Intro video name (Jimmy, Gyh, etc.)
 }): Promise<{ success: boolean; job_id?: string; error?: string }> {
   try {
     const response = await fetch(`${FILE_SERVER_URL}/queue/audio/jobs`, {
@@ -154,7 +155,8 @@ export async function POST(request: NextRequest) {
       audioEnabled = true,
       referenceAudio: customReferenceAudio,
       customImages,
-      imageSource = "nature"  // nature=single image, ai/jesus/archangel=12 sec per image
+      imageSource = "nature",  // nature=single image, ai/jesus/archangel=12 sec per image
+      introVideo  // Intro video name (Jimmy, Gyh, etc.) or undefined for none
     } = body
 
     // Determine if multi-image mode (12 sec per image) based on imageSource
@@ -212,7 +214,8 @@ export async function POST(request: NextRequest) {
       reference_audio: referenceAudio,
       custom_images: customImages,
       use_ai_image: useAiImage,
-      image_source: imageSource
+      image_source: imageSource,
+      intro_video: introVideo
     })
 
     if (!result.success) {

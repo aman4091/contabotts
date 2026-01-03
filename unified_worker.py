@@ -1063,6 +1063,45 @@ async def process_job(job: Dict) -> bool:
         if ass_path and os.path.exists(ass_path):
             os.remove(ass_path)
 
+        # ========== INTRO VIDEO CONCAT ==========
+        intro_video = job.get("intro_video")
+        if intro_video and not is_short:
+            intro_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "intro", intro_video)
+            intro_files = [f for f in os.listdir(intro_folder) if f.endswith('.mp4')] if os.path.exists(intro_folder) else []
+
+            if intro_files:
+                intro_path = os.path.join(intro_folder, intro_files[0])
+                print(f"🎬 Adding intro: {intro_video} ({intro_files[0]})")
+
+                # Create concat file
+                concat_file = os.path.join(TEMP_DIR, f"concat_{job_id}.txt")
+                final_with_intro = os.path.join(OUTPUT_DIR, f"final_{job_id}.mp4")
+
+                with open(concat_file, 'w') as f:
+                    f.write(f"file '{intro_path}'\n")
+                    f.write(f"file '{local_video_out}'\n")
+
+                # Concat intro + main video
+                concat_cmd = [
+                    "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                    "-i", concat_file, "-c", "copy", final_with_intro
+                ]
+                result = subprocess.run(concat_cmd, capture_output=True)
+
+                if result.returncode == 0:
+                    # Replace original with intro version
+                    os.remove(local_video_out)
+                    os.rename(final_with_intro, local_video_out)
+                    print(f"✅ Intro added successfully")
+                else:
+                    print(f"⚠️ Intro concat failed, using video without intro")
+
+                # Cleanup concat file
+                if os.path.exists(concat_file):
+                    os.remove(concat_file)
+            else:
+                print(f"⚠️ Intro folder not found: {intro_folder}")
+
         username = job.get("username", "default")
         save_local = job.get("save_local", False)
 
