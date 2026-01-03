@@ -770,18 +770,24 @@ def run_ffmpeg_with_progress(cmd: list, total_duration: float) -> bool:
         return False
 
 def render_video_shorts(image_path: str, audio_path: str, ass_path: str, output_path: str) -> bool:
-    """Render Shorts video (1080x1920) with subtitles"""
+    """Render Shorts video (1080x1920) with subtitles and slow zoom"""
     try:
-        print("🎬 Rendering Shorts Video (1080x1920)...")
+        print("🎬 Rendering Shorts Video (1080x1920) with slow zoom...")
 
         total_duration = get_audio_duration(audio_path)
         print(f"   Audio Duration: {total_duration:.1f}s")
 
         safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
-        vf = f"scale={SHORTS_W}:{SHORTS_H}:force_original_aspect_ratio=increase,crop={SHORTS_W}:{SHORTS_H},format=yuv420p,subtitles='{safe_ass}'"
+
+        # Ken Burns slow zoom effect (zoom from 1.0 to 1.15)
+        fps = 30
+        total_frames = int(total_duration * fps)
+        zoom_filter = f"zoompan=z='1+0.15*on/{total_frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={total_frames}:s={SHORTS_W}x{SHORTS_H}:fps={fps}"
+
+        vf = f"{zoom_filter},format=yuv420p,subtitles='{safe_ass}'"
 
         cmd_gpu = [
-            "ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path,
+            "ffmpeg", "-y", "-i", image_path, "-i", audio_path,
             "-vf", vf,
             "-c:v", "h264_nvenc",
             "-preset", "p4",
@@ -791,7 +797,7 @@ def render_video_shorts(image_path: str, audio_path: str, ass_path: str, output_
         ]
 
         cmd_cpu = [
-            "ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path,
+            "ffmpeg", "-y", "-i", image_path, "-i", audio_path,
             "-vf", vf,
             "-c:v", "libx264", "-preset", "medium", "-crf", "23",
             "-c:a", "aac", "-b:a", "192k",

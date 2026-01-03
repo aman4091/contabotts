@@ -29,10 +29,6 @@ FONT_SIZE = 80       # Perfect for 1080p
 BOX_OPACITY = "00"   # Solid Black
 TEXT_Y_POS = 540     # Dead Center
 
-# --- RANDOMIZATION SETTINGS ---
-AVAILABLE_FONTS = ["Arial", "Verdana", "Trebuchet MS", "Georgia", "Tahoma", "Impact", "DejaVu Sans", "Liberation Sans"]
-MIN_OPACITY = 50
-MAX_OPACITY = 100
 # =================================================
 
 def run_command(cmd):
@@ -74,7 +70,13 @@ def render_segments_concat(image_paths, audio_path, ass_path, output_path, segme
             # Fade filter: fade in at start, fade out at end
             fade_filter = f"fade=t=in:st=0:d={fade_duration},fade=t=out:st={seg_duration - fade_duration}:d={fade_duration}"
 
-            vf = f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,{fade_filter}"
+            # Ken Burns slow zoom effect (zoom from 1.0 to 1.15 over segment duration)
+            # zoompan: z = zoom level, d = duration in frames (30fps)
+            fps = 30
+            total_frames = int(seg_duration * fps)
+            zoom_filter = f"zoompan=z='1+0.15*on/{total_frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={total_frames}:s={TARGET_W}x{TARGET_H}:fps={fps}"
+
+            vf = f"{zoom_filter},format=yuv420p,{fade_filter}"
 
             cmd = [
                 "ffmpeg", "-y", "-loop", "1", "-t", str(seg_duration), "-i", img_path,
@@ -112,10 +114,18 @@ def render_segments_concat(image_paths, audio_path, ass_path, output_path, segme
         ]
         subprocess.run(cmd_concat, capture_output=True)
 
-        # Step 4: Add audio and subtitles
+        # Step 4: Add audio and subtitles (GPU first, CPU fallback)
         print("   Adding audio and subtitles...")
 
-        cmd_final = [
+        cmd_gpu = [
+            "ffmpeg", "-y", "-i", concat_output, "-i", audio_path,
+            "-vf", f"subtitles='{safe_ass}'",
+            "-c:v", "h264_nvenc", "-preset", "p4", "-b:v", "8M",
+            "-c:a", "aac", "-b:a", "192k",
+            "-shortest", output_path
+        ]
+
+        cmd_cpu = [
             "ffmpeg", "-y", "-i", concat_output, "-i", audio_path,
             "-vf", f"subtitles='{safe_ass}'",
             "-c:v", "libx264", "-preset", "fast", "-crf", "18",
@@ -123,14 +133,21 @@ def render_segments_concat(image_paths, audio_path, ass_path, output_path, segme
             "-shortest", output_path
         ]
 
-        result = subprocess.run(cmd_final, capture_output=True)
-
+        # Try GPU first
+        result = subprocess.run(cmd_gpu, capture_output=True)
         if result.returncode == 0:
-            print("   ✅ Video rendered successfully!")
+            print("   ✅ Video rendered successfully (GPU)!")
             return True
-        else:
-            print(f"   ❌ Final render failed: {result.stderr.decode()[:200]}")
-            return False
+
+        # Fallback to CPU
+        print("   ⚠️ GPU failed, trying CPU...")
+        result = subprocess.run(cmd_cpu, capture_output=True)
+        if result.returncode == 0:
+            print("   ✅ Video rendered successfully (CPU)!")
+            return True
+
+        print(f"   ❌ Final render failed: {result.stderr.decode()[:200]}")
+        return False
 
     finally:
         # Cleanup temp files
@@ -315,13 +332,11 @@ class LandscapeGenerator:
         pos = settings["position"]
 
         font_size = font["size"]
-        # Random font family for variety
-        font_family = random.choice(AVAILABLE_FONTS)
+        font_family = font["family"]  # Use font from settings
         font_color = hex_to_ass_color(font["color"], 100)
-        # Random opacity for variety (50-100%)
-        random_opacity = random.randint(MIN_OPACITY, MAX_OPACITY)
-        bg_color = hex_to_ass_color(bg["color"], random_opacity)
-        print(f"   🎨 Subtitle style: Font={font_family}, Opacity={random_opacity}%")
+        bg_opacity = bg["opacity"]  # Use opacity from settings
+        bg_color = hex_to_ass_color(bg["color"], bg_opacity)
+        print(f"   🎨 Subtitle style: Font={font_family}, Opacity={bg_opacity}%")
         corner_radius = bg["cornerRadius"]
 
         # Calculate Y position based on alignment
@@ -483,11 +498,19 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             return 60  # Default fallback
 
     def render(self, audio_path, image_path, ass_path, output_path):
-        print("🎬 Rendering 1080p PRO (12 Mbps)...")
+        print("🎬 Rendering 1080p PRO with slow zoom...")
         safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
 
-        vf = f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,subtitles='{safe_ass}'"
-        inputs = ["ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path]
+        # Get duration for zoom calculation
+        duration = self.get_audio_duration(audio_path)
+        fps = 30
+        total_frames = int(duration * fps)
+
+        # Ken Burns slow zoom effect (1.0 to 1.15)
+        zoom_filter = f"zoompan=z='1+0.15*on/{total_frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={total_frames}:s={TARGET_W}x{TARGET_H}:fps={fps}"
+
+        vf = f"{zoom_filter},format=yuv420p,subtitles='{safe_ass}'"
+        inputs = ["ffmpeg", "-y", "-i", image_path, "-i", audio_path]
 
         cmd_gpu = inputs + [
             "-vf", vf,
