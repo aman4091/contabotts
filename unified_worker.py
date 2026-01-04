@@ -1070,9 +1070,9 @@ async def process_job(job: Dict) -> bool:
         if intro_video and not is_short:
             print(f"🎬 Downloading intro video: {intro_video}")
 
-            # Download intro from file server
+            # Download intro from file server (BASE_PATH is /root/tts/data, so path is relative to that)
             intro_local_path = os.path.join(TEMP_DIR, f"intro_{job_id}.mp4")
-            intro_remote_path = f"data/intro/{intro_video}/intro.mp4"
+            intro_remote_path = f"intro/{intro_video}/intro.mp4"
 
             intro_downloaded = queue.download_file(intro_remote_path, intro_local_path)
 
