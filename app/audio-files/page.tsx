@@ -83,6 +83,7 @@ export default function AudioFilesPage() {
   const [selectedJob, setSelectedJob] = useState<Job | null>(null)
   const [gofileLink, setGofileLink] = useState("")
   const [imageSource, setImageSource] = useState("nature")
+  const [introVideo, setIntroVideo] = useState("none")
   const [submittingLink, setSubmittingLink] = useState(false)
 
   useEffect(() => {
@@ -208,6 +209,7 @@ export default function AudioFilesPage() {
     setSelectedJob(job)
     setGofileLink(job.existing_audio_link || "")
     setImageSource("nature")
+    setIntroVideo("none")
     setGofileLinkDialog(true)
   }
 
@@ -232,7 +234,8 @@ export default function AudioFilesPage() {
           queue_type: "audio",
           job_id: selectedJob.job_id,
           existing_audio_link: gofileLink.trim(),
-          image_source: imageSource
+          image_source: imageSource,
+          intro_video: introVideo !== "none" ? introVideo : undefined
         })
       })
       const data = await res.json()
@@ -778,6 +781,22 @@ export default function AudioFilesPage() {
               </Select>
               <p className="text-xs text-muted-foreground">
                 Choose where to get images for video generation.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="intro-video">Intro Video</Label>
+              <Select value={introVideo} onValueChange={setIntroVideo}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select intro" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  <SelectItem value="Jimmy">Jimmy</SelectItem>
+                  <SelectItem value="Gyh">Gyh</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Intro video will be added at the start of the main video.
               </p>
             </div>
             {selectedJob && (

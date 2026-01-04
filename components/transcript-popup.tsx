@@ -68,6 +68,9 @@ export function TranscriptPopup({
   // Image source dropdown
   const [imageSource, setImageSource] = useState("nature")
 
+  // Intro video selection
+  const [introVideo, setIntroVideo] = useState("none")
+
   async function handleCopy() {
     if (!transcript) {
       toast.error("No transcript to copy")
@@ -322,7 +325,8 @@ export function TranscriptPopup({
           videoId,
           channelCode: channelCode || "VIDEO",
           referenceAudio: defaultReferenceAudio,
-          imageSource
+          imageSource,
+          introVideo: introVideo !== "none" ? introVideo : undefined
         })
       })
 
@@ -637,6 +641,19 @@ export function TranscriptPopup({
                   <SelectItem value="ai">AI Images</SelectItem>
                   <SelectItem value="jesus">Jesus</SelectItem>
                   <SelectItem value="archangel">Archangel</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Intro:</span>
+              <Select value={introVideo} onValueChange={setIntroVideo}>
+                <SelectTrigger className="w-24 h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  <SelectItem value="Jimmy">Jimmy</SelectItem>
+                  <SelectItem value="Gyh">Gyh</SelectItem>
                 </SelectContent>
               </Select>
             </div>

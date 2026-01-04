@@ -114,11 +114,11 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// PATCH - Update job fields (like existing_audio_link, image_source)
+// PATCH - Update job fields (like existing_audio_link, image_source, intro_video)
 export async function PATCH(request: NextRequest) {
   try {
     const body = await request.json()
-    const { queue_type = "audio", job_id, existing_audio_link, image_source } = body
+    const { queue_type = "audio", job_id, existing_audio_link, image_source, intro_video } = body
 
     if (!job_id) {
       return NextResponse.json({ error: "job_id required" }, { status: 400 })
@@ -136,6 +136,7 @@ export async function PATCH(request: NextRequest) {
         updates.image_folder = image_source
       }
     }
+    if (intro_video) updates.intro_video = intro_video
 
     // Update job
     const response = await fetch(
