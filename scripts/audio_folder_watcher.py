@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
 Audio Link Watcher
-Watches for text files containing PixelDrain links
-Example: "V715.txt" contains "https://pixeldrain.com/api/file/xxxxx?download"
-Matches job by video_number in filename and updates with the link
+Watches for:
+1. Text files containing PixelDrain links (V715.txt with link inside)
+2. Direct audio files uploaded to Contabo (V715.wav, V715.mp3)
+
+For direct audio files, generates a serve URL from file server.
 """
 
 import os
@@ -20,6 +22,9 @@ WATCH_FOLDER = "/root/tts/data/external-audio"
 FILE_SERVER_URL = "http://localhost:8000"
 FILE_SERVER_API_KEY = "tts-secret-key-2024"
 POLL_INTERVAL = 5
+# External IP for workers to download from
+EXTERNAL_SERVER_URL = "http://38.242.144.132:8000"
+AUDIO_EXTENSIONS = {'.wav', '.mp3', '.m4a', '.flac', '.ogg'}
 
 # Track processed files
 processed_files = set()
@@ -92,6 +97,27 @@ def get_link_files():
     return files
 
 
+def get_audio_files():
+    """Get direct audio files (.wav, .mp3, etc.) from watch folder"""
+    files = []
+
+    watch_path = Path(WATCH_FOLDER)
+    if not watch_path.exists():
+        return []
+
+    for f in watch_path.iterdir():
+        if f.is_file() and f.suffix.lower() in AUDIO_EXTENSIONS:
+            if str(f) not in processed_files:
+                files.append(f)
+
+    return files
+
+
+def get_serve_url_for_audio(filename: str) -> str:
+    """Generate serve URL for direct audio file"""
+    return f"{EXTERNAL_SERVER_URL}/serve/external-audio/{filename}"
+
+
 def read_pixeldrain_link(txt_file: Path) -> str:
     """Read PixelDrain link from text file"""
     try:
@@ -142,48 +168,47 @@ def archive_link_file(txt_file: Path, job: dict):
 
 
 def main_loop():
-    """Main watching loop - reads PixelDrain links from text files"""
+    """Main watching loop - reads PixelDrain links from text files OR direct audio files"""
     logger.info("=" * 50)
     logger.info("Audio Link Watcher Started")
     logger.info(f"Watching: {WATCH_FOLDER}")
-    logger.info("Looking for: .txt files with PixelDrain links")
-    logger.info("Naming: V715.txt or script_V715.txt")
+    logger.info("Looking for:")
+    logger.info("  1. .txt files with PixelDrain links (V715.txt)")
+    logger.info("  2. Direct audio files (V715.wav, V715.mp3)")
     logger.info("=" * 50)
 
     Path(WATCH_FOLDER).mkdir(parents=True, exist_ok=True)
 
     while True:
         try:
+            # Get both link files and direct audio files
             link_files = get_link_files()
+            audio_files = get_audio_files()
 
-            if link_files:
+            if link_files or audio_files:
                 jobs = get_pending_jobs()
 
+                # Process text files with PixelDrain links
                 for txt_file in link_files:
-                    # Extract number from filename
                     video_number = extract_number_from_filename(txt_file.name)
 
                     if video_number is None:
                         logger.warning(f"No number in filename: {txt_file.name}")
                         continue
 
-                    # Read PixelDrain link from file
                     pixeldrain_link = read_pixeldrain_link(txt_file)
                     if not pixeldrain_link:
                         logger.warning(f"No valid link in: {txt_file.name}")
                         continue
 
-                    # Find matching job
                     job = find_job_by_video_number(jobs, video_number)
 
                     if job:
-                        job_id = job.get("job_id", "")[:8]
                         audio_counter = job.get("audio_counter", 0)
 
-                        logger.info(f">>> Match: {txt_file.name} -> V{video_number} (#{audio_counter})")
+                        logger.info(f">>> Match (TXT): {txt_file.name} -> V{video_number} (#{audio_counter})")
                         logger.info(f"    Link: {pixeldrain_link[:50]}...")
 
-                        # Update job with PixelDrain link
                         if update_job_with_audio(job.get("job_id"), pixeldrain_link):
                             logger.info(f"Job #{audio_counter} V{video_number} updated with PixelDrain link!")
                             processed_files.add(str(txt_file))
@@ -191,8 +216,35 @@ def main_loop():
                         else:
                             logger.error(f"Failed to update job #{audio_counter}")
                     else:
-                        # No matching job - ignore this file
                         logger.debug(f"No job for V{video_number}, ignoring: {txt_file.name}")
+
+                # Process direct audio files (.wav, .mp3, etc.)
+                for audio_file in audio_files:
+                    video_number = extract_number_from_filename(audio_file.name)
+
+                    if video_number is None:
+                        logger.warning(f"No number in filename: {audio_file.name}")
+                        continue
+
+                    job = find_job_by_video_number(jobs, video_number)
+
+                    if job:
+                        audio_counter = job.get("audio_counter", 0)
+
+                        # Generate serve URL for the audio file
+                        serve_url = get_serve_url_for_audio(audio_file.name)
+
+                        logger.info(f">>> Match (AUDIO): {audio_file.name} -> V{video_number} (#{audio_counter})")
+                        logger.info(f"    Serve URL: {serve_url}")
+
+                        if update_job_with_audio(job.get("job_id"), serve_url):
+                            logger.info(f"Job #{audio_counter} V{video_number} updated with direct audio!")
+                            processed_files.add(str(audio_file))
+                            # Don't move audio files - worker needs to access them
+                        else:
+                            logger.error(f"Failed to update job #{audio_counter}")
+                    else:
+                        logger.debug(f"No job for V{video_number}, ignoring: {audio_file.name}")
 
         except Exception as e:
             logger.error(f"Error in main loop: {e}")

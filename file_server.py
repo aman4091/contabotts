@@ -250,6 +250,34 @@ async def upload_external_audio(
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 
+@app.get("/serve/external-audio/{filename:path}")
+async def serve_external_audio(filename: str):
+    """
+    Serve audio files from external-audio folder (no auth required for worker access)
+    """
+    file_path = Path(BASE_PATH) / "external-audio" / filename
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Audio file not found")
+
+    # Determine content type based on extension
+    ext = file_path.suffix.lower()
+    content_types = {
+        ".wav": "audio/wav",
+        ".mp3": "audio/mpeg",
+        ".m4a": "audio/mp4",
+        ".flac": "audio/flac",
+        ".ogg": "audio/ogg"
+    }
+    media_type = content_types.get(ext, "application/octet-stream")
+
+    return FileResponse(
+        path=str(file_path),
+        media_type=media_type,
+        filename=filename
+    )
+
+
 @app.delete("/files/{path:path}")
 async def delete_file(
     path: str,

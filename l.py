@@ -70,13 +70,8 @@ def render_segments_concat(image_paths, audio_path, ass_path, output_path, segme
             # Fade filter: fade in at start, fade out at end
             fade_filter = f"fade=t=in:st=0:d={fade_duration},fade=t=out:st={seg_duration - fade_duration}:d={fade_duration}"
 
-            # Ken Burns slow zoom effect (zoom from 1.0 to 1.15 over segment duration)
-            # zoompan: z = zoom level, d = duration in frames (30fps)
-            fps = 30
-            total_frames = int(seg_duration * fps)
-            zoom_filter = f"zoompan=z='1+0.15*on/{total_frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={total_frames}:s={TARGET_W}x{TARGET_H}:fps={fps}"
-
-            vf = f"{zoom_filter},format=yuv420p,{fade_filter}"
+            # Scale to target size + fade (no zoompan - too slow)
+            vf = f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,{fade_filter}"
 
             cmd = [
                 "ffmpeg", "-y", "-loop", "1", "-t", str(seg_duration), "-i", img_path,
@@ -498,19 +493,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             return 60  # Default fallback
 
     def render(self, audio_path, image_path, ass_path, output_path):
-        print("🎬 Rendering 1080p PRO with slow zoom...")
+        print("🎬 Rendering 1080p PRO...")
         safe_ass = ass_path.replace("\\", "/").replace(":", "\\:")
 
-        # Get duration for zoom calculation
-        duration = self.get_audio_duration(audio_path)
-        fps = 30
-        total_frames = int(duration * fps)
-
-        # Ken Burns slow zoom effect (1.0 to 1.15)
-        zoom_filter = f"zoompan=z='1+0.15*on/{total_frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={total_frames}:s={TARGET_W}x{TARGET_H}:fps={fps}"
-
-        vf = f"{zoom_filter},format=yuv420p,subtitles='{safe_ass}'"
-        inputs = ["ffmpeg", "-y", "-i", image_path, "-i", audio_path]
+        # Scale to target size + subtitles (no zoompan - too slow)
+        vf = f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,subtitles='{safe_ass}'"
+        inputs = ["ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path]
 
         cmd_gpu = inputs + [
             "-vf", vf,
