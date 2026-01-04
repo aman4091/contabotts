@@ -1097,34 +1097,46 @@ async def process_job(job: Dict) -> bool:
         if ass_path and os.path.exists(ass_path):
             os.remove(ass_path)
 
-        # ========== INTRO VIDEO CONCAT ==========
+        # ========== INTRO VIDEO CONCAT WITH TRANSITION ==========
         if intro_reencoded and os.path.exists(intro_reencoded):
-            print(f"🎬 Adding intro to video...")
+            print(f"🎬 Adding intro with fade transition...")
 
-            concat_file = os.path.join(TEMP_DIR, f"concat_{job_id}.txt")
             final_with_intro = os.path.join(OUTPUT_DIR, f"final_{job_id}.mp4")
 
-            with open(concat_file, 'w') as f:
-                f.write(f"file '{intro_reencoded}'\n")
-                f.write(f"file '{local_video_out}'\n")
+            # Get intro duration for xfade offset
+            probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", intro_reencoded]
+            probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
+            intro_duration = float(probe_result.stdout.strip()) if probe_result.returncode == 0 else 5.0
 
-            # Concat intro + main video
+            # Fade transition duration (1 second)
+            fade_duration = 1.0
+            xfade_offset = max(0, intro_duration - fade_duration)
+
+            print(f"   Intro duration: {intro_duration:.1f}s, Fade at: {xfade_offset:.1f}s")
+
+            # Use xfade for video transition and acrossfade for audio
             concat_cmd = [
-                "ffmpeg", "-y", "-f", "concat", "-safe", "0",
-                "-i", concat_file, "-c", "copy", final_with_intro
+                "ffmpeg", "-y",
+                "-i", intro_reencoded,
+                "-i", local_video_out,
+                "-filter_complex",
+                f"[0:v][1:v]xfade=transition=fade:duration={fade_duration}:offset={xfade_offset}[v];"
+                f"[0:a][1:a]acrossfade=d={fade_duration}[a]",
+                "-map", "[v]", "-map", "[a]",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                "-c:a", "aac", "-b:a", "192k",
+                final_with_intro
             ]
             result = subprocess.run(concat_cmd, capture_output=True)
 
             if result.returncode == 0:
                 os.remove(local_video_out)
                 os.rename(final_with_intro, local_video_out)
-                print(f"✅ Intro added successfully")
+                print(f"✅ Intro added with fade transition!")
             else:
-                print(f"⚠️ Intro concat failed: {result.stderr.decode()[:200]}")
+                print(f"⚠️ Intro concat failed: {result.stderr.decode()[:300]}")
 
             # Cleanup
-            if os.path.exists(concat_file):
-                os.remove(concat_file)
             if os.path.exists(intro_reencoded):
                 os.remove(intro_reencoded)
 
