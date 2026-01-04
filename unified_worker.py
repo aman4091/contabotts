@@ -855,9 +855,41 @@ async def process_job(job: Dict) -> bool:
         else:
             raise Exception(f"Failed to download audio from: {existing_audio_link}")
 
+        # ========== DOWNLOAD INTRO (if needed) ==========
+        intro_video = job.get("intro_video")
+        intro_reencoded = None
+        is_short = job.get('is_short', False)
+
+        if intro_video and not is_short:
+            print(f"\n🎬 Downloading intro video: {intro_video}")
+            intro_local_path = os.path.join(TEMP_DIR, f"intro_{job_id}.mp4")
+            intro_remote_path = f"intro/{intro_video}/intro.mp4"
+
+            if queue.download_file(intro_remote_path, intro_local_path):
+                print(f"✅ Intro downloaded, re-encoding to match main video...")
+                intro_reencoded = os.path.join(TEMP_DIR, f"intro_reencoded_{job_id}.mp4")
+                reencode_cmd = [
+                    "ffmpeg", "-y", "-i", intro_local_path,
+                    "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1",
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                    "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+                    "-r", "30",
+                    intro_reencoded
+                ]
+                reencode_result = subprocess.run(reencode_cmd, capture_output=True)
+                if reencode_result.returncode != 0:
+                    print(f"⚠️ Intro re-encode failed, will skip intro")
+                    intro_reencoded = None
+                else:
+                    print(f"✅ Intro ready!")
+                # Cleanup original
+                if os.path.exists(intro_local_path):
+                    os.remove(intro_local_path)
+            else:
+                print(f"⚠️ Intro download failed: {intro_remote_path}")
+
         # ========== STEP 2: VIDEO GENERATION ==========
         print("\n" + "="*50)
-        is_short = job.get('is_short', False)
         if is_short:
             print("🎬 STEP 2: SHORTS Video Generation (1080x1920)")
         else:
@@ -1066,49 +1098,35 @@ async def process_job(job: Dict) -> bool:
             os.remove(ass_path)
 
         # ========== INTRO VIDEO CONCAT ==========
-        intro_video = job.get("intro_video")
-        if intro_video and not is_short:
-            print(f"🎬 Downloading intro video: {intro_video}")
+        if intro_reencoded and os.path.exists(intro_reencoded):
+            print(f"🎬 Adding intro to video...")
 
-            # Download intro from file server (BASE_PATH is /root/tts/data, so path is relative to that)
-            intro_local_path = os.path.join(TEMP_DIR, f"intro_{job_id}.mp4")
-            intro_remote_path = f"intro/{intro_video}/intro.mp4"
+            concat_file = os.path.join(TEMP_DIR, f"concat_{job_id}.txt")
+            final_with_intro = os.path.join(OUTPUT_DIR, f"final_{job_id}.mp4")
 
-            intro_downloaded = queue.download_file(intro_remote_path, intro_local_path)
+            with open(concat_file, 'w') as f:
+                f.write(f"file '{intro_reencoded}'\n")
+                f.write(f"file '{local_video_out}'\n")
 
-            if intro_downloaded and os.path.exists(intro_local_path):
-                print(f"✅ Intro downloaded: {intro_video}")
+            # Concat intro + main video
+            concat_cmd = [
+                "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                "-i", concat_file, "-c", "copy", final_with_intro
+            ]
+            result = subprocess.run(concat_cmd, capture_output=True)
 
-                # Create concat file
-                concat_file = os.path.join(TEMP_DIR, f"concat_{job_id}.txt")
-                final_with_intro = os.path.join(OUTPUT_DIR, f"final_{job_id}.mp4")
-
-                with open(concat_file, 'w') as f:
-                    f.write(f"file '{intro_local_path}'\n")
-                    f.write(f"file '{local_video_out}'\n")
-
-                # Concat intro + main video
-                concat_cmd = [
-                    "ffmpeg", "-y", "-f", "concat", "-safe", "0",
-                    "-i", concat_file, "-c", "copy", final_with_intro
-                ]
-                result = subprocess.run(concat_cmd, capture_output=True)
-
-                if result.returncode == 0:
-                    # Replace original with intro version
-                    os.remove(local_video_out)
-                    os.rename(final_with_intro, local_video_out)
-                    print(f"✅ Intro added successfully")
-                else:
-                    print(f"⚠️ Intro concat failed: {result.stderr.decode()[:200]}")
-
-                # Cleanup
-                if os.path.exists(concat_file):
-                    os.remove(concat_file)
-                if os.path.exists(intro_local_path):
-                    os.remove(intro_local_path)
+            if result.returncode == 0:
+                os.remove(local_video_out)
+                os.rename(final_with_intro, local_video_out)
+                print(f"✅ Intro added successfully")
             else:
-                print(f"⚠️ Intro download failed: {intro_remote_path}")
+                print(f"⚠️ Intro concat failed: {result.stderr.decode()[:200]}")
+
+            # Cleanup
+            if os.path.exists(concat_file):
+                os.remove(concat_file)
+            if os.path.exists(intro_reencoded):
+                os.remove(intro_reencoded)
 
         username = job.get("username", "default")
         save_local = job.get("save_local", False)
