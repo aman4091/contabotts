@@ -1114,14 +1114,14 @@ async def process_job(job: Dict) -> bool:
 
             print(f"   Intro duration: {intro_duration:.1f}s, Fade at: {xfade_offset:.1f}s")
 
-            # Use xfade for video transition and acrossfade for audio
+            # Try xfade with video only first (audio handled separately)
             concat_cmd = [
                 "ffmpeg", "-y",
                 "-i", intro_reencoded,
                 "-i", local_video_out,
                 "-filter_complex",
                 f"[0:v][1:v]xfade=transition=fade:duration={fade_duration}:offset={xfade_offset}[v];"
-                f"[0:a][1:a]acrossfade=d={fade_duration}[a]",
+                f"[0:a]apad=pad_dur=0.1[a0];[1:a]apad=pad_dur=0.1[a1];[a0][a1]concat=n=2:v=0:a=1[a]",
                 "-map", "[v]", "-map", "[a]",
                 "-c:v", "libx264", "-preset", "fast", "-crf", "18",
                 "-c:a", "aac", "-b:a", "192k",
@@ -1134,7 +1134,31 @@ async def process_job(job: Dict) -> bool:
                 os.rename(final_with_intro, local_video_out)
                 print(f"✅ Intro added with fade transition!")
             else:
-                print(f"⚠️ Intro concat failed: {result.stderr.decode()[:300]}")
+                # Fallback: simple re-encode concat without transition
+                print(f"⚠️ xfade failed, trying simple concat...")
+                concat_file = os.path.join(TEMP_DIR, f"concat_{job_id}.txt")
+                with open(concat_file, 'w') as f:
+                    f.write(f"file '{intro_reencoded}'\n")
+                    f.write(f"file '{local_video_out}'\n")
+
+                fallback_cmd = [
+                    "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                    "-i", concat_file,
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                    "-c:a", "aac", "-b:a", "192k",
+                    final_with_intro
+                ]
+                fallback_result = subprocess.run(fallback_cmd, capture_output=True)
+
+                if fallback_result.returncode == 0:
+                    os.remove(local_video_out)
+                    os.rename(final_with_intro, local_video_out)
+                    print(f"✅ Intro added (simple concat)")
+                else:
+                    print(f"⚠️ Fallback concat also failed: {fallback_result.stderr.decode()[-500:]}")
+
+                if os.path.exists(concat_file):
+                    os.remove(concat_file)
 
             # Cleanup
             if os.path.exists(intro_reencoded):
