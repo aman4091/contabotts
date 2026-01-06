@@ -512,6 +512,92 @@ async def get_image(
 
 
 # ============================================================================
+# MOTION VIDEOS (for external projects)
+# ============================================================================
+
+@app.get("/motion-videos/{folder}")
+async def list_motion_videos(
+    folder: str,
+    x_api_key: Optional[str] = Header(None)
+):
+    """List motion videos in a folder"""
+    verify_api_key(x_api_key)
+
+    dir_path = safe_path(f"motion-videos/{folder}")
+
+    if not os.path.exists(dir_path):
+        raise HTTPException(status_code=404, detail=f"Motion video folder not found: {folder}")
+
+    videos = []
+    for item in os.listdir(dir_path):
+        if item.lower().endswith(('.mp4', '.mov', '.webm', '.avi')):
+            videos.append(item)
+
+    return {"folder": folder, "videos": videos, "count": len(videos)}
+
+
+@app.get("/motion-videos/{folder}/{filename}")
+async def get_motion_video(
+    folder: str,
+    filename: str,
+    x_api_key: Optional[str] = Header(None)
+):
+    """Download a motion video"""
+    verify_api_key(x_api_key)
+
+    file_path = safe_path(f"motion-videos/{folder}/{filename}")
+
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail=f"Motion video not found: {filename}")
+
+    return FileResponse(file_path, filename=filename)
+
+
+@app.post("/motion-videos/{folder}")
+async def upload_motion_video(
+    folder: str,
+    file: UploadFile = File(...),
+    x_api_key: Optional[str] = Header(None)
+):
+    """Upload a motion video from external project"""
+    verify_api_key(x_api_key)
+
+    dir_path = safe_path(f"motion-videos/{folder}")
+    os.makedirs(dir_path, exist_ok=True)
+
+    # Save the file
+    file_path = os.path.join(dir_path, file.filename)
+    with open(file_path, "wb") as f:
+        content = await file.read()
+        f.write(content)
+
+    return {
+        "status": "success",
+        "folder": folder,
+        "filename": file.filename,
+        "path": f"motion-videos/{folder}/{file.filename}"
+    }
+
+
+@app.delete("/motion-videos/{folder}/{filename}")
+async def delete_motion_video(
+    folder: str,
+    filename: str,
+    x_api_key: Optional[str] = Header(None)
+):
+    """Delete a motion video after use"""
+    verify_api_key(x_api_key)
+
+    file_path = safe_path(f"motion-videos/{folder}/{filename}")
+
+    if os.path.exists(file_path):
+        os.remove(file_path)
+        return {"status": "deleted", "filename": filename}
+
+    raise HTTPException(status_code=404, detail=f"Motion video not found: {filename}")
+
+
+# ============================================================================
 # QUEUE OPERATIONS
 # ============================================================================
 

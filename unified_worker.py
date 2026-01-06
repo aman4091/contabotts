@@ -1017,14 +1017,39 @@ async def process_job(job: Dict) -> bool:
                 except Exception as e:
                     print(f"   ⚠️ Could not fetch {image_folder} folder: {e}")
 
-                # If folder didn't have enough, fill with AI images
+                # If folder didn't have enough, fall back to alternate folder (not AI)
                 remaining_unique = num_unique_images - len(unique_images)
-                if remaining_unique > 0 and ai_script and AI_IMAGE_AVAILABLE:
-                    print(f"   🤖 Generating {remaining_unique} AI images to fill pool...")
-                    ai_images = generate_multiple_ai_images(ai_script, TEMP_DIR, remaining_unique, width=img_width, height=img_height)
-                    if ai_images:
-                        unique_images.extend(ai_images)
-                        print(f"   ✅ Added {len(ai_images)} AI images")
+                if remaining_unique > 0:
+                    # Cross-folder fallback: nature <-> archangel
+                    fallback_folder = 'Archangel Michael' if image_source == 'nature' else 'nature' if image_source == 'archangel' else None
+                    if fallback_folder:
+                        print(f"   📂 Falling back to {fallback_folder} for {remaining_unique} more images...")
+                        try:
+                            fallback_response = requests.get(
+                                f"{FILE_SERVER_URL}/images/{fallback_folder}",
+                                headers={"x-api-key": FILE_SERVER_API_KEY},
+                                timeout=30
+                            )
+                            if fallback_response.status_code == 200:
+                                fallback_images = fallback_response.json().get("images", [])
+                                random.shuffle(fallback_images)
+                                fallback_to_use = fallback_images[:remaining_unique]
+
+                                for i, img_name in enumerate(fallback_to_use):
+                                    try:
+                                        img_url = f"{FILE_SERVER_URL}/files/images/{fallback_folder}/{img_name}"
+                                        local_img_path = os.path.join(TEMP_DIR, f"fallback_img_{job_id}_{i}.jpg")
+                                        dl_response = requests.get(img_url, headers={"x-api-key": FILE_SERVER_API_KEY}, timeout=60)
+                                        if dl_response.status_code == 200:
+                                            with open(local_img_path, 'wb') as f:
+                                                f.write(dl_response.content)
+                                            unique_images.append(local_img_path)
+                                            folder_images_used.append(f"images/{fallback_folder}/{img_name}")
+                                    except Exception as e:
+                                        print(f"   ⚠️ Failed to download fallback image {i}: {e}")
+                                print(f"   ✅ Added {len(fallback_to_use)} images from {fallback_folder}")
+                        except Exception as e:
+                            print(f"   ⚠️ Fallback folder fetch failed: {e}")
 
             # Fill all slots
             if unique_images:
@@ -1056,8 +1081,10 @@ async def process_job(job: Dict) -> bool:
 
             # Fallback if no images at all
             if not local_images:
-                print("⚠️ No images available, falling back to single nature image")
-                local_image, server_image_path = queue.get_random_image('nature')
+                # Last resort: try alternate folder
+                last_resort_folder = 'Archangel Michael' if image_source in ['nature', 'ai'] else 'nature'
+                print(f"⚠️ No images available, falling back to single {last_resort_folder} image")
+                local_image, server_image_path = queue.get_random_image(last_resort_folder)
                 local_images = [local_image] if local_image else []
 
         if not local_images or len(local_images) == 0:
