@@ -945,8 +945,8 @@ async def process_job(job: Dict) -> bool:
                 local_image, server_image_path = queue.get_random_image('nature')
                 local_images = [local_image] if local_image else []
         elif not is_short:
-            # Multi-image mode for ALL sources: 12 sec per image
-            print(f"🖼️ Multi-Image Mode ({image_source}) - 12 sec per image...")
+            # Multi-image mode for ALL sources: 10 sec per image
+            print(f"🖼️ Multi-Image Mode ({image_source}) - 10 sec per image...")
 
             # Get script text for AI image generation
             ai_script = job.get('script_text') or queue.get_script(org_path)
@@ -955,24 +955,24 @@ async def process_job(job: Dict) -> bool:
             # Calculate number of images based on audio duration
             audio_duration = landscape_gen.get_audio_duration(local_audio_out)
             duration_minutes = audio_duration / 60
-            IMAGE_DISPLAY_DURATION = 12  # Each image shows for 12 seconds
+            IMAGE_DISPLAY_DURATION = 10  # Each image shows for 10 seconds
 
             # Calculate total slots
             total_slots = max(1, int(audio_duration / IMAGE_DISPLAY_DURATION))
 
-            # For AI: generate unique image for EACH 12-sec slot
-            # For folders: use duration/2 logic (10 min = 5 unique, then randomly pick)
+            # For AI: generate unique image for EACH 10-sec slot
+            # For folders: max 60 unique images, randomly fill all slots
             if image_source == "ai":
-                num_unique_images = total_slots  # AI: har 12 sec = 1 unique image
-                print(f"   📊 Duration: {duration_minutes:.1f} min -> {num_unique_images} AI images (1 per 12 sec)")
+                num_unique_images = total_slots  # AI: har 10 sec = 1 unique image
+                print(f"   📊 Duration: {duration_minutes:.1f} min -> {num_unique_images} AI images (1 per 10 sec)")
             else:
-                num_unique_images = max(1, int(duration_minutes / 2))  # Folders: 10 min = 5 unique
-                print(f"   📊 Duration: {duration_minutes:.1f} min -> {num_unique_images} unique images, {total_slots} display slots")
+                num_unique_images = min(60, total_slots)  # Folders: max 60 unique images
+                print(f"   📊 Duration: {duration_minutes:.1f} min -> {num_unique_images} unique images (max 60), {total_slots} display slots")
 
             unique_images = []  # Pool of unique images to randomly pick from
 
             if image_source == "ai":
-                # Pure AI image generation - one unique image per 12-sec slot
+                # Pure AI image generation - one unique image per 10-sec slot
                 if ai_script and AI_IMAGE_AVAILABLE:
                     print(f"   🤖 Generating {num_unique_images} AI scene images (Gemini 2.5 Pro + FLUX)...")
                     ai_images = generate_multiple_ai_images(ai_script, TEMP_DIR, num_unique_images, width=img_width, height=img_height)
@@ -1106,9 +1106,9 @@ async def process_job(job: Dict) -> bool:
 
             # Render video using l.py
             if len(local_images) > 15:
-                # Many images: use concat method (12 sec per image, no memory issues)
-                print(f"   Using CONCAT method: {len(local_images)} images × 12 sec each")
-                if not render_segments_concat(local_images, local_audio_out, ass_path, local_video_out, segment_duration=12):
+                # Many images: use concat method (10 sec per image, no memory issues)
+                print(f"   Using CONCAT method: {len(local_images)} images × 10 sec each")
+                if not render_segments_concat(local_images, local_audio_out, ass_path, local_video_out, segment_duration=10):
                     raise Exception("Video render with concat failed")
             elif len(local_images) > 1:
                 # Few images: use xfade method
